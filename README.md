@@ -6,6 +6,6 @@
 
 ## Contributors:
 - [Damjan Vinčić](https://github.com/DamjanVincic)
-- Nađa Zorić
+- [Nađa Zorić](https://github.com/zoricnadja)
 - [Mijat Krivokapić](https://github.com/mijatkrivokapic)
-- Milica Radić
+- [Milica Radić](https://github.com/milicaradicc)
