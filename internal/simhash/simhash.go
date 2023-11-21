@@ -1,67 +1,54 @@
 package simhash
 
 import (
-	"crypto/md5"
-	"fmt"
 	"github.com/bbalet/stopwords"
+	"hash/fnv"
 	"strings"
 )
 
-func getWeightsForTokens(tokens []string) map[string]int {
-	weights := make(map[string]int)
-	for _, token := range tokens {
-		weights[token]++
-	}
-	return weights
-}
+func GetFingerprint(text string) uint64 {
+	// Remove stop words and trim spaces
+	text = strings.TrimSpace(stopwords.CleanString(text, "en", false))
 
-func getHashAsString(data string) string {
-	hash := md5.Sum([]byte(data))
-	res := ""
-	for _, b := range hash {
-		res = fmt.Sprintf("%s%b", res, b)
-	}
-	return res
-}
+	var sum [64]int // Each element is a sum of the bits at corresponding position
+	// Go through all words and calculate the sum of the hashes
+	// We're considering that every word has a weight of 1, they will add up together as if we were to calculate their weight first
+	for _, word := range strings.Split(text, " ") {
+		h := fnv.New64()
+		_, err := h.Write([]byte(word))
+		if err != nil {
+			panic(err)
+		}
 
-func GetFingerprint(text string) string {
-	text = stopwords.CleanString(text, "en", false)
-	text = strings.TrimSpace(text)
-	tokens := strings.Split(text, " ")
-	weights := getWeightsForTokens(tokens)
-	hashes := make(map[string]string)
-	for _, token := range tokens {
-		hashes[token] = getHashAsString(token)
-	}
-	var fingerprint string
-	for i := 0; i < len(hashes[tokens[0]]); i++ {
-		sum := 0
-		for token, hash := range hashes {
-			if hash[i] == '0' {
-				sum += -1 * weights[token]
+		// If a bit is 0 we decrement the sum, if it's 1 we increment the sum
+		hash := h.Sum64()
+		for i := uint8(0); i < 64; i++ {
+			if (hash>>i)&1 == 1 { // if hash & (1 << i) == 1 { } doesn't work?
+				sum[i]++
 			} else {
-				sum += weights[token]
+				sum[i]--
 			}
 		}
-		if sum > 0 {
-			fingerprint += "1"
-		} else {
-			fingerprint += "0"
+	}
+
+	// If a sum is positive we set the corresponding bit to 1, otherwise we leave it at 0
+	var fingerprint uint64
+	for i := uint8(0); i < 64; i++ {
+		if sum[i] > 0 {
+			fingerprint |= 1 << i
 		}
 	}
+
 	return fingerprint
 }
 
-func GetHammingDistance(fingerprint1 string, fingerprint2 string) string {
-	if len(fingerprint1) != len(fingerprint2) {
-		panic("Fingerprints must be of the same length")
-	}
-	var distance string
-	for i := 0; i < len(fingerprint1); i++ {
-		if fingerprint1[i] != fingerprint2[i] {
-			distance += "1"
-		} else {
-			distance += "0"
+func GetHammingDistance(fingerprint1, fingerprint2 uint64) uint8 {
+	// XOR the two fingerprints and count the number of 1s
+	xor := fingerprint1 ^ fingerprint2
+	var distance uint8
+	for i := uint8(0); i < 64; i++ {
+		if (xor>>i)&1 == 1 {
+			distance++
 		}
 	}
 	return distance
