@@ -65,3 +65,18 @@ func GetFingerprint(text string) string {
 	}
 	return fingerprint
 }
+
+func GetHammingDistance(fingerprint1 string, fingerprint2 string) string {
+	if len(fingerprint1) != len(fingerprint2) {
+		panic("Fingerprints must be of the same length")
+	}
+	var distance string
+	for i := 0; i < len(fingerprint1); i++ {
+		if fingerprint1[i] != fingerprint2[i] {
+			distance += "1"
+		} else {
+			distance += "0"
+		}
+	}
+	return distance
+}
