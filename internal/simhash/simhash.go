@@ -1,6 +1,8 @@
 package simhash
 
 import (
+	"crypto/md5"
+	"fmt"
 	"slices"
 	"strings"
 )
@@ -28,9 +30,22 @@ func getWeightsForTokens(tokens []string) map[string]int {
 	return weights
 }
 
+func getHashAsString(data string) string {
+	hash := md5.Sum([]byte(data))
+	res := ""
+	for _, b := range hash {
+		res = fmt.Sprintf("%s%b", res, b)
+	}
+	return res
+}
+
 func GetFingerprint(text string) string {
 	tokens := strings.Split(text, " ")
 	tokens = removeStoppingWords(tokens)
 	weights := getWeightsForTokens(tokens)
+	hashes := make(map[string]string)
+	for _, token := range tokens {
+		hashes[token] = getHashAsString(token)
+	}
 	return ""
 }
