@@ -39,3 +39,13 @@ func (bf BloomFilter) AddElement(element []byte) {
 		bf.byteArray[idx] = 1
 	}
 }
+
+func (bf BloomFilter) ContainsElement(element []byte) bool {
+	for _, fn := range bf.hashFunctions {
+		idx := fn.Hash(element) % uint32(bf.m)
+		if bf.byteArray[idx] == 0 {
+			return false
+		}
+	}
+	return true
+}
