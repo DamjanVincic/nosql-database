@@ -20,8 +20,17 @@ func removeStoppingWords(tokens []string) []string {
 	return result
 }
 
+func getWeightsForTokens(tokens []string) map[string]int {
+	weights := make(map[string]int)
+	for _, token := range tokens {
+		weights[token]++
+	}
+	return weights
+}
+
 func GetFingerprint(text string) string {
 	tokens := strings.Split(text, " ")
 	tokens = removeStoppingWords(tokens)
+	weights := getWeightsForTokens(tokens)
 	return ""
 }
