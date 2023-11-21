@@ -47,5 +47,21 @@ func GetFingerprint(text string) string {
 	for _, token := range tokens {
 		hashes[token] = getHashAsString(token)
 	}
-	return ""
+	var fingerprint string
+	for i := 0; i < len(hashes[tokens[0]]); i++ {
+		sum := 0
+		for token, hash := range hashes {
+			if hash[i] == '0' {
+				sum += -1 * weights[token]
+			} else {
+				sum += weights[token]
+			}
+		}
+		if sum > 0 {
+			fingerprint += "1"
+		} else {
+			fingerprint += "0"
+		}
+	}
+	return fingerprint
 }
