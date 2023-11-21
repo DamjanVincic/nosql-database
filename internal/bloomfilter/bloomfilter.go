@@ -32,3 +32,10 @@ func CreateBloomFilter(expectedElements int, falsePositiveRate float64) BloomFil
 	}
 	return bf
 }
+
+func (bf BloomFilter) AddElement(element []byte) {
+	for _, fn := range bf.hashFunctions {
+		idx := fn.Hash(element) % uint32(bf.m)
+		bf.byteArray[idx] = 1
+	}
+}
