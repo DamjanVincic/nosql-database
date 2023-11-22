@@ -1,6 +1,7 @@
 package bloomfilter
 
 import (
+	"encoding/binary"
 	"github.com/DamjanVincic/key-value-engine/internal/hash"
 	"math"
 )
@@ -48,4 +49,29 @@ func (bf BloomFilter) ContainsElement(element []byte) bool {
 		}
 	}
 	return true
+}
+
+func (bf BloomFilter) Serialize() []byte {
+	bytes := make([]byte, 0)
+	tempByte := make([]byte, 4)
+	binary.BigEndian.PutUint32(tempByte, bf.m)
+	bytes = append(bytes, tempByte...)
+	bytes = append(bytes, bf.byteArray...)
+	binary.BigEndian.PutUint32(tempByte, bf.k)
+	bytes = append(bytes, tempByte...)
+	bytes = append(bytes, hash.Serialize(bf.hashFunctions)...)
+	return bytes
+}
+
+func Deserialize(bytes []byte) BloomFilter {
+	m := binary.BigEndian.Uint32(bytes[:4])
+	byteArray := bytes[4 : 4+m]
+	k := binary.BigEndian.Uint32(bytes[4+m : 8+m])
+	hashFunctions := hash.Deserialize(bytes[8+m : 8+m+4*k])
+	return BloomFilter{
+		m:             m,
+		k:             k,
+		byteArray:     byteArray,
+		hashFunctions: hashFunctions,
+	}
 }
