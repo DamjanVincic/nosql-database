@@ -2,7 +2,7 @@ package bloomfilter
 
 import (
 	"encoding/binary"
-	"github.com/DamjanVincic/key-value-engine/internal/hash"
+	"github.com/DamjanVincic/key-value-engine/internal/structures/hash"
 	"math"
 )
 
@@ -56,7 +56,7 @@ func (bf BloomFilter) ContainsElement(element []byte) bool {
 func (bf BloomFilter) Serialize() []byte {
 	bytes := make([]byte, 0)
 
-	// Temporary storage for 32 bit integers
+	// Temporary storage for 32-bit integers
 	tempByte := make([]byte, 4)
 
 	binary.BigEndian.PutUint32(tempByte, bf.m)
