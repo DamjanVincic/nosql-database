@@ -20,6 +20,7 @@ func (h HashWithSeed) Hash(data []byte) uint32 {
 }
 
 func CreateHashFunctions(k uint32) []HashWithSeed {
+	// Create k hash functions with different seeds based on the current time
 	functions := make([]HashWithSeed, k)
 	currentTime := uint32(time.Now().Unix())
 	for i := uint32(0); i < k; i++ {
@@ -32,6 +33,7 @@ func CreateHashFunctions(k uint32) []HashWithSeed {
 }
 
 func Serialize(functions []HashWithSeed) []byte {
+	// Append binary representation of each function's 32 bit seed
 	bytes := make([]byte, 0)
 	for _, fn := range functions {
 		bytes = append(bytes, fn.seed...)
@@ -40,6 +42,7 @@ func Serialize(functions []HashWithSeed) []byte {
 }
 
 func Deserialize(bytes []byte) []HashWithSeed {
+	// Go through all bytes and create a new hash function for each 4 bytes (32 bit seed)
 	functions := make([]HashWithSeed, 0)
 	for i := 0; i < len(bytes); i += 4 {
 		functions = append(functions, HashWithSeed{seed: bytes[i : i+4]})
