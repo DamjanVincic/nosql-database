@@ -6,18 +6,18 @@ import (
 )
 
 type BloomFilter struct {
-	m             uint
-	k             uint
+	m             uint32
+	k             uint32
 	byteArray     []byte
 	hashFunctions []hash.HashWithSeed
 }
 
-func calculateM(expectedElements int, falsePositiveRate float64) uint {
-	return uint(-float64(expectedElements) * math.Log(falsePositiveRate) / math.Pow(math.Log(2), 2))
+func calculateM(expectedElements int, falsePositiveRate float64) uint32 {
+	return uint32(-float64(expectedElements) * math.Log(falsePositiveRate) / math.Pow(math.Log(2), 2))
 }
 
-func calculateK(expectedElements int, m uint) uint {
-	return uint(float64(m) / float64(expectedElements) * math.Log(2))
+func calculateK(expectedElements int, m uint32) uint32 {
+	return uint32(float64(m) / float64(expectedElements) * math.Log(2))
 }
 
 func CreateBloomFilter(expectedElements int, falsePositiveRate float64) BloomFilter {

@@ -19,12 +19,12 @@ func (h HashWithSeed) Hash(data []byte) uint32 {
 	return fn.Sum32()
 }
 
-func CreateHashFunctions(k uint) []HashWithSeed {
+func CreateHashFunctions(k uint32) []HashWithSeed {
 	functions := make([]HashWithSeed, k)
-	currentTime := uint(time.Now().Unix())
-	for i := uint(0); i < k; i++ {
-		seed := make([]byte, 32)
-		binary.BigEndian.PutUint32(seed, uint32(currentTime+i))
+	currentTime := uint32(time.Now().Unix())
+	for i := uint32(0); i < k; i++ {
+		seed := make([]byte, 4)
+		binary.BigEndian.PutUint32(seed, currentTime+i)
 		hfn := HashWithSeed{seed: seed}
 		functions[i] = hfn
 	}
