@@ -30,3 +30,19 @@ func CreateHashFunctions(k uint32) []HashWithSeed {
 	}
 	return functions
 }
+
+func Serialize(functions []HashWithSeed) []byte {
+	bytes := make([]byte, 0)
+	for _, fn := range functions {
+		bytes = append(bytes, fn.seed...)
+	}
+	return bytes
+}
+
+func Deserialize(bytes []byte) []HashWithSeed {
+	functions := make([]HashWithSeed, 0)
+	for i := 0; i < len(bytes); i += 4 {
+		functions = append(functions, HashWithSeed{seed: bytes[i : i+4]})
+	}
+	return functions
+}
