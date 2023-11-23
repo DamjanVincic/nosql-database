@@ -34,7 +34,7 @@ func CreateBloomFilter(expectedElements int, falsePositiveRate float64) BloomFil
 	return bf
 }
 
-func (bf BloomFilter) AddElement(element []byte) {
+func (bf *BloomFilter) AddElement(element []byte) {
 	// Hash all elements and set the corresponding bits in the byte array to 1
 	for _, fn := range bf.hashFunctions {
 		idx := fn.Hash(element) % bf.m
@@ -42,7 +42,7 @@ func (bf BloomFilter) AddElement(element []byte) {
 	}
 }
 
-func (bf BloomFilter) ContainsElement(element []byte) bool {
+func (bf *BloomFilter) ContainsElement(element []byte) bool {
 	// Hash the element and check if all bits at the corresponding indexes in the byte array are 1
 	for _, fn := range bf.hashFunctions {
 		idx := fn.Hash(element) % bf.m
@@ -53,21 +53,22 @@ func (bf BloomFilter) ContainsElement(element []byte) bool {
 	return true
 }
 
-func (bf BloomFilter) Serialize() []byte {
-	bytes := make([]byte, 0)
+func (bf *BloomFilter) Serialize() []byte {
+	// Calculate the number of bytes needed to store the byte array and the hash functions
+	bytes := make([]byte, 8+bf.m+4*bf.k)
 
-	// Temporary storage for 32-bit integers
-	tempByte := make([]byte, 4)
+	// Append the number of bytes in the byte array
+	binary.BigEndian.PutUint32(bytes[:4], bf.m)
 
-	binary.BigEndian.PutUint32(tempByte, bf.m)
-	// Append the number of bytes in the byte array and then the byte array itself
-	bytes = append(bytes, tempByte...)
-	bytes = append(bytes, bf.byteArray...)
+	// Append the number of hash functions
+	binary.BigEndian.PutUint32(bytes[4:8], bf.k)
 
-	binary.BigEndian.PutUint32(tempByte, bf.k)
-	// Append the number of hash functions and then the hash functions themselves
-	bytes = append(bytes, tempByte...)
-	bytes = append(bytes, hash.Serialize(bf.hashFunctions)...)
+	// Copy the byte array after the first 8 bytes
+	copy(bytes[8:8+bf.m], bf.byteArray)
+
+	// Copy the hash functions after the byte array
+	copy(bytes[8+bf.m:], hash.Serialize(bf.hashFunctions))
+
 	return bytes
 }
 
@@ -75,14 +76,14 @@ func Deserialize(bytes []byte) BloomFilter {
 	// First 4 bytes are the number of bytes in the byte array
 	m := binary.BigEndian.Uint32(bytes[:4])
 
-	// Next m bytes are the byte array
-	byteArray := bytes[4 : 4+m]
-
 	// Next 4 bytes are the number of hash functions
-	k := binary.BigEndian.Uint32(bytes[4+m : 8+m])
+	k := binary.BigEndian.Uint32(bytes[4:8])
+
+	// Next m bytes is the byte array
+	byteArray := bytes[8 : 8+m]
 
 	// Next k*4 bytes are the hash functions seeds
-	hashFunctions := hash.Deserialize(bytes[8+m : 8+m+4*k])
+	hashFunctions := hash.Deserialize(bytes[8+m:])
 
 	return BloomFilter{
 		m:             m,
