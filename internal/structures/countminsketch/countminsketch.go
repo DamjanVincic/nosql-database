@@ -1,7 +1,8 @@
-package main
+package countminsketch
 
 import (
 	"encoding/gob"
+	"github.com/DamjanVincic/key-value-engine/internal/structures/hash"
 	"os"
 	"slices"
 )
@@ -9,7 +10,7 @@ import (
 type CountMinSketch struct {
 	M, K          uint
 	Matrix        [][]uint
-	HashFunctions []HashWithSeed
+	HashFunctions []hash.HashWithSeed
 }
 
 func newCMS(errorRate float64, probability float64) CountMinSketch {
@@ -22,13 +23,13 @@ func newCMS(errorRate float64, probability float64) CountMinSketch {
 			Matrix[i][j] = 0
 		}
 	}
-	return CountMinSketch{M: M, K: K, Matrix: Matrix, HashFunctions: CreateHashFunctions(K)}
+	return CountMinSketch{M: M, K: K, Matrix: Matrix, HashFunctions: hash.CreateHashFunctions(uint32(K))}
 }
 
 func (cms *CountMinSketch) Add(element []byte) {
 	for key, seed := range cms.HashFunctions {
 		value := seed.Hash(element)
-		cms.Matrix[key][value%uint64(cms.M)] += 1
+		cms.Matrix[key][value%uint32(cms.M)] += 1
 	}
 }
 
@@ -36,7 +37,7 @@ func (cms *CountMinSketch) GetFrequency(element []byte) uint {
 	var count = make([]uint, cms.K)
 	for key, seed := range cms.HashFunctions {
 		value := seed.Hash(element)
-		count[key] = cms.Matrix[key][value%uint64(cms.M)]
+		count[key] = cms.Matrix[key][value%uint32(cms.M)]
 	}
 
 	return slices.Min(count)
