@@ -9,17 +9,23 @@ import (
 	"os"
 )
 
+// min and max number of bits that represent index of registry in which result is stored
+// TBD should be read from config file?
 const (
 	HLL_MIN_PRECISION = 4
 	HLL_MAX_PRECISION = 16
 )
 
 type HyperLogLog struct {
-	m   uint64
-	p   uint8
+	//number of registries
+	m uint64
+	//precision (number of bits for registry index)
+	p uint8
+	//registries
 	reg []uint8
 }
 
+// creates new instance of hll
 func NewHyperLogLog(bucketBits uint8) HyperLogLog {
 	if bucketBits < HLL_MIN_PRECISION || bucketBits > HLL_MAX_PRECISION {
 		panic("Hll precision must be between" + string(rune(HLL_MIN_PRECISION)) + " and " + string(rune(HLL_MIN_PRECISION)))
@@ -59,8 +65,10 @@ func (hyperLogLog *HyperLogLog) emptyCount() int {
 
 func (hyperLogLog *HyperLogLog) add(value []byte) {
 	hashValue := Hash(value)
+	//get index of registry in which to put the result
 	bucketIndex := firstKbits(hashValue, uint64(hyperLogLog.p))
 	count := uint8(trailingZeroBits(hashValue)) + 1
+	//if current result is greater than the last one, put it in the registry
 	if count > hyperLogLog.reg[bucketIndex] {
 		hyperLogLog.reg[bucketIndex] = count
 	}
@@ -76,6 +84,7 @@ func (hyperLogLog *HyperLogLog) serialize() []byte {
 	serializedHll = append(serializedHll, tempByte...)
 	serializedHll = append(serializedHll, hyperLogLog.p)
 
+	//append data from each registry to byte slice
 	for _, item := range hyperLogLog.reg {
 		serializedHll = append(serializedHll, item)
 	}
@@ -83,10 +92,14 @@ func (hyperLogLog *HyperLogLog) serialize() []byte {
 }
 
 func deserialize(serializedHll []byte) HyperLogLog {
+	//get m from first 8 bytes of serialized hll
 	m := binary.BigEndian.Uint64(serializedHll[:8])
+	//get p from 9th byte of serialized hll
 	p := serializedHll[8]
 	var i uint64
 	reg := make([]uint8, m)
+
+	//read registry data from remaining bytes
 	for i = 0; i < m; i++ {
 		reg[i] = serializedHll[9+i]
 	}
