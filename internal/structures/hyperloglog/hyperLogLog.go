@@ -1,10 +1,17 @@
 package main
 
 import (
+	"crypto/md5"
 	"encoding/binary"
 	"log"
 	"math"
+	"math/bits"
 	"os"
+)
+
+const (
+	HLL_MIN_PRECISION = 4
+	HLL_MAX_PRECISION = 16
 )
 
 type HyperLogLog struct {
@@ -14,6 +21,9 @@ type HyperLogLog struct {
 }
 
 func NewHyperLogLog(bucketBits uint8) HyperLogLog {
+	if bucketBits < HLL_MIN_PRECISION || bucketBits > HLL_MAX_PRECISION {
+		panic("Hll precision must be between" + string(rune(HLL_MIN_PRECISION)) + " and " + string(rune(HLL_MIN_PRECISION)))
+	}
 	size := uint64(math.Pow(2, float64(bucketBits)))
 	return HyperLogLog{p: bucketBits, m: size, reg: make([]uint8, size)}
 }
@@ -97,4 +107,20 @@ func loadFromFile(destination string) HyperLogLog {
 		log.Fatal(err)
 	}
 	return deserialize(serializedHll)
+}
+
+//helper functions
+
+func firstKbits(value, k uint64) uint64 {
+	return value >> (64 - k)
+}
+
+func trailingZeroBits(value uint64) int {
+	return bits.TrailingZeros64(value)
+}
+
+func Hash(data []byte) uint64 {
+	fn := md5.New()
+	fn.Write(data)
+	return binary.BigEndian.Uint64(fn.Sum(nil))
 }
