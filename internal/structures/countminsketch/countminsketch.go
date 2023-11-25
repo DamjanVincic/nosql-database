@@ -23,14 +23,11 @@ func calculateK(delta float64) uint32 {
 }
 
 func NewCMS(errorRate float64, probability float64) CountMinSketch {
-	m := uint32(calculateM(errorRate))
-	k := uint32(calculateK(probability))
+	m := calculateM(errorRate)
+	k := calculateK(probability)
 	matrix := make([][]uint32, k)
 	for i := range matrix {
 		matrix[i] = make([]uint32, m)
-		for j := range matrix[i] {
-			matrix[i][j] = 0
-		}
 	}
 	return CountMinSketch{m: m, k: k, matrix: matrix, hashFunctions: hash.CreateHashFunctions(uint32(k))}
 }
@@ -39,7 +36,7 @@ func (cms *CountMinSketch) Add(element []byte) {
 	// Hash the element and increase the value of the corresponding matrix cell by 1
 	for key, seed := range cms.hashFunctions {
 		value := seed.Hash(element)
-		cms.matrix[key][value%uint32(cms.m)] += 1
+		cms.matrix[key][value%cms.m] += 1
 	}
 }
 
@@ -48,7 +45,7 @@ func (cms *CountMinSketch) GetFrequency(element []byte) uint32 {
 	var count = make([]uint32, cms.k)
 	for key, seed := range cms.hashFunctions {
 		value := seed.Hash(element)
-		count[key] = cms.matrix[key][value%uint32(cms.m)]
+		count[key] = cms.matrix[key][value%cms.m]
 	}
 	return slices.Min(count)
 }
@@ -67,7 +64,7 @@ func (cms *CountMinSketch) Serialize() []byte {
 	// Append the matrix after the first 8 bytes
 	for i := range cms.matrix {
 		for j := range cms.matrix[i] {
-			binary.BigEndian.PutUint32(bytes[8+(i*4+j)*4:12+(i*4+j)*4], cms.matrix[i][j])
+			binary.BigEndian.PutUint32(bytes[8+(i*int(cms.m)+j)*4:12+(i*int(cms.m)+j)*4], cms.matrix[i][j])
 		}
 	}
 
@@ -89,7 +86,7 @@ func Deserialize(bytes []byte) CountMinSketch {
 	for i := range matrix {
 		matrix[i] = make([]uint32, m)
 		for j := range matrix[i] {
-			matrix[i][j] = binary.BigEndian.Uint32(bytes[8+(i*4+j)*4 : 12+(i*4+j)*4])
+			matrix[i][j] = binary.BigEndian.Uint32(bytes[8+(i*int(m)+j)*4 : 12+(i*int(m)+j)*4])
 		}
 	}
 	// Next k*4 bytes are the hash functions seeds
