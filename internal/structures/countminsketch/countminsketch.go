@@ -2,14 +2,13 @@ package countminsketch
 
 import (
 	"encoding/binary"
+	"github.com/DamjanVincic/key-value-engine/internal/structures/hash"
 	"math"
 	"slices"
-
-	"github.com/DamjanVincic/key-value-engine/internal/structures/hash"
 )
 
 type CountMinSketch struct {
-	m, k          uint32
+	m, k          uint32 // m is the number of columns, k is the number of rows (hash functions)
 	matrix        [][]uint32
 	hashFunctions []hash.HashWithSeed
 }
