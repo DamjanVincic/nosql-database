@@ -29,7 +29,7 @@ func NewCMS(errorRate float64, probability float64) CountMinSketch {
 	for i := range matrix {
 		matrix[i] = make([]uint32, m)
 	}
-	return CountMinSketch{m: m, k: k, matrix: matrix, hashFunctions: hash.CreateHashFunctions(uint32(k))}
+	return CountMinSketch{m: m, k: k, matrix: matrix, hashFunctions: hash.CreateHashFunctions(k)}
 }
 
 func (cms *CountMinSketch) Add(element []byte) {
