@@ -18,8 +18,12 @@ func contains(list []int, element int) bool {
 	}
 	return false
 }
-func init() {
-
+func initTree() *BTreeNode {
+	return &BTreeNode{
+		keys:     []int{},
+		children: []*BTreeNode{},
+		leaf:     true,
+	}
 }
 
 // root at first and then recursion, until if finds bigger key
