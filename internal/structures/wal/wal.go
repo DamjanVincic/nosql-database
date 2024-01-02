@@ -3,6 +3,7 @@ package wal
 import (
 	"encoding/binary"
 	"fmt"
+	"github.com/edsrzf/mmap-go"
 	"hash/crc32"
 	"os"
 	"path/filepath"
@@ -152,6 +153,55 @@ func NewWAL(segmentSize uint64) *WAL {
 		segmentSize:     segmentSize,
 		currentFilename: filename,
 	}
+}
+
+func (wal *WAL) AddRecord(record *Record) {
+	// Check if the current file is full
+	fileInfo, err := os.Stat(filepath.Join(path, wal.currentFilename))
+	if err != nil {
+		panic(err)
+	}
+
+	dirEntries, err := os.ReadDir(path)
+	if err != nil {
+		panic(err)
+	}
+
+	// If the current file is full, create a new one
+	if uint64(fileInfo.Size())+RecordHeaderSize+record.KeySize+record.ValueSize > wal.segmentSize {
+		wal.currentFilename = fmt.Sprintf("%s%05d.log", prefix, len(dirEntries)+1)
+		_, err := os.Create(filepath.Join(path, wal.currentFilename))
+		if err != nil {
+			panic(err)
+		}
+	}
+
+	// Append the record to the current file
+	f, err := os.OpenFile(filepath.Join(path, wal.currentFilename), os.O_RDWR, 0644)
+	if err != nil {
+		panic(err)
+	}
+	defer f.Close()
+
+	fileInfo, err = f.Stat()
+	if err != nil {
+		panic(err)
+	}
+	fileSize := fileInfo.Size()
+
+	err = f.Truncate(fileSize + int64(RecordHeaderSize+record.KeySize+record.ValueSize))
+	if err != nil {
+		return
+	}
+
+	mmapFile, err := mmap.Map(f, mmap.RDWR, 0)
+	if err != nil {
+		panic(err)
+	}
+	defer mmapFile.Unmap()
+
+	// Append the record to the file
+	copy(mmapFile[fileSize:], record.Serialize())
 }
 
 func CRC32(data []byte) uint32 {
