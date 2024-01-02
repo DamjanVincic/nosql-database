@@ -31,12 +31,27 @@ func search(key int, node *BTreeNode) (bool, *BTreeNode) {
 	if contains(node.keys, key) {
 		return true, node
 	}
-	for _, child := range node.children {
-		found, foundNode := search(key, child)
-		if found {
-			return true, foundNode
+
+	// check if the key is less than the minimum key in the current nodes keys
+	if len(node.keys) > 0 && key < node.keys[0] {
+		return false, nil
+	}
+
+	// check if the key is greater than the maximum key in the current nodes keys
+	if len(node.keys) > 0 && key > node.keys[len(node.keys)-1] {
+		return false, nil
+	}
+
+	// iterate through children only if its not a leaf node
+	if !node.leaf {
+		for _, child := range node.children {
+			found, foundNode := search(key, child)
+			if found {
+				return true, foundNode
+			}
 		}
 	}
+
 	return false, nil
 }
 func Insert(key int, root *BTreeNode) {
