@@ -204,6 +204,47 @@ func (wal *WAL) AddRecord(record *Record) {
 	copy(mmapFile[fileSize:], record.Serialize())
 }
 
+func (wal *WAL) GetRecords() []*Record {
+	files, err := os.ReadDir(path)
+	if err != nil {
+		panic(err)
+	}
+
+	records := make([]*Record, 0)
+	for _, file := range files {
+		// Open the file
+		f, err := os.Open(filepath.Join(path, file.Name()))
+		if err != nil {
+			panic(err)
+		}
+
+		mmapFile, err := mmap.Map(f, mmap.RDONLY, 0)
+		if err != nil {
+			panic(err)
+		}
+
+		// Read the records from the file
+		for i := 0; i < len(mmapFile); {
+			keySize := binary.BigEndian.Uint64(mmapFile[i+KeySizeStart : i+ValueSizeStart])
+			valueSize := binary.BigEndian.Uint64(mmapFile[i+ValueSizeStart : i+KeyStart])
+			record := Deserialize(mmapFile[i : uint64(i)+RecordHeaderSize+keySize+valueSize])
+			records = append(records, record)
+			i += RecordHeaderSize + int(record.KeySize) + int(record.ValueSize)
+		}
+		err = mmapFile.Unmap()
+		if err != nil {
+			panic(err)
+		}
+
+		err = f.Close()
+		if err != nil {
+			panic(err)
+		}
+	}
+
+	return records
+}
+
 func CRC32(data []byte) uint32 {
 	return crc32.ChecksumIEEE(data)
 }
