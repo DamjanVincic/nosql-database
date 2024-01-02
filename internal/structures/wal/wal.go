@@ -100,7 +100,9 @@ func Deserialize(bytes []byte) *Record {
 	keySize := binary.BigEndian.Uint64(bytes[KeySizeStart:ValueSizeStart])
 	valueSize := binary.BigEndian.Uint64(bytes[ValueSizeStart:KeyStart])
 	key := string(bytes[KeyStart : KeyStart+keySize])
-	value := bytes[KeyStart+keySize:]
+
+	var value = make([]byte, valueSize)
+	copy(value, bytes[KeyStart+keySize:])
 
 	// Check if the CRC matches
 	crcValue := make([]byte, 0)
