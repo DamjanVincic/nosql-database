@@ -73,7 +73,9 @@ func NewWAL(segmentSize uint64) (*WAL, error) {
 	}, nil
 }
 
-func (wal *WAL) AddRecord(record *Record) error {
+func (wal *WAL) AddRecord(key string, value []byte, tombstone bool) error {
+	var record = NewRecord(key, value, tombstone)
+
 	// Check if the current file is full
 	fileInfo, err := os.Stat(filepath.Join(path, wal.currentFilename))
 	if err != nil {
