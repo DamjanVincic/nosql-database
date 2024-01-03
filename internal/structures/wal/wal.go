@@ -194,16 +194,16 @@ func (wal *WAL) AddRecord(key string, value []byte, tombstone bool) error {
 		if err != nil {
 			return err
 		}
-		defer func(f *os.File) {
-			err := f.Close()
-			if err != nil {
-				panic(err)
-			}
-		}(f)
+		defer func(f *os.File, error *error) {
+			*error = f.Close()
+		}(f, &err)
+		if err != nil {
+			return err
+		}
 
 		fileInfo, err = f.Stat()
 		if err != nil {
-			panic(err)
+			return err
 		}
 		fileSize := fileInfo.Size()
 
