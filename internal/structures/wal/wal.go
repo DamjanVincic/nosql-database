@@ -131,6 +131,11 @@ func (wal *WAL) AddRecord(key string, value []byte, tombstone bool) error {
 			return err
 		}
 
+		err = file.Truncate(int64(fileSize + remainingBytes))
+		if err != nil {
+			return err
+		}
+
 		mmapFile, err := mmap.Map(file, mmap.RDWR, 0)
 		if err != nil {
 			return err
@@ -138,12 +143,6 @@ func (wal *WAL) AddRecord(key string, value []byte, tombstone bool) error {
 		defer func(mmapFile *mmap.MMap, err *error) {
 			*err = mmapFile.Unmap()
 		}(&mmapFile, &err)
-		if err != nil {
-			return err
-		}
-
-		// Append the record to the file
-		err = file.Truncate(int64(fileSize + remainingBytes))
 		if err != nil {
 			return err
 		}
