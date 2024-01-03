@@ -47,12 +47,12 @@ type WAL struct {
 	currentFilename string
 }
 
-func NewWAL(segmentSize uint64) *WAL {
+func NewWAL(segmentSize uint64) (*WAL, error) {
 	dirEntries, err := os.ReadDir(path)
 	if os.IsNotExist(err) {
 		err := os.Mkdir(path, os.ModePerm)
 		if err != nil {
-			panic(err)
+			return nil, err
 		}
 	}
 	var filename string
@@ -61,7 +61,7 @@ func NewWAL(segmentSize uint64) *WAL {
 		filename = fmt.Sprintf("%s%05d.log", prefix, 1)
 		_, err := os.Create(filepath.Join(path, filename))
 		if err != nil {
-			panic(err)
+			return nil, err
 		}
 	} else {
 		// Get the last file
@@ -70,19 +70,19 @@ func NewWAL(segmentSize uint64) *WAL {
 	return &WAL{
 		segmentSize:     segmentSize,
 		currentFilename: filename,
-	}
+	}, nil
 }
 
-func (wal *WAL) AddRecord(record *Record) {
+func (wal *WAL) AddRecord(record *Record) error {
 	// Check if the current file is full
 	fileInfo, err := os.Stat(filepath.Join(path, wal.currentFilename))
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	dirEntries, err := os.ReadDir(path)
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	// If the current file is full, create a new one
@@ -90,14 +90,14 @@ func (wal *WAL) AddRecord(record *Record) {
 		wal.currentFilename = fmt.Sprintf("%s%05d.log", prefix, len(dirEntries)+1)
 		_, err := os.Create(filepath.Join(path, wal.currentFilename))
 		if err != nil {
-			panic(err)
+			return err
 		}
 	}
 
 	// Append the record to the current file
 	f, err := os.OpenFile(filepath.Join(path, wal.currentFilename), os.O_RDWR, 0644)
 	if err != nil {
-		panic(err)
+		return err
 	}
 	defer func(f *os.File) {
 		err := f.Close()
@@ -114,28 +114,31 @@ func (wal *WAL) AddRecord(record *Record) {
 
 	err = f.Truncate(fileSize + int64(RecordHeaderSize+record.KeySize+record.ValueSize))
 	if err != nil {
-		return
+		return err
 	}
 
 	mmapFile, err := mmap.Map(f, mmap.RDWR, 0)
 	if err != nil {
-		panic(err)
+		return err
 	}
-	defer func(mmapFile *mmap.MMap) {
-		err := mmapFile.Unmap()
-		if err != nil {
-			panic(err)
-		}
-	}(&mmapFile)
+	defer func(mmapFile *mmap.MMap, err *error) {
+		unmapError := mmapFile.Unmap()
+		*err = unmapError
+	}(&mmapFile, &err)
+	if err != nil {
+		return err
+	}
 
 	// Append the record to the file
 	copy(mmapFile[fileSize:], record.Serialize())
+
+	return nil
 }
 
-func (wal *WAL) GetRecords() []*Record {
+func (wal *WAL) GetRecords() ([]*Record, error) {
 	files, err := os.ReadDir(path)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 
 	records := make([]*Record, 0)
@@ -143,12 +146,12 @@ func (wal *WAL) GetRecords() []*Record {
 		// Open the file
 		f, err := os.Open(filepath.Join(path, file.Name()))
 		if err != nil {
-			panic(err)
+			return nil, err
 		}
 
 		mmapFile, err := mmap.Map(f, mmap.RDONLY, 0)
 		if err != nil {
-			panic(err)
+			return nil, err
 		}
 
 		// Read the records from the file
@@ -161,16 +164,16 @@ func (wal *WAL) GetRecords() []*Record {
 		}
 		err = mmapFile.Unmap()
 		if err != nil {
-			panic(err)
+			return nil, err
 		}
 
 		err = f.Close()
 		if err != nil {
-			panic(err)
+			return nil, err
 		}
 	}
 
-	return records
+	return records, nil
 }
 
 func CRC32(data []byte) uint32 {
