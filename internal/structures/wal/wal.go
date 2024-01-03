@@ -238,9 +238,9 @@ func (wal *WAL) GetRecords() ([]*Record, error) {
 	}
 
 	records := make([]*Record, 0)
+	var recordBytes = make([]byte, 0)
 	for _, file := range files {
-		// Open the file
-		f, err := os.Open(filepath.Join(path, file.Name()))
+		f, err := os.OpenFile(filepath.Join(path, file.Name()), os.O_RDONLY, 0644)
 		if err != nil {
 			return nil, err
 		}
@@ -250,22 +250,43 @@ func (wal *WAL) GetRecords() ([]*Record, error) {
 			return nil, err
 		}
 
-		// Read the records from the file
-		for i := 0; i < len(mmapFile); {
+		var offset = int(binary.BigEndian.Uint64(mmapFile[:HeaderSize])) + HeaderSize
+		recordBytes = append(recordBytes, mmapFile[HeaderSize:offset]...)
+		if len(recordBytes) != 0 {
+			record, err := Deserialize(recordBytes)
+			if err != nil {
+				return nil, err
+			}
+			records = append(records, record)
+			recordBytes = []byte{}
+		}
+
+		var i = offset
+		for i < len(mmapFile) {
+			if i+RecordHeaderSize > len(mmapFile) {
+				break
+			}
 			keySize := binary.BigEndian.Uint64(mmapFile[i+KeySizeStart : i+ValueSizeStart])
 			valueSize := binary.BigEndian.Uint64(mmapFile[i+ValueSizeStart : i+KeyStart])
+
+			if i+RecordHeaderSize+int(keySize)+int(valueSize) > len(mmapFile) {
+				break
+			}
+
 			record, err := Deserialize(mmapFile[i : uint64(i)+RecordHeaderSize+keySize+valueSize])
 			if err != nil {
 				return nil, err
 			}
 			records = append(records, record)
-			i += RecordHeaderSize + int(record.KeySize) + int(record.ValueSize)
+			i += RecordHeaderSize + int(record.KeySize+record.ValueSize)
 		}
+
+		recordBytes = append(recordBytes, mmapFile[i:]...)
+
 		err = mmapFile.Unmap()
 		if err != nil {
 			return nil, err
 		}
-
 		err = f.Close()
 		if err != nil {
 			return nil, err
