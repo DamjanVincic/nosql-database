@@ -181,7 +181,12 @@ func (wal *WAL) AddRecord(record *Record) {
 	if err != nil {
 		panic(err)
 	}
-	defer f.Close()
+	defer func(f *os.File) {
+		err := f.Close()
+		if err != nil {
+			panic(err)
+		}
+	}(f)
 
 	fileInfo, err = f.Stat()
 	if err != nil {
@@ -198,7 +203,12 @@ func (wal *WAL) AddRecord(record *Record) {
 	if err != nil {
 		panic(err)
 	}
-	defer mmapFile.Unmap()
+	defer func(mmapFile *mmap.MMap) {
+		err := mmapFile.Unmap()
+		if err != nil {
+			panic(err)
+		}
+	}(&mmapFile)
 
 	// Append the record to the file
 	copy(mmapFile[fileSize:], record.Serialize())
