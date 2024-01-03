@@ -2,6 +2,7 @@ package wal
 
 import (
 	"encoding/binary"
+	"errors"
 	"time"
 )
 
@@ -56,7 +57,7 @@ func (record *Record) Serialize() []byte {
 	return bytes
 }
 
-func Deserialize(bytes []byte) *Record {
+func Deserialize(bytes []byte) (*Record, error) {
 	crc := binary.BigEndian.Uint32(bytes[CrcStart:TimestampStart])
 	timestamp := binary.BigEndian.Uint64(bytes[TimestampStart:TombstoneStart])
 	tombstone := bytes[TombstoneStart] == 1
@@ -72,7 +73,7 @@ func Deserialize(bytes []byte) *Record {
 	crcValue = append(crcValue, []byte(key)...)
 	crcValue = append(crcValue, value...)
 	if crc != CRC32(crcValue) {
-		panic("CRC does not match")
+		return nil, errors.New("CRC does not match")
 	}
 
 	return &Record{
@@ -83,5 +84,5 @@ func Deserialize(bytes []byte) *Record {
 		ValueSize: valueSize,
 		Key:       key,
 		Value:     value,
-	}
+	}, nil
 }
