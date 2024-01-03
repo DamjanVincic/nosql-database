@@ -118,9 +118,9 @@ func (skipList *SkipList) Add(key float64, value SkipListValue) {
 		level = skipList.height + 1
 		skipList.height = level
 
-		skipList.heads[level-1] = &SkipListNode{key: math.Inf(-1), below: skipList.heads[level-2]}
+		skipList.heads = append(skipList.heads, &SkipListNode{key: math.Inf(-1), below: skipList.heads[level-2]})
 		skipList.heads[level-2].above = skipList.heads[level-1]
-		skipList.tails[level-1] = &SkipListNode{key: math.Inf(1), below: skipList.tails[level-2], previous: skipList.heads[level-1]}
+		skipList.tails = append(skipList.tails, &SkipListNode{key: math.Inf(1), below: skipList.tails[level-2], previous: skipList.heads[level-1]})
 		skipList.heads[level-1].next = skipList.tails[level-1]
 		skipList.tails[level-2].above = skipList.tails[level-1]
 	}
@@ -138,7 +138,7 @@ func (skipList *SkipList) Add(key float64, value SkipListValue) {
 		}
 		lastNewNode = newNode
 
-		if i != level-1 { //there is no need to find closest node above if this is the last level
+		if i != level-1 { //there is no need to find the closest node above if this is the last level
 			for closestNode.above == nil {
 				if closestNode.previous != nil {
 					closestNode = closestNode.previous
