@@ -62,7 +62,7 @@ func (skipList *SkipList) find(key float64, findClosest bool) (ok bool, found *S
 	ok = false
 	found = nil
 
-	current := skipList.heads[skipList.height-1]
+	current := skipList.heads[skipList.height-1] //starting search from top level
 
 	for {
 		next := current.next
@@ -72,10 +72,10 @@ func (skipList *SkipList) find(key float64, findClosest bool) (ok bool, found *S
 			return
 		} else if next.key < key {
 			current = current.next
-		} else if next.key > key {
+		} else if next.key > key { //key is not on this level, if possible go below
 			if current.below != nil {
 				current = current.below
-			} else {
+			} else { //key does not exist
 				if findClosest {
 					ok = true
 					found = current
@@ -88,9 +88,14 @@ func (skipList *SkipList) find(key float64, findClosest bool) (ok bool, found *S
 	}
 }
 
-func (skipList *SkipList) Get(key float64) SkipListValue {
-	_, elem := skipList.find(key, false)
-	return elem.value
+func (skipList *SkipList) Get(key float64) (ok bool, found SkipListValue) {
+	ok, elem := skipList.find(key, false)
+	if !ok {
+		found = SkipListValue{}
+	} else {
+		found = elem.value
+	}
+	return
 }
 
 func (skipList *SkipList) Add(key float64, value SkipListValue) {
@@ -128,16 +133,16 @@ func (skipList *SkipList) Add(key float64, value SkipListValue) {
 	var lastNewNode *SkipListNode
 	lastNewNode = nil
 
-	for i := 0; i < level; i++ {
-
+	for i := 0; i < level; i++ { //create new node on all levels needed
 		newNode := &SkipListNode{previous: closestNode, next: closestNode.next, below: lastNewNode, above: nil, key: key, value: value}
 		newNode.next.previous = newNode
 		closestNode.next = newNode
-		if lastNewNode != nil {
+		if lastNewNode != nil { //connect new node to nodes below
 			lastNewNode.above = newNode
 		}
 		lastNewNode = newNode
 
+		//find the closest node on level above
 		if i != level-1 { //there is no need to find the closest node above if this is the last level
 			for closestNode.above == nil {
 				if closestNode.previous != nil {
@@ -158,9 +163,10 @@ func (skipList *SkipList) Remove(key float64) bool {
 		return false
 	}
 
+	//remove node on the highest level
 	found.previous.next = found.next
 	found.next.previous = found.previous
-	for found.below != nil {
+	for found.below != nil { //remove node on lower levels
 		found = found.below
 		found.previous.next = found.next
 		found.next.previous = found.previous
@@ -174,8 +180,9 @@ func (skipList *SkipList) LogicallyRemove(key float64) bool {
 	if !ok {
 		return false
 	}
+	//make value with updated tombstone
 	newValue := found.value
 	newValue.tombstone = false
-	skipList.Add(key, newValue)
+	skipList.Add(key, newValue) //save changes in all nodes
 	return true
 }
