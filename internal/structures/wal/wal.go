@@ -109,124 +109,93 @@ func (wal *WAL) CreateNewSegment() error {
 func (wal *WAL) AddRecord(key string, value []byte, tombstone bool) error {
 	var record = NewRecord(key, value, tombstone)
 	var recordBytes = record.Serialize()
-	var recordSize = RecordHeaderSize + record.KeySize + record.ValueSize
+	var recordSize = RecordHeaderSize + record.KeySize + record.ValueSize // len(recordBytes) ?
 
-	fileInfo, err := os.Stat(filepath.Join(path, wal.currentFilename))
-	if err != nil {
-		return err
-	}
-
-	// If the current file is full, create a new one
-	var fileSize = uint64(fileInfo.Size())
-	var remainingBytes = wal.segmentSize - (fileSize - HeaderSize)
-	if remainingBytes < recordSize {
+	var idx uint64 = 0
+	for idx < uint64(len(recordBytes)) {
 		file, err := os.OpenFile(filepath.Join(path, wal.currentFilename), os.O_RDWR, 0644)
 		if err != nil {
 			return err
 		}
-		defer func(file *os.File, err *error) {
-			*err = file.Close()
-		}(file, &err)
+
+		fileInfo, err := file.Stat()
 		if err != nil {
 			return err
 		}
 
-		err = file.Truncate(int64(fileSize + remainingBytes))
+		fileSize := uint64(fileInfo.Size())
+		remainingBytes := wal.segmentSize - (fileSize - HeaderSize)
+
+		var mmapFile mmap.MMap
+		if idx+remainingBytes < recordSize {
+			err = file.Truncate(int64(fileSize + remainingBytes))
+			if err != nil {
+				return err
+			}
+
+			mmapFile, err = mmap.Map(file, mmap.RDWR, 0)
+			if err != nil {
+				return err
+			}
+
+			// Copy the bytes that can fit in the current file
+			copy(mmapFile[fileSize:], recordBytes[idx:idx+remainingBytes])
+
+			err = wal.CreateNewSegment()
+			if err != nil {
+				return err
+			}
+
+			newSegment, err := os.OpenFile(filepath.Join(path, wal.currentFilename), os.O_RDWR, 0644)
+			if err != nil {
+				return err
+			}
+
+			newSegmentMmap, err := mmap.Map(newSegment, mmap.RDWR, 0)
+			if err != nil {
+				return err
+			}
+
+			// If the record is bigger than the segment size, it'll take up the entire new segment
+			binary.BigEndian.PutUint64(newSegmentMmap[:HeaderSize], min(recordSize-(idx+remainingBytes), wal.segmentSize))
+			fmt.Println(recordSize-(idx+remainingBytes), wal.segmentSize)
+			err = newSegmentMmap.Unmap()
+			if err != nil {
+				return err
+			}
+
+			err = newSegment.Close()
+			if err != nil {
+				return err
+			}
+		} else {
+			err = file.Truncate(int64(fileSize + recordSize - idx))
+			if err != nil {
+				return err
+			}
+
+			mmapFile, err = mmap.Map(file, mmap.RDWR, 0)
+			if err != nil {
+				return err
+			}
+
+			// Copy the remaining bytes to the new file
+			copy(mmapFile[fileSize:], recordBytes[idx:])
+		}
+
+		err = mmapFile.Unmap()
 		if err != nil {
 			return err
 		}
 
-		mmapFile, err := mmap.Map(file, mmap.RDWR, 0)
-		if err != nil {
-			return err
-		}
-		defer func(mmapFile *mmap.MMap, err *error) {
-			*err = mmapFile.Unmap()
-		}(&mmapFile, &err)
+		err = file.Close()
 		if err != nil {
 			return err
 		}
 
-		// Copy the bytes that can fit in the current file
-		copy(mmapFile[fileSize:], recordBytes[:remainingBytes])
-
-		err = wal.CreateNewSegment()
-		if err != nil {
-			return err
-		}
-
-		file2, err := os.OpenFile(filepath.Join(path, wal.currentFilename), os.O_RDWR, 0644)
-		if err != nil {
-			return err
-		}
-		defer func(file2 *os.File, err *error) {
-			*err = file2.Close()
-		}(file2, &err)
-		if err != nil {
-			return err
-		}
-
-		fileInfo2, err := file2.Stat()
-		if err != nil {
-			return err
-		}
-
-		err = file2.Truncate(fileInfo2.Size() + int64(recordSize-remainingBytes))
-
-		mmapFile2, err := mmap.Map(file2, mmap.RDWR, 0)
-		if err != nil {
-			return err
-		}
-		defer func(mmapFile2 *mmap.MMap, err *error) {
-			*err = mmapFile2.Unmap()
-		}(&mmapFile2, &err)
-		if err != nil {
-			return err
-		}
-
-		binary.BigEndian.PutUint64(mmapFile2[:HeaderSize], recordSize-remainingBytes)
-
-		// Copy the remaining bytes to the new file
-		copy(mmapFile2[HeaderSize:], recordBytes[remainingBytes:])
-	} else {
-		// Append the record to the current file
-		f, err := os.OpenFile(filepath.Join(path, wal.currentFilename), os.O_RDWR, 0644)
-		if err != nil {
-			return err
-		}
-		defer func(f *os.File, error *error) {
-			*error = f.Close()
-		}(f, &err)
-		if err != nil {
-			return err
-		}
-
-		fileInfo, err = f.Stat()
-		if err != nil {
-			return err
-		}
-		fileSize := fileInfo.Size()
-
-		err = f.Truncate(fileSize + int64(RecordHeaderSize+record.KeySize+record.ValueSize))
-		if err != nil {
-			return err
-		}
-
-		mmapFile, err := mmap.Map(f, mmap.RDWR, 0)
-		if err != nil {
-			return err
-		}
-		defer func(mmapFile *mmap.MMap, err *error) {
-			unmapError := mmapFile.Unmap()
-			*err = unmapError
-		}(&mmapFile, &err)
-		if err != nil {
-			return err
-		}
-
-		// Append the record to the file
-		copy(mmapFile[fileSize:], recordBytes)
+		idx += remainingBytes
 	}
+
 	return nil
 }
 
