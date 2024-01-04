@@ -435,10 +435,15 @@ func (wal *WAL) MoveLowWatermark(record *Record) error {
 	}
 
 	// Find the previous low watermark file and remove the low watermark from it
-	for _, file := range files {
+	for fileIndex, file := range files {
 		parts := strings.SplitN(file.Name(), fmt.Sprintf("_%s", LowWaterMark), 2)
 		if len(parts) != 2 {
 			continue
+		}
+
+		// If the new file is the same as the old one, don't do anything
+		if fileIndex == int(idx) {
+			return nil
 		}
 
 		fileName := file.Name()
