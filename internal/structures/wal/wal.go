@@ -124,7 +124,34 @@ func (wal *WAL) AddRecord(key string, value []byte, tombstone bool) error {
 		}
 
 		fileSize := uint64(fileInfo.Size())
-		remainingBytes := wal.segmentSize - (fileSize - HeaderSize)
+		var remainingBytes uint64
+		if fileSize-HeaderSize < wal.segmentSize {
+			remainingBytes = wal.segmentSize - (fileSize - HeaderSize)
+		} else {
+			// If segment size got changed in between application runs, and it's smaller than the current file size, we need to create a new segment
+			err = file.Close()
+			if err != nil {
+				return err
+			}
+
+			err = wal.CreateNewSegment()
+			if err != nil {
+				return err
+			}
+
+			file, err = os.OpenFile(filepath.Join(path, wal.currentFilename), os.O_RDWR, 0644)
+			if err != nil {
+				return err
+			}
+
+			fileInfo, err = file.Stat()
+			if err != nil {
+				return err
+			}
+
+			fileSize = uint64(fileInfo.Size())
+			remainingBytes = wal.segmentSize - (fileSize - HeaderSize)
+		}
 
 		var mmapFile mmap.MMap
 		if idx+remainingBytes < recordSize {
