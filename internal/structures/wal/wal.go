@@ -146,11 +146,8 @@ func (wal *WAL) AddRecord(key string, value []byte, tombstone bool) error {
 		// Remaining bytes in the current file
 		var remainingBytes uint64
 
-		if fileSize-HeaderSize < wal.segmentSize {
-			remainingBytes = wal.segmentSize - (fileSize - HeaderSize)
-		} else {
-			// If segment size got changed in between application runs, and it's smaller than the current file size, we need to create a new segment
-
+		// If segment size got changed in between application runs, and it's smaller than the current file size, we need to create a new segment
+		if wal.segmentSize < fileSize-HeaderSize {
 			// Close the current file
 			err = file.Close()
 			if err != nil {
@@ -173,8 +170,8 @@ func (wal *WAL) AddRecord(key string, value []byte, tombstone bool) error {
 			}
 
 			fileSize = uint64(fileInfo.Size())
-			remainingBytes = wal.segmentSize - (fileSize - HeaderSize)
 		}
+		remainingBytes = wal.segmentSize - (fileSize - HeaderSize)
 
 		var mmapFile mmap.MMap
 		// If the record can't fit in the current file
@@ -277,16 +274,16 @@ func (wal *WAL) GetRecords() ([]*Record, error) {
 		// If the last record got deleted based on low watermark, we will ignore the record's remaining bytes
 		if len(recordBytes) != 0 {
 			recordBytes = append(recordBytes, mmapFile[HeaderSize:offset]...)
-		}
 
-		// If the record bytes overflow the current file, we won't deserialize them yet
-		if len(recordBytes) != 0 && binary.BigEndian.Uint64(mmapFile[:HeaderSize]) != wal.segmentSize {
-			record, err := Deserialize(recordBytes)
-			if err != nil {
-				return nil, err
+			// If the record bytes overflow the current file, we won't deserialize them yet
+			if binary.BigEndian.Uint64(mmapFile[:HeaderSize]) != wal.segmentSize {
+				record, err := Deserialize(recordBytes)
+				if err != nil {
+					return nil, err
+				}
+				records = append(records, record)
+				recordBytes = []byte{}
 			}
-			records = append(records, record)
-			recordBytes = []byte{}
 		}
 
 		// Current byte index in the file
