@@ -249,6 +249,9 @@ func (wal *WAL) GetRecords() ([]*Record, error) {
 
 		var offset = int(binary.BigEndian.Uint64(mmapFile[:HeaderSize])) + HeaderSize
 		// If the last record got deleted based on low watermark, we will ignore the record's remaining bytes
+		if len(recordBytes) != 0 {
+			recordBytes = append(recordBytes, mmapFile[HeaderSize:offset]...)
+		}
 		if len(recordBytes) != 0 && binary.BigEndian.Uint64(mmapFile[:HeaderSize]) != wal.segmentSize {
 			record, err := Deserialize(recordBytes)
 			if err != nil {
@@ -313,7 +316,10 @@ func (wal *WAL) FindTimestampSegment(rec *Record) (uint64, error) {
 		}
 
 		var offset = int(binary.BigEndian.Uint64(mmapFile[:HeaderSize])) + HeaderSize
-		recordBytes = append(recordBytes, mmapFile[HeaderSize:offset]...)
+		// If the last record got deleted based on low watermark, we will ignore the record's remaining bytes
+		if len(recordBytes) != 0 {
+			recordBytes = append(recordBytes, mmapFile[HeaderSize:offset]...)
+		}
 		if len(recordBytes) != 0 && binary.BigEndian.Uint64(mmapFile[:HeaderSize]) != wal.segmentSize {
 			record, err := Deserialize(recordBytes)
 			if err != nil {
