@@ -91,8 +91,8 @@ func NewWAL(segmentSize uint64) (*WAL, error) {
 	}, nil
 }
 
-// CreateNewSegment Create a new segment file
-func (wal *WAL) CreateNewSegment() error {
+// createNewSegment Create a new segment file
+func (wal *WAL) createNewSegment() error {
 	dirEntries, err := os.ReadDir(Path)
 	if err != nil {
 		return err
@@ -146,7 +146,7 @@ func (wal *WAL) getRemainingBytesAndFileSize(file *os.File) (uint64, uint64, err
 			return 0, 0, err
 		}
 
-		err = wal.CreateNewSegment()
+		err = wal.createNewSegment()
 		if err != nil {
 			return 0, 0, err
 		}
@@ -194,7 +194,7 @@ func (wal *WAL) writeBytes(file *os.File, recordBytes []byte, idx uint64) (uint6
 		// Copy the bytes that can fit in the current file
 		copy(mmapFile[fileSize:], recordBytes[idx:idx+remainingBytes])
 
-		err = wal.CreateNewSegment()
+		err = wal.createNewSegment()
 		if err != nil {
 			return 0, err
 		}
@@ -383,8 +383,8 @@ func (wal *WAL) GetRecords() ([]*Record, error) {
 	return records, nil
 }
 
-// FindTimestampSegment Find a segment that has a record with the given timestamp, or a newer one (for low watermark)
-func (wal *WAL) FindTimestampSegment(rec *Record) (uint64, error) {
+// findTimestampSegment Find a segment that has a record with the given timestamp, or a newer one (for low watermark)
+func (wal *WAL) findTimestampSegment(rec *Record) (uint64, error) {
 	files, err := os.ReadDir(Path)
 	if err != nil {
 		return 0, err
@@ -424,7 +424,7 @@ func (wal *WAL) FindTimestampSegment(rec *Record) (uint64, error) {
 // MoveLowWatermark Move the low watermark to the segment that has a record with the given timestamp
 func (wal *WAL) MoveLowWatermark(record *Record) error {
 	// Find the segment that has a record with the given or a newer timestamp
-	idx, err := wal.FindTimestampSegment(record)
+	idx, err := wal.findTimestampSegment(record)
 	if err != nil {
 		return err
 	}
