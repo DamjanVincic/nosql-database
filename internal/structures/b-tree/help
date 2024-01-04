@@ -1,0 +1,34 @@
+    while (current_node->height > 0) {
+        int lower, upper;
+        // Binary search among keys
+        push(current_node);
+        lower = 0;
+        upper = current_node->degree;
+
+        while (upper > lower + 1) {
+            if (new_key < current_node->key[(upper + lower) / 2]) {
+                upper = (upper + lower) / 2;
+            } else {
+                lower = (upper + lower) / 2;
+            }
+        }
+
+        current_node = current_node->next[lower];
+    }
+
+    def insertNonFull(self, k):
+        i = self.n - 1
+        if self.leaf:
+            while i >= 0 and self.keys[i] > k:
+                self.keys[i + 1] = self.keys[i]
+                i -= 1
+            self.keys[i + 1] = k
+            self.n += 1
+        else:
+            while i >= 0 and self.keys[i] > k:
+                i -= 1
+            if self.C[i + 1].n == 2 * self.t - 1:
+                self.splitChild(i + 1, self.C[i + 1])
+                if self.keys[i + 1] < k:
+                    i += 1
+            self.C[i + 1].insertNonFull(k)
