@@ -220,7 +220,7 @@ func (wal *WAL) GetRecords() ([]*Record, error) {
 
 		var offset = int(binary.BigEndian.Uint64(mmapFile[:HeaderSize])) + HeaderSize
 		recordBytes = append(recordBytes, mmapFile[HeaderSize:offset]...)
-		if len(recordBytes) != 0 {
+		if len(recordBytes) != 0 && binary.BigEndian.Uint64(mmapFile[:HeaderSize]) != wal.segmentSize {
 			record, err := Deserialize(recordBytes)
 			if err != nil {
 				return nil, err
