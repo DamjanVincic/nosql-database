@@ -62,7 +62,7 @@ func NewWAL(segmentSize uint64) (*WAL, error) {
 	var filename string
 	// If there are no files in the directory, create the first one
 	if len(dirEntries) == 0 {
-		filename = fmt.Sprintf("%s%05d.log", Prefix, 1)
+		filename = fmt.Sprintf("%s%05d_%s.log", Prefix, 1, LowWaterMark)
 		file, err := os.OpenFile(filepath.Join(Path, filename), os.O_CREATE|os.O_RDWR, 0644)
 		if err != nil {
 			return nil, err
