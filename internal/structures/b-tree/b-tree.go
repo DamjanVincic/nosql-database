@@ -4,10 +4,6 @@ import "fmt"
 
 var T = 2
 
-/*
-implement 2-3 B tree
-every node has at most two keys and three children
-*/
 type BTreeNode struct {
 	parent      *BTreeNode
 	t           int // minimum degree
@@ -19,6 +15,9 @@ type BTreeNode struct {
 	leaf        bool         // is node a leaf
 }
 
+/*
+function that checks whether key is in the node or not
+*/
 func contains(list []int, element int) bool {
 	for _, value := range list {
 		if value == element {
@@ -30,17 +29,20 @@ func contains(list []int, element int) bool {
 func initTree(key int) *BTreeNode {
 	return &BTreeNode{
 		parent:      nil,
-		t:           2,
-		maxChildren: 3,
+		t:           T,
+		maxChildren: 2*T + 1,
 		currentKeys: 1, // initialize with one key
-		maxKeys:     2,
+		maxKeys:     2*T - 1,
 		keys:        []int{key},
 		children:    []*BTreeNode{},
 		leaf:        true,
 	}
 }
 
-// root at first and then recursion, until if finds bigger key
+/*
+searches whether the key is in the tree
+optimize to not check branch that cant possible have the key
+*/
 func search(key int, node *BTreeNode) (bool, *BTreeNode) {
 	if contains(node.keys, key) {
 		return true, node
@@ -69,6 +71,12 @@ func search(key int, node *BTreeNode) (bool, *BTreeNode) {
 	return false, nil
 }
 
+/*
+after failed searched,
+if root is not initialized, it initializes it
+if the root is full its split,
+if not key is added in empty space
+*/
 func Insert(key int, root *BTreeNode) *BTreeNode {
 	found, _ := search(key, root)
 	if found {
@@ -142,10 +150,10 @@ upper neighbor
 func split(i int, child *BTreeNode, parent *BTreeNode) {
 	keyToMove := child.keys[T-1]
 	newNode := &BTreeNode{
-		t:           2,
-		maxChildren: 3,
+		t:           T,
+		maxChildren: 2*T + 1,
 		currentKeys: T - 1,
-		maxKeys:     2,
+		maxKeys:     2*T - 1,
 		keys:        []int{},
 		children:    []*BTreeNode{},
 		leaf:        child.leaf, // if child is leaf so is new node
@@ -185,6 +193,10 @@ func split(i int, child *BTreeNode, parent *BTreeNode) {
 func Delete() {
 
 }
+
+/*
+helper function to see structure of the tree
+*/
 func PrintBTree(node *BTreeNode, level int) {
 	if node != nil {
 		fmt.Printf("Level %d: ", level)
@@ -194,18 +206,4 @@ func PrintBTree(node *BTreeNode, level int) {
 			PrintBTree(child, level+1)
 		}
 	}
-}
-
-func main() {
-	// Initialize an empty root node
-	root := initTree(1)
-
-	// Numbers to insert into the B-tree
-	numbers := []int{5, 6, 2, 8, 11, 13, 18, 20, 7, 9}
-
-	// Insert numbers into the B-tree
-	for _, num := range numbers {
-		root = Insert(num, root)
-	}
-	PrintBTree(root, 0)
 }
