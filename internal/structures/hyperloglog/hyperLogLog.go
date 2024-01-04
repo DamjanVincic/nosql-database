@@ -1,8 +1,8 @@
-package main
+package hyperLogLog
 
 import (
+	"crypto/md5"
 	"encoding/binary"
-	"hash/fnv"
 	"log"
 	"math"
 	"math/bits"
@@ -59,7 +59,7 @@ func (hyperLogLog *HyperLogLog) emptyCount() int {
 	return sum
 }
 
-func (hyperLogLog *HyperLogLog) add(value []byte) {
+func (hyperLogLog *HyperLogLog) Add(value []byte) {
 	hashValue := Hash(value)
 	//get index of registry in which to put the result
 	bucketIndex := hashValue >> (64 - hyperLogLog.p)
@@ -71,7 +71,7 @@ func (hyperLogLog *HyperLogLog) add(value []byte) {
 	}
 }
 
-func (hyperLogLog *HyperLogLog) serialize() []byte {
+func (hyperLogLog *HyperLogLog) Serialize() []byte {
 	serializedHll := make([]byte, 0)
 	// Temporary storage for 64-bit integers
 	tempByte := make([]byte, 8)
@@ -88,7 +88,7 @@ func (hyperLogLog *HyperLogLog) serialize() []byte {
 	return serializedHll
 }
 
-func deserialize(serializedHll []byte) HyperLogLog {
+func Deserialize(serializedHll []byte) HyperLogLog {
 	//get m from first 8 bytes of serialized hll
 	m := binary.BigEndian.Uint64(serializedHll[:8])
 	//get p from 9th byte of serialized hll
@@ -103,24 +103,24 @@ func deserialize(serializedHll []byte) HyperLogLog {
 	return HyperLogLog{p: p, m: m, reg: reg}
 }
 
-func (hyperLogLog *HyperLogLog) writeToFile(destination string) {
-	bytes := hyperLogLog.serialize()
+func (hyperLogLog *HyperLogLog) WriteToFile(destination string) {
+	bytes := hyperLogLog.Serialize()
 	err := os.WriteFile(destination, bytes, 0644)
 	if err != nil {
 		log.Fatal(err)
 	}
 }
 
-func loadFromFile(destination string) HyperLogLog {
+func LoadFromFile(destination string) HyperLogLog {
 	serializedHll, err := os.ReadFile(destination)
 	if err != nil {
 		log.Fatal(err)
 	}
-	return deserialize(serializedHll)
+	return Deserialize(serializedHll)
 }
 
 func Hash(data []byte) uint64 {
-	fn := fnv.New64()
+	fn := md5.New()
 	_, err := fn.Write(data)
 	if err != nil {
 		panic("Error occurred while getting hash value.")
