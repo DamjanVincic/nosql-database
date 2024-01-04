@@ -122,6 +122,130 @@ func (wal *WAL) CreateNewSegment() error {
 	return nil
 }
 
+/*
+Get the remaining bytes in the file and the file size,
+if there's not enough space due to changing segment size,
+create a new segment and open it in the forwarded file pointer.
+*/
+func (wal *WAL) getRemainingBytesAndFileSize(file *os.File) (uint64, uint64, error) {
+	fileInfo, err := file.Stat()
+	if err != nil {
+		return 0, 0, err
+	}
+
+	fileSize := uint64(fileInfo.Size())
+
+	// Remaining bytes in the current file
+	var remainingBytes uint64
+
+	// If segment size got changed in between application runs, and it's smaller than the current file size, we need to create a new segment
+	if wal.segmentSize < fileSize-HeaderSize {
+		// Close the current file
+		err = file.Close()
+		if err != nil {
+			return 0, 0, err
+		}
+
+		err = wal.CreateNewSegment()
+		if err != nil {
+			return 0, 0, err
+		}
+
+		file, err = os.OpenFile(filepath.Join(Path, wal.currentFilename), os.O_RDWR, 0644)
+		if err != nil {
+			return 0, 0, err
+		}
+
+		fileInfo, err = file.Stat()
+		if err != nil {
+			return 0, 0, err
+		}
+
+		fileSize = uint64(fileInfo.Size())
+	}
+	remainingBytes = wal.segmentSize - (fileSize - HeaderSize)
+
+	return remainingBytes, fileSize, nil
+}
+
+/*
+Write the record bytes to the file, starting from the given index.
+If the record bytes overflow the current file, create a new segment and write the remaining bytes to it.
+Return the number of bytes that can fit in the file (the amount of bytes written).
+*/
+func (wal *WAL) writeBytes(file *os.File, recordBytes []byte, idx uint64) (uint64, error) {
+	recordSize := uint64(len(recordBytes))
+
+	remainingBytes, fileSize, err := wal.getRemainingBytesAndFileSize(file)
+
+	var mmapFile mmap.MMap
+	// If the record can't fit in the current file
+	if idx+remainingBytes < recordSize {
+		err = file.Truncate(int64(fileSize + remainingBytes))
+		if err != nil {
+			return 0, err
+		}
+
+		mmapFile, err = mmap.Map(file, mmap.RDWR, 0)
+		if err != nil {
+			return 0, err
+		}
+
+		// Copy the bytes that can fit in the current file
+		copy(mmapFile[fileSize:], recordBytes[idx:idx+remainingBytes])
+
+		err = wal.CreateNewSegment()
+		if err != nil {
+			return 0, err
+		}
+
+		newSegment, err := os.OpenFile(filepath.Join(Path, wal.currentFilename), os.O_RDWR, 0644)
+		if err != nil {
+			return 0, err
+		}
+
+		newSegmentMmap, err := mmap.Map(newSegment, mmap.RDWR, 0)
+		if err != nil {
+			return 0, err
+		}
+
+		// If the record bytes are bigger than the segment size, they will take up the entire new segment
+		binary.BigEndian.PutUint64(newSegmentMmap[:HeaderSize], min(recordSize-(idx+remainingBytes), wal.segmentSize))
+		err = newSegmentMmap.Unmap()
+		if err != nil {
+			return 0, err
+		}
+
+		err = newSegment.Close()
+		if err != nil {
+			return 0, err
+		}
+	} else {
+		// If the record can fit in the current file
+
+		err = file.Truncate(int64(fileSize + recordSize - idx))
+		if err != nil {
+			return 0, err
+		}
+		remainingBytes = recordSize - idx // To return the amount of bytes written in the last part of the byte array
+
+		mmapFile, err = mmap.Map(file, mmap.RDWR, 0)
+		if err != nil {
+			return 0, err
+		}
+
+		// Copy the remaining bytes to the new file
+		copy(mmapFile[fileSize:], recordBytes[idx:])
+	}
+
+	err = mmapFile.Unmap()
+	if err != nil {
+		return 0, err
+	}
+
+	return remainingBytes, nil
+}
+
 // AddRecord Add a new record to the Write Ahead Log
 func (wal *WAL) AddRecord(key string, value []byte, tombstone bool) error {
 	var record = NewRecord(key, value, tombstone)
@@ -136,103 +260,7 @@ func (wal *WAL) AddRecord(key string, value []byte, tombstone bool) error {
 			return err
 		}
 
-		fileInfo, err := file.Stat()
-		if err != nil {
-			return err
-		}
-
-		fileSize := uint64(fileInfo.Size())
-
-		// Remaining bytes in the current file
-		var remainingBytes uint64
-
-		// If segment size got changed in between application runs, and it's smaller than the current file size, we need to create a new segment
-		if wal.segmentSize < fileSize-HeaderSize {
-			// Close the current file
-			err = file.Close()
-			if err != nil {
-				return err
-			}
-
-			err = wal.CreateNewSegment()
-			if err != nil {
-				return err
-			}
-
-			file, err = os.OpenFile(filepath.Join(Path, wal.currentFilename), os.O_RDWR, 0644)
-			if err != nil {
-				return err
-			}
-
-			fileInfo, err = file.Stat()
-			if err != nil {
-				return err
-			}
-
-			fileSize = uint64(fileInfo.Size())
-		}
-		remainingBytes = wal.segmentSize - (fileSize - HeaderSize)
-
-		var mmapFile mmap.MMap
-		// If the record can't fit in the current file
-		if idx+remainingBytes < recordSize {
-			err = file.Truncate(int64(fileSize + remainingBytes))
-			if err != nil {
-				return err
-			}
-
-			mmapFile, err = mmap.Map(file, mmap.RDWR, 0)
-			if err != nil {
-				return err
-			}
-
-			// Copy the bytes that can fit in the current file
-			copy(mmapFile[fileSize:], recordBytes[idx:idx+remainingBytes])
-
-			err = wal.CreateNewSegment()
-			if err != nil {
-				return err
-			}
-
-			newSegment, err := os.OpenFile(filepath.Join(Path, wal.currentFilename), os.O_RDWR, 0644)
-			if err != nil {
-				return err
-			}
-
-			newSegmentMmap, err := mmap.Map(newSegment, mmap.RDWR, 0)
-			if err != nil {
-				return err
-			}
-
-			// If the record bytes are bigger than the segment size, they will take up the entire new segment
-			binary.BigEndian.PutUint64(newSegmentMmap[:HeaderSize], min(recordSize-(idx+remainingBytes), wal.segmentSize))
-			err = newSegmentMmap.Unmap()
-			if err != nil {
-				return err
-			}
-
-			err = newSegment.Close()
-			if err != nil {
-				return err
-			}
-		} else {
-			// If the record can fit in the current file
-
-			err = file.Truncate(int64(fileSize + recordSize - idx))
-			if err != nil {
-				return err
-			}
-
-			mmapFile, err = mmap.Map(file, mmap.RDWR, 0)
-			if err != nil {
-				return err
-			}
-
-			// Copy the remaining bytes to the new file
-			copy(mmapFile[fileSize:], recordBytes[idx:])
-		}
-
-		err = mmapFile.Unmap()
+		bytesWritten, err := wal.writeBytes(file, recordBytes, idx)
 		if err != nil {
 			return err
 		}
@@ -242,7 +270,7 @@ func (wal *WAL) AddRecord(key string, value []byte, tombstone bool) error {
 			return err
 		}
 
-		idx += remainingBytes
+		idx += bytesWritten
 	}
 
 	return nil
