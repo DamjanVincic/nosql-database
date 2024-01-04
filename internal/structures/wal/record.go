@@ -17,17 +17,29 @@ type Record struct {
 }
 
 func NewRecord(key string, value []byte, tombstone bool) *Record {
-	// Bytes for checksum
-	bytes := make([]byte, 0)
+	timestamp := uint64(time.Now().Unix())
+	keySize := uint64(len(key))
+	valueSize := uint64(len(value))
+
+	// Bytes for checksum (25 bytes for timestamp, tombstone, key and value)
+	bytes := make([]byte, 25)
+	binary.BigEndian.PutUint64(bytes, timestamp)
+	if tombstone {
+		bytes[8] = 1
+	} else {
+		bytes[8] = 0
+	}
+	binary.BigEndian.PutUint64(bytes[9:], keySize)
+	binary.BigEndian.PutUint64(bytes[17:], valueSize)
 	bytes = append(bytes, []byte(key)...)
 	bytes = append(bytes, value...)
 
 	return &Record{
 		Crc:       CRC32(bytes),
-		Timestamp: uint64(time.Now().Unix()),
+		Timestamp: timestamp,
 		Tombstone: tombstone,
-		KeySize:   uint64(len(key)),
-		ValueSize: uint64(len(value)),
+		KeySize:   keySize,
+		ValueSize: valueSize,
 		Key:       key,
 		Value:     value,
 	}
@@ -69,10 +81,7 @@ func Deserialize(bytes []byte) (*Record, error) {
 	copy(value, bytes[KeyStart+keySize:])
 
 	// Check if the CRC matches
-	crcValue := make([]byte, 0)
-	crcValue = append(crcValue, []byte(key)...)
-	crcValue = append(crcValue, value...)
-	if crc != CRC32(crcValue) {
+	if crc != CRC32(bytes[TimestampStart:]) {
 		return nil, errors.New("CRC does not match")
 	}
 
