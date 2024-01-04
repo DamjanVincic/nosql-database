@@ -243,7 +243,23 @@ func removeFromLeaf(index int, node *BTreeNode) {
 	node.currentKeys--
 }
 func removeFromInternal(index int, node *BTreeNode) {
-
+	if node.leaf {
+		removeFromLeaf(index, node)
+	}
+	// delete from internal node
+	// find child that has above minimum number of keys
+	// get predecessor of the key
+	// check first left child
+	if node.children[index].currentKeys > (T - 1) { // bigger that minimum
+		node.keys[index] = swichPredecessor(node.children[index])
+		// check right child next
+	} else if node.children[index].currentKeys > (T - 1) {
+		swichSuccessor(node.children[index+1])
+		// combine nodes
+	} else {
+		combineNodes(node, index, index+1)
+		removeFromInternal(T-1, node.children[index])
+	}
 }
 func deleteAtIndex(index int, list []int) []int {
 	if index < 0 || index >= len(list) {
@@ -251,6 +267,21 @@ func deleteAtIndex(index int, list []int) []int {
 	}
 
 	return append(list[:index], list[index+1:]...)
+}
+func combineNodes(node *BTreeNode, indexLeft, indexRight int) {
+
+}
+func swichPredecessor(node *BTreeNode) int {
+	if node.leaf {
+		last := node.keys[node.currentKeys-1]
+		node.keys = deleteAtIndex(node.currentKeys-1, node.keys) // remove predecessor
+		node.currentKeys--
+		return last // return last
+	}
+	return -1
+}
+func swichSuccessor(node *BTreeNode) {
+
 }
 
 /*
