@@ -2,11 +2,13 @@ package wal
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"github.com/edsrzf/mmap-go"
 	"hash/crc32"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 /*
@@ -39,8 +41,9 @@ const (
 	RecordHeaderSize = CrcSize + TimestampSize + TombstoneSize + KeySizeSize + ValueSizeSize
 	HeaderSize       = 8
 
-	path   = "wal"
-	prefix = "wal_"
+	Path         = "wal"
+	Prefix       = "wal_"
+	LowWaterMark = "lwm"
 )
 
 type WAL struct {
@@ -49,9 +52,9 @@ type WAL struct {
 }
 
 func NewWAL(segmentSize uint64) (*WAL, error) {
-	dirEntries, err := os.ReadDir(path)
+	dirEntries, err := os.ReadDir(Path)
 	if os.IsNotExist(err) {
-		err := os.Mkdir(path, os.ModePerm)
+		err := os.Mkdir(Path, os.ModePerm)
 		if err != nil {
 			return nil, err
 		}
@@ -59,8 +62,8 @@ func NewWAL(segmentSize uint64) (*WAL, error) {
 	var filename string
 	// If there are no files in the directory, create the first one
 	if len(dirEntries) == 0 {
-		filename = fmt.Sprintf("%s%05d.log", prefix, 1)
-		file, err := os.OpenFile(filepath.Join(path, filename), os.O_CREATE|os.O_RDWR, 0644)
+		filename = fmt.Sprintf("%s%05d.log", Prefix, 1)
+		file, err := os.OpenFile(filepath.Join(Path, filename), os.O_CREATE|os.O_RDWR, 0644)
 		if err != nil {
 			return nil, err
 		}
@@ -80,14 +83,14 @@ func NewWAL(segmentSize uint64) (*WAL, error) {
 }
 
 func (wal *WAL) CreateNewSegment() error {
-	dirEntries, err := os.ReadDir(path)
+	dirEntries, err := os.ReadDir(Path)
 	if err != nil {
 		return err
 	}
 
-	wal.currentFilename = fmt.Sprintf("%s%05d.log", prefix, len(dirEntries)+1)
+	wal.currentFilename = fmt.Sprintf("%s%05d.log", Prefix, len(dirEntries)+1)
 
-	file, err := os.OpenFile(filepath.Join(path, wal.currentFilename), os.O_CREATE|os.O_RDWR, 0644)
+	file, err := os.OpenFile(filepath.Join(Path, wal.currentFilename), os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		return err
 	}
@@ -113,7 +116,7 @@ func (wal *WAL) AddRecord(key string, value []byte, tombstone bool) error {
 
 	var idx uint64 = 0
 	for idx < uint64(len(recordBytes)) {
-		file, err := os.OpenFile(filepath.Join(path, wal.currentFilename), os.O_RDWR, 0644)
+		file, err := os.OpenFile(filepath.Join(Path, wal.currentFilename), os.O_RDWR, 0644)
 		if err != nil {
 			return err
 		}
@@ -139,7 +142,7 @@ func (wal *WAL) AddRecord(key string, value []byte, tombstone bool) error {
 				return err
 			}
 
-			file, err = os.OpenFile(filepath.Join(path, wal.currentFilename), os.O_RDWR, 0644)
+			file, err = os.OpenFile(filepath.Join(Path, wal.currentFilename), os.O_RDWR, 0644)
 			if err != nil {
 				return err
 			}
@@ -173,7 +176,7 @@ func (wal *WAL) AddRecord(key string, value []byte, tombstone bool) error {
 				return err
 			}
 
-			newSegment, err := os.OpenFile(filepath.Join(path, wal.currentFilename), os.O_RDWR, 0644)
+			newSegment, err := os.OpenFile(filepath.Join(Path, wal.currentFilename), os.O_RDWR, 0644)
 			if err != nil {
 				return err
 			}
@@ -185,7 +188,6 @@ func (wal *WAL) AddRecord(key string, value []byte, tombstone bool) error {
 
 			// If the record is bigger than the segment size, it'll take up the entire new segment
 			binary.BigEndian.PutUint64(newSegmentMmap[:HeaderSize], min(recordSize-(idx+remainingBytes), wal.segmentSize))
-			fmt.Println(recordSize-(idx+remainingBytes), wal.segmentSize)
 			err = newSegmentMmap.Unmap()
 			if err != nil {
 				return err
@@ -227,7 +229,7 @@ func (wal *WAL) AddRecord(key string, value []byte, tombstone bool) error {
 }
 
 func (wal *WAL) GetRecords() ([]*Record, error) {
-	files, err := os.ReadDir(path)
+	files, err := os.ReadDir(Path)
 	if err != nil {
 		return nil, err
 	}
@@ -235,7 +237,7 @@ func (wal *WAL) GetRecords() ([]*Record, error) {
 	records := make([]*Record, 0)
 	var recordBytes = make([]byte, 0)
 	for _, file := range files {
-		f, err := os.OpenFile(filepath.Join(path, file.Name()), os.O_RDONLY, 0644)
+		f, err := os.OpenFile(filepath.Join(Path, file.Name()), os.O_RDONLY, 0644)
 		if err != nil {
 			return nil, err
 		}
@@ -246,7 +248,7 @@ func (wal *WAL) GetRecords() ([]*Record, error) {
 		}
 
 		var offset = int(binary.BigEndian.Uint64(mmapFile[:HeaderSize])) + HeaderSize
-		recordBytes = append(recordBytes, mmapFile[HeaderSize:offset]...)
+		// If the last record got deleted based on low watermark, we will ignore the record's remaining bytes
 		if len(recordBytes) != 0 && binary.BigEndian.Uint64(mmapFile[:HeaderSize]) != wal.segmentSize {
 			record, err := Deserialize(recordBytes)
 			if err != nil {
@@ -289,6 +291,111 @@ func (wal *WAL) GetRecords() ([]*Record, error) {
 	}
 
 	return records, nil
+}
+
+// FindTimestampSegment Find a segment that has a record with the given timestamp, or a newer one (for low watermark)
+func (wal *WAL) FindTimestampSegment(rec *Record) (uint64, error) {
+	files, err := os.ReadDir(Path)
+	if err != nil {
+		return 0, err
+	}
+
+	var recordBytes = make([]byte, 0)
+	for idx, file := range files {
+		f, err := os.OpenFile(filepath.Join(Path, file.Name()), os.O_RDONLY, 0644)
+		if err != nil {
+			return 0, err
+		}
+
+		mmapFile, err := mmap.Map(f, mmap.RDONLY, 0)
+		if err != nil {
+			return 0, err
+		}
+
+		var offset = int(binary.BigEndian.Uint64(mmapFile[:HeaderSize])) + HeaderSize
+		recordBytes = append(recordBytes, mmapFile[HeaderSize:offset]...)
+		if len(recordBytes) != 0 && binary.BigEndian.Uint64(mmapFile[:HeaderSize]) != wal.segmentSize {
+			record, err := Deserialize(recordBytes)
+			if err != nil {
+				return 0, err
+			}
+			if record.Timestamp >= rec.Timestamp {
+				return uint64(idx), nil
+			}
+			recordBytes = []byte{}
+		}
+
+		var i = offset
+		for i < len(mmapFile) {
+			if i+RecordHeaderSize > len(mmapFile) {
+				break
+			}
+			keySize := binary.BigEndian.Uint64(mmapFile[i+KeySizeStart : i+ValueSizeStart])
+			valueSize := binary.BigEndian.Uint64(mmapFile[i+ValueSizeStart : i+KeyStart])
+
+			if i+RecordHeaderSize+int(keySize)+int(valueSize) > len(mmapFile) {
+				break
+			}
+
+			record, err := Deserialize(mmapFile[i : uint64(i)+RecordHeaderSize+keySize+valueSize])
+			if err != nil {
+				return 0, err
+			}
+			if record.Timestamp >= rec.Timestamp {
+				return uint64(idx), nil
+			}
+			i += RecordHeaderSize + int(record.KeySize+record.ValueSize)
+		}
+
+		recordBytes = append(recordBytes, mmapFile[i:]...)
+
+		err = mmapFile.Unmap()
+		if err != nil {
+			return 0, err
+		}
+		err = f.Close()
+		if err != nil {
+			return 0, err
+		}
+	}
+
+	return 0, errors.New("no segment found")
+}
+
+func (wal *WAL) MoveLowWatermark(record *Record) error {
+	idx, err := wal.FindTimestampSegment(record)
+	if err != nil {
+		return err
+	}
+
+	files, err := os.ReadDir(Path)
+	if err != nil {
+		return err
+	}
+
+	for _, file := range files {
+		parts := strings.SplitN(file.Name(), fmt.Sprintf("_%s", LowWaterMark), 2)
+		if len(parts) != 2 {
+			continue
+		}
+
+		fileName := file.Name()
+		err := os.Rename(filepath.Join(Path, fileName), filepath.Join(Path, strings.Replace(fileName, fmt.Sprintf("_%s", LowWaterMark), "", 1)))
+		if err != nil {
+			return err
+		}
+		break
+	}
+
+	fileName := files[idx].Name()
+	extension := filepath.Ext(fileName)
+	//fileName = strings.Replace(fileName, extension, fmt.Sprintf("_%s%s", LowWaterMark, extension), 1)
+	err = os.Rename(filepath.Join(Path, fileName), filepath.Join(Path, strings.Replace(fileName, extension, fmt.Sprintf("_%s%s", LowWaterMark, extension), 1)))
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func CRC32(data []byte) uint32 {
