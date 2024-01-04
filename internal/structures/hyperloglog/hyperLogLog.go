@@ -1,8 +1,8 @@
 package main
 
 import (
-	"crypto/md5"
 	"encoding/binary"
+	"hash/fnv"
 	"log"
 	"math"
 	"math/bits"
@@ -17,15 +17,11 @@ const (
 )
 
 type HyperLogLog struct {
-	//number of registries
-	m uint64
-	//precision (number of bits for registry index)
-	p uint8
-	//registries
-	reg []uint8
+	m   uint64  //number of registries
+	p   uint8   //precision (number of bits for registry index)
+	reg []uint8 //registries
 }
 
-// creates new instance of hll
 func NewHyperLogLog(bucketBits uint8) HyperLogLog {
 	if bucketBits < HLL_MIN_PRECISION || bucketBits > HLL_MAX_PRECISION {
 		panic("Hll precision must be between" + string(rune(HLL_MIN_PRECISION)) + " and " + string(rune(HLL_MIN_PRECISION)))
@@ -66,8 +62,9 @@ func (hyperLogLog *HyperLogLog) emptyCount() int {
 func (hyperLogLog *HyperLogLog) add(value []byte) {
 	hashValue := Hash(value)
 	//get index of registry in which to put the result
-	bucketIndex := firstKbits(hashValue, uint64(hyperLogLog.p))
-	count := uint8(trailingZeroBits(hashValue)) + 1
+	bucketIndex := hashValue >> (64 - hyperLogLog.p)
+
+	count := uint8(bits.TrailingZeros64(hashValue) + 1)
 	//if current result is greater than the last one, put it in the registry
 	if count > hyperLogLog.reg[bucketIndex] {
 		hyperLogLog.reg[bucketIndex] = count
@@ -122,18 +119,11 @@ func loadFromFile(destination string) HyperLogLog {
 	return deserialize(serializedHll)
 }
 
-//helper functions
-
-func firstKbits(value, k uint64) uint64 {
-	return value >> (64 - k)
-}
-
-func trailingZeroBits(value uint64) int {
-	return bits.TrailingZeros64(value)
-}
-
 func Hash(data []byte) uint64 {
-	fn := md5.New()
-	fn.Write(data)
+	fn := fnv.New64()
+	_, err := fn.Write(data)
+	if err != nil {
+		panic("Error occurred while getting hash value.")
+	}
 	return binary.BigEndian.Uint64(fn.Sum(nil))
 }
