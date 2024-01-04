@@ -390,77 +390,31 @@ func (wal *WAL) FindTimestampSegment(rec *Record) (uint64, error) {
 		return 0, err
 	}
 
-	var recordBytes = make([]byte, 0)
+	// Buffer for the remaining bytes from the previous file
+	var buffer = make([]byte, 0)
 	for idx, file := range files {
-		f, err := os.OpenFile(filepath.Join(Path, file.Name()), os.O_RDONLY, 0644)
+		records, newBuffer, err := wal.readRecordsFromFile(file.Name(), buffer)
 		if err != nil {
 			return 0, err
 		}
 
-		mmapFile, err := mmap.Map(f, mmap.RDONLY, 0)
-		if err != nil {
-			return 0, err
-		}
+		buffer = newBuffer
 
-		// Offset where the record from previous file ends
-		var offset = int(binary.BigEndian.Uint64(mmapFile[:HeaderSize])) + HeaderSize
-
-		// If the last record got deleted based on low watermark, we will ignore the record's remaining bytes
-		if len(recordBytes) != 0 {
-			recordBytes = append(recordBytes, mmapFile[HeaderSize:offset]...)
-		}
-
-		// If the record bytes overflow the current file, we won't deserialize them yet
-		if len(recordBytes) != 0 && binary.BigEndian.Uint64(mmapFile[:HeaderSize]) != wal.segmentSize {
-			record, err := Deserialize(recordBytes)
+		// If there are no more files and the buffer isn't empty, deserialize the last record
+		// This can happen if the last file only contains bytes from one record.
+		if len(buffer) != 0 && idx == len(files)-1 {
+			record, err := Deserialize(buffer)
 			if err != nil {
 				return 0, err
 			}
 
-			// If we found a record with the same, or newer timestamp, return the index of the segment
+			records = append(records, record)
+		}
+
+		for _, record := range records {
 			if record.Timestamp >= rec.Timestamp {
 				return uint64(idx), nil
 			}
-			recordBytes = []byte{}
-		}
-
-		// Current byte index in the file
-		var i = offset
-		for i < len(mmapFile) {
-			// If the current record header size isn't in the same file, move on to the next one
-			if i+RecordHeaderSize > len(mmapFile) {
-				break
-			}
-			keySize := binary.BigEndian.Uint64(mmapFile[i+KeySizeStart : i+ValueSizeStart])
-			valueSize := binary.BigEndian.Uint64(mmapFile[i+ValueSizeStart : i+KeyStart])
-
-			// If the record header size fit in this file, but the key or value didn't, move on to the next file
-			if i+RecordHeaderSize+int(keySize)+int(valueSize) > len(mmapFile) {
-				break
-			}
-
-			record, err := Deserialize(mmapFile[i : uint64(i)+RecordHeaderSize+keySize+valueSize])
-			if err != nil {
-				return 0, err
-			}
-
-			// If we found a record with the same, or newer timestamp, return the index of the segment
-			if record.Timestamp >= rec.Timestamp {
-				return uint64(idx), nil
-			}
-			i += RecordHeaderSize + int(record.KeySize+record.ValueSize)
-		}
-
-		// If the record didn't fit in the current file, we store the remaining bytes and move on to the next one
-		recordBytes = append(recordBytes, mmapFile[i:]...)
-
-		err = mmapFile.Unmap()
-		if err != nil {
-			return 0, err
-		}
-		err = f.Close()
-		if err != nil {
-			return 0, err
 		}
 	}
 
