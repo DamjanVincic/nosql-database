@@ -276,6 +276,80 @@ func (wal *WAL) AddRecord(key string, value []byte, tombstone bool) error {
 	return nil
 }
 
+/*
+Read records from a file
+Return records and a buffer with the remaining bytes whose other part is in another file
+*/
+func (wal *WAL) readRecordsFromFile(fileName string, buffer []byte) ([]*Record, []byte, error) {
+	records := make([]*Record, 0)
+
+	file, err := os.OpenFile(filepath.Join(Path, fileName), os.O_RDONLY, 0644)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	mmapFile, err := mmap.Map(file, mmap.RDONLY, 0)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Offset where the record from previous file ends
+	var offset = int(binary.BigEndian.Uint64(mmapFile[:HeaderSize])) + HeaderSize
+
+	// If the last record got deleted based on low watermark, we will ignore the record's remaining bytes
+	if len(buffer) != 0 {
+		buffer = append(buffer, mmapFile[HeaderSize:offset]...)
+
+		// If the record bytes overflow the current file, we won't deserialize them yet
+		if binary.BigEndian.Uint64(mmapFile[:HeaderSize]) != uint64(len(mmapFile))-HeaderSize {
+			record, err := Deserialize(buffer)
+			if err != nil {
+				return nil, nil, err
+			}
+			records = append(records, record)
+			buffer = []byte{}
+		}
+	}
+
+	// Current byte index in the file
+	var i = offset
+	for i < len(mmapFile) {
+		// If the current record header size isn't in the same file, we will move on to the next one
+		if i+RecordHeaderSize > len(mmapFile) {
+			break
+		}
+		keySize := binary.BigEndian.Uint64(mmapFile[i+KeySizeStart : i+ValueSizeStart])
+		valueSize := binary.BigEndian.Uint64(mmapFile[i+ValueSizeStart : i+KeyStart])
+
+		// If the record header size fit in this file, but the key or value didn't, we also move on to the next file
+		if i+RecordHeaderSize+int(keySize)+int(valueSize) > len(mmapFile) {
+			break
+		}
+
+		// If the whole record is in this file, we deserialize it
+		record, err := Deserialize(mmapFile[i : uint64(i)+RecordHeaderSize+keySize+valueSize])
+		if err != nil {
+			return nil, nil, err
+		}
+		records = append(records, record)
+		i += RecordHeaderSize + int(record.KeySize+record.ValueSize)
+	}
+
+	// If the record didn't fit in the current file, we store the remaining bytes and move on to the next one
+	buffer = append(buffer, mmapFile[i:]...)
+
+	err = mmapFile.Unmap()
+	if err != nil {
+		return nil, nil, err
+	}
+	err = file.Close()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return records, buffer, nil
+}
+
 // GetRecords Get all records from the Write Ahead Log
 func (wal *WAL) GetRecords() ([]*Record, error) {
 	files, err := os.ReadDir(Path)
@@ -284,70 +358,25 @@ func (wal *WAL) GetRecords() ([]*Record, error) {
 	}
 
 	records := make([]*Record, 0)
-	var recordBytes = make([]byte, 0)
-	for _, file := range files {
-		f, err := os.OpenFile(filepath.Join(Path, file.Name()), os.O_RDONLY, 0644)
+	// Buffer for the remaining bytes from the previous file
+	var buffer = make([]byte, 0)
+	for idx, file := range files {
+		readRecords, newBuffer, err := wal.readRecordsFromFile(file.Name(), buffer)
 		if err != nil {
 			return nil, err
 		}
 
-		mmapFile, err := mmap.Map(f, mmap.RDONLY, 0)
-		if err != nil {
-			return nil, err
-		}
+		records = append(records, readRecords...)
+		buffer = newBuffer
 
-		// Offset where the record from previous file ends
-		var offset = int(binary.BigEndian.Uint64(mmapFile[:HeaderSize])) + HeaderSize
-
-		// If the last record got deleted based on low watermark, we will ignore the record's remaining bytes
-		if len(recordBytes) != 0 {
-			recordBytes = append(recordBytes, mmapFile[HeaderSize:offset]...)
-
-			// If the record bytes overflow the current file, we won't deserialize them yet
-			if binary.BigEndian.Uint64(mmapFile[:HeaderSize]) != wal.segmentSize {
-				record, err := Deserialize(recordBytes)
-				if err != nil {
-					return nil, err
-				}
-				records = append(records, record)
-				recordBytes = []byte{}
-			}
-		}
-
-		// Current byte index in the file
-		var i = offset
-		for i < len(mmapFile) {
-			// If the current record header size isn't in the same file, we will move on to the next one
-			if i+RecordHeaderSize > len(mmapFile) {
-				break
-			}
-			keySize := binary.BigEndian.Uint64(mmapFile[i+KeySizeStart : i+ValueSizeStart])
-			valueSize := binary.BigEndian.Uint64(mmapFile[i+ValueSizeStart : i+KeyStart])
-
-			// If the record header size fit in this file, but the key or value didn't, we also move on to the next file
-			if i+RecordHeaderSize+int(keySize)+int(valueSize) > len(mmapFile) {
-				break
-			}
-
-			// If the whole record is in this file, we deserialize it
-			record, err := Deserialize(mmapFile[i : uint64(i)+RecordHeaderSize+keySize+valueSize])
+		// If there are no more files and the buffer isn't empty, deserialize the last record
+		// This can happen if the last file only contains bytes from one record.
+		if len(buffer) != 0 && idx == len(files)-1 {
+			record, err := Deserialize(buffer)
 			if err != nil {
 				return nil, err
 			}
 			records = append(records, record)
-			i += RecordHeaderSize + int(record.KeySize+record.ValueSize)
-		}
-
-		// If the record didn't fit in the current file, we store the remaining bytes and move on to the next one
-		recordBytes = append(recordBytes, mmapFile[i:]...)
-
-		err = mmapFile.Unmap()
-		if err != nil {
-			return nil, err
-		}
-		err = f.Close()
-		if err != nil {
-			return nil, err
 		}
 	}
 
