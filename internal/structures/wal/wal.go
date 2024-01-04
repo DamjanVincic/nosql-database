@@ -404,6 +404,48 @@ func (wal *WAL) MoveLowWatermark(record *Record) error {
 	return nil
 }
 
+func (wal *WAL) DeleteSegments() error {
+	files, err := os.ReadDir(Path)
+	if err != nil {
+		return err
+	}
+
+	for _, file := range files {
+		if strings.Contains(file.Name(), LowWaterMark) {
+			break
+		}
+		err := os.Remove(filepath.Join(Path, file.Name()))
+		if err != nil {
+			return err
+		}
+	}
+
+	files, err = os.ReadDir(Path)
+	if err != nil {
+		return err
+	}
+
+	for idx, file := range files {
+		if strings.Contains(file.Name(), LowWaterMark) {
+			parts := strings.Split(file.Name(), "_")
+			err := os.Rename(filepath.Join(Path, file.Name()), filepath.Join(Path, fmt.Sprintf("%s_%05d_%s", parts[0], idx+1, parts[2])))
+			if err != nil {
+				return err
+			}
+		} else {
+			extension := filepath.Ext(file.Name())
+			parts := strings.Split(file.Name(), extension)
+			parts2 := strings.Split(parts[0], "_")
+			err := os.Rename(filepath.Join(Path, file.Name()), filepath.Join(Path, fmt.Sprintf("%s_%05d%s", parts2[0], idx+1, extension)))
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
 func CRC32(data []byte) uint32 {
 	return crc32.ChecksumIEEE(data)
 }
