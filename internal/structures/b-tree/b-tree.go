@@ -190,8 +190,67 @@ func split(i int, child *BTreeNode, parent *BTreeNode) {
 	parent.keys[i] = keyToMove
 	parent.currentKeys++
 }
-func Delete() {
 
+/*
+search will return node that has the key that needs to be deleted
+ 1. deletion of key from leaf node
+    are keys in node > min
+    if yes, delete the key and shift the other keys of the node
+    if no, check siblings and borrow from them (check if left (then right) > min)
+    if cant borrow from sibling, combine nodes
+ 2. deletion of key from non leaf node
+    replace the key by its successor and delete successor (always left node) then case 1.
+
+get index of the next node and call function again if
+node doesnt contain key
+*/
+func Delete(key int, node *BTreeNode) {
+	index := find(key, node)
+	// key is in this node
+	if index < node.currentKeys && node.keys[index] == key {
+		if node.leaf {
+			removeFromLeaf(index, node)
+		} else {
+			removeFromInternal(index, node)
+		}
+		// look for key in child with given index
+	} else {
+		// key is not in the tree
+		if node.leaf {
+			return
+			// check next node
+		}
+		Delete(key, node.children[index])
+	}
+}
+func find(key int, root *BTreeNode) int {
+	index := 0 // if the key is smaller than first key in node
+	for j := 0; j < root.currentKeys; j++ {
+		if root.keys[index] < key {
+			index++
+		}
+	}
+	return index
+}
+func removeFromLeaf(index int, node *BTreeNode) {
+	for j := index; j < node.currentKeys; j++ { // we shift one place at the time
+		if node.currentKeys == 1 {
+			node = nil // needs to be removed from parent, will never get to this case
+		} else {
+			node.keys = deleteAtIndex(index, node.keys)
+		}
+	}
+	node.currentKeys--
+}
+func removeFromInternal(index int, node *BTreeNode) {
+
+}
+func deleteAtIndex(index int, list []int) []int {
+	if index < 0 || index >= len(list) {
+		return list
+	}
+
+	return append(list[:index], list[index+1:]...)
 }
 
 /*
