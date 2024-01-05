@@ -49,7 +49,7 @@ func roll() int {
 	return level
 }
 
-func CreateSkipList() SkipList {
+func CreateSkipList() *SkipList {
 	s := SkipList{
 		heads:  make([]*SkipListNode, 0),
 		tails:  make([]*SkipListNode, 0),
@@ -59,7 +59,7 @@ func CreateSkipList() SkipList {
 	s.heads = append(s.heads, &SkipListNode{key: negativeInfinity})
 	s.tails = append(s.tails, &SkipListNode{key: positiveInfinity, previous: s.heads[0]})
 	s.heads[0].next = s.tails[0]
-	return s
+	return &s
 }
 
 func (skipList *SkipList) find(key string, findClosest bool) (found *SkipListNode, err error) {
