@@ -14,7 +14,7 @@ const (
 type SkipListValue struct {
 	Value     []byte
 	Tombstone bool
-	Timestamp string
+	Timestamp uint64
 }
 
 type SkipListNode struct {
@@ -100,7 +100,7 @@ func (skipList *SkipList) Get(key string) (found *SkipListValue, ok error) {
 	return
 }
 
-func (skipList *SkipList) Add(key string, value []byte, tombstone bool, timestamp string) error {
+func (skipList *SkipList) Add(key string, value []byte, tombstone bool, timestamp uint64) error {
 	closestNode, ok := skipList.find(key, true)
 
 	if ok != nil {
