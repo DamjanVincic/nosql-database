@@ -204,7 +204,7 @@ search will return node that has the key that needs to be deleted
 get index of the next node and call function again if
 node doesnt contain key
 */
-func Delete(key int, node *BTreeNode) {
+func Delete(key int, node *BTreeNode) *BTreeNode {
 	index := find(key, node)
 	// key is in this node
 	if index < node.currentKeys && node.keys[index] == key {
@@ -217,7 +217,7 @@ func Delete(key int, node *BTreeNode) {
 	} else {
 		// key is not in the tree
 		if node.leaf {
-			return
+			return node
 		}
 		// if key is not in this node we do further
 		// need to check whether the node in the recursion path
@@ -230,7 +230,7 @@ func Delete(key int, node *BTreeNode) {
 			if index+1 == len(node.children) {
 				// then node is the last one
 				indexLeft--
-				if node.children[indexLeft].currentKeys >= T-1 {
+				if node.children[indexLeft].currentKeys > T-1 {
 					// sibling has more than minimum number of keys
 					// we can borrow
 					borrow = true
@@ -240,7 +240,7 @@ func Delete(key int, node *BTreeNode) {
 			} else if index == 0 {
 				// then node is first
 				indexRight++
-				if node.children[indexRight].currentKeys >= T-1 {
+				if node.children[indexRight].currentKeys > T-1 {
 					borrow = true
 				} else {
 					merge = true
@@ -248,7 +248,7 @@ func Delete(key int, node *BTreeNode) {
 			} else if index != 0 && index+1 == len(node.children)-1 {
 				// node is in the middle, second to last at most
 				// we can get from both right and left
-				if node.children[index-1].currentKeys >= T-1 {
+				if node.children[index-1].currentKeys > T-1 {
 					// we borrow from left child
 					indexLeft--
 					borrow = true
@@ -263,17 +263,41 @@ func Delete(key int, node *BTreeNode) {
 			if borrow {
 				borrowKeyFromSibling()
 			} else if merge {
-				mergeWithSibling()
+				node = mergeWithSibling(node, indexLeft, indexRight)
+				// again delete because its moved
+				Delete(key, node)
 			}
 		}
 		Delete(key, node.children[index])
 	}
+	return node
 }
 func borrowKeyFromSibling() {
 
 }
-func mergeWithSibling() {
-
+func mergeWithSibling(node *BTreeNode, indexLeft, indexRight int) *BTreeNode {
+	leftChild := node.children[indexLeft]
+	rightChild := node.children[indexRight]
+	leftChild.keys = append(leftChild.keys, node.keys[indexLeft])
+	node.keys = deleteAtIndex(indexLeft, node.keys)
+	// move keys and children
+	for j := 0; j <= rightChild.currentKeys; j++ {
+		if j != rightChild.currentKeys { // index out of range
+			leftChild.keys = append(leftChild.keys, rightChild.keys[j])
+		}
+		leftChild.children = append(leftChild.children, rightChild.children[j])
+	}
+	// move parents keys and children
+	for j := indexRight; j <= node.currentKeys; j++ {
+		if j != node.currentKeys {
+			node.keys[j-1] = node.keys[j]
+		}
+		node.children[j] = nil
+	}
+	node = leftChild
+	node.currentKeys = len(node.keys)
+	leftChild.currentKeys += rightChild.currentKeys + 1
+	return node
 }
 func find(key int, root *BTreeNode) int {
 	index := 0 // if the key is smaller than first key in node
@@ -321,6 +345,10 @@ func deleteAtIndex(index int, list []int) []int {
 	return append(list[:index], list[index+1:]...)
 }
 func combineNodes(node *BTreeNode, indexLeft, indexRight int) {
+	leftChild := node.children[indexLeft]
+	//rightChild := node.children[indexRight]
+	// add all to left child
+	leftChild.keys = append(leftChild.keys, node.keys[indexLeft])
 
 }
 func swichPredecessor(node *BTreeNode) int {
