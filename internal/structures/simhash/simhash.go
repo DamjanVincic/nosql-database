@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-func GetFingerprint(text string) uint64 {
+func GetFingerprint(text string) (uint64, error) {
 	// Remove stop words and trim spaces
 	text = strings.TrimSpace(stopwords.CleanString(text, "en", false))
 
@@ -18,7 +18,7 @@ func GetFingerprint(text string) uint64 {
 		h := fnv.New64()
 		_, err := h.Write([]byte(word))
 		if err != nil {
-			panic(err)
+			return 0, err
 		}
 
 		// If a bit is 0 we decrement the sum, if it's 1 we increment the sum
@@ -40,7 +40,7 @@ func GetFingerprint(text string) uint64 {
 		}
 	}
 
-	return fingerprint
+	return fingerprint, nil
 }
 
 func GetHammingDistance(fingerprint1, fingerprint2 uint64) uint8 {

@@ -31,22 +31,30 @@ func NewCMS(errorRate float64, probability float64) CountMinSketch {
 	return CountMinSketch{m: m, k: k, matrix: matrix, hashFunctions: hash.CreateHashFunctions(k)}
 }
 
-func (cms *CountMinSketch) Add(element []byte) {
+func (cms *CountMinSketch) Add(element []byte) error {
 	// Hash the element and increase the value of the corresponding matrix cell by 1
 	for key, seed := range cms.hashFunctions {
-		value := seed.Hash(element)
-		cms.matrix[key][value%cms.m] += 1
+		value, err := seed.Hash(element)
+		if err != nil {
+			return err
+		}
+
+		cms.matrix[key][value%uint64(cms.m)] += 1
 	}
+	return nil
 }
 
-func (cms *CountMinSketch) GetFrequency(element []byte) uint32 {
+func (cms *CountMinSketch) GetFrequency(element []byte) (uint32, error) {
 	// Hash the element and return the value of corresponding matrix cell
 	var count = make([]uint32, cms.k)
 	for key, seed := range cms.hashFunctions {
-		value := seed.Hash(element)
-		count[key] = cms.matrix[key][value%cms.m]
+		value, err := seed.Hash(element)
+		if err != nil {
+			return 0, err
+		}
+		count[key] = cms.matrix[key][value%uint64(cms.m)]
 	}
-	return slices.Min(count)
+	return slices.Min(count), nil
 }
 
 func (cms *CountMinSketch) Serialize() []byte {
