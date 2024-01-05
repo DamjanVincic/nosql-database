@@ -63,8 +63,12 @@ func (hyperLogLog *HyperLogLog) emptyCount() int {
 	return sum
 }
 
-func (hyperLogLog *HyperLogLog) Add(value []byte) {
-	hashValue := hyperLogLog.hashFunction.Hash(value)
+func (hyperLogLog *HyperLogLog) Add(value []byte) error {
+	hashValue, err := hyperLogLog.hashFunction.Hash(value)
+	if err != nil {
+		return err
+	}
+
 	//get index of registry in which to put the result
 	bucketIndex := hashValue >> (64 - hyperLogLog.p)
 
@@ -73,6 +77,8 @@ func (hyperLogLog *HyperLogLog) Add(value []byte) {
 	if count > hyperLogLog.reg[bucketIndex] {
 		hyperLogLog.reg[bucketIndex] = count
 	}
+
+	return nil
 }
 
 func (hyperLogLog *HyperLogLog) Serialize() []byte {

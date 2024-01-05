@@ -34,23 +34,35 @@ func CreateBloomFilter(expectedElements int, falsePositiveRate float64) BloomFil
 	return bf
 }
 
-func (bf *BloomFilter) AddElement(element []byte) {
+func (bf *BloomFilter) AddElement(element []byte) error {
 	// Hash all elements and set the corresponding bits in the byte array to 1
 	for _, fn := range bf.hashFunctions {
-		idx := fn.Hash(element) % uint64(bf.m)
+		hash_, err := fn.Hash(element)
+		if err != nil {
+			return err
+		}
+
+		idx := hash_ % uint64(bf.m)
 		bf.byteArray[idx] = 1
 	}
+
+	return nil
 }
 
-func (bf *BloomFilter) ContainsElement(element []byte) bool {
+func (bf *BloomFilter) ContainsElement(element []byte) (bool, error) {
 	// Hash the element and check if all bits at the corresponding indexes in the byte array are 1
 	for _, fn := range bf.hashFunctions {
-		idx := fn.Hash(element) % uint64(bf.m)
+		hash_, err := fn.Hash(element)
+		if err != nil {
+			return false, err
+		}
+
+		idx := hash_ % uint64(bf.m)
 		if bf.byteArray[idx] == 0 {
-			return false
+			return false, nil
 		}
 	}
-	return true
+	return true, nil
 }
 
 func (bf *BloomFilter) Serialize() []byte {
