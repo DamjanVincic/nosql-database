@@ -1,6 +1,7 @@
 package simhash
 
 import (
+	"encoding/binary"
 	"github.com/bbalet/stopwords"
 	"hash/fnv"
 	"strings"
@@ -52,4 +53,16 @@ func GetHammingDistance(fingerprint1, fingerprint2 uint64) uint8 {
 		}
 	}
 	return distance
+}
+
+// Serialize the fingerprint into a byte array
+func Serialize(fingerprint uint64) []byte {
+	bytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(bytes, fingerprint)
+	return bytes
+}
+
+// Deserialize the fingerprint from a byte array
+func Deserialize(bytes []byte) uint64 {
+	return binary.BigEndian.Uint64(bytes)
 }
