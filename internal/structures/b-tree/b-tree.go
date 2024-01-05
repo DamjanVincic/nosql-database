@@ -5,14 +5,11 @@ import "fmt"
 var T = 3
 
 type BTreeNode struct {
-	parent      *BTreeNode
-	t           int // minimum degree
-	maxChildren int
-	currentKeys int
-	maxKeys     int
-	keys        []int        // list of keys
-	children    []*BTreeNode // list of child pointers
-	leaf        bool         // is node a leaf
+	parent   *BTreeNode
+	t        int          // minimum degree
+	keys     []int        // list of keys
+	children []*BTreeNode // list of child pointers
+	leaf     bool         // is node a leaf
 }
 
 /*
@@ -28,38 +25,29 @@ func contains(list []int, element int) bool {
 }
 func initTree(key int) *BTreeNode {
 	return &BTreeNode{
-		parent:      nil,
-		t:           T,
-		maxChildren: 2*T + 1,
-		currentKeys: 1, // initialize with one key
-		maxKeys:     2*T - 1,
-		keys:        []int{key},
-		children:    []*BTreeNode{},
-		leaf:        true,
+		parent:   nil,
+		t:        T,
+		keys:     []int{key},
+		children: []*BTreeNode{},
+		leaf:     true,
 	}
 }
 func newNode(keys []int) *BTreeNode {
 	return &BTreeNode{
-		parent:      nil,
-		t:           T,
-		maxChildren: 2*T + 1,
-		currentKeys: 1, // initialize with one key
-		maxKeys:     2*T - 1,
-		keys:        keys,
-		children:    []*BTreeNode{},
-		leaf:        false,
+		parent:   nil,
+		t:        T,
+		keys:     keys,
+		children: []*BTreeNode{},
+		leaf:     false,
 	}
 }
 func newLeaf(keys []int) *BTreeNode {
 	return &BTreeNode{
-		parent:      nil,
-		t:           T,
-		maxChildren: 2*T + 1,
-		currentKeys: 1, // initialize with one key
-		maxKeys:     2*T - 1,
-		keys:        keys,
-		children:    []*BTreeNode{},
-		leaf:        true,
+		parent:   nil,
+		t:        T,
+		keys:     keys,
+		children: []*BTreeNode{},
+		leaf:     true,
 	}
 }
 
@@ -107,21 +95,15 @@ func Insert(key int, root *BTreeNode) *BTreeNode {
 		return nil
 	}
 	// if root is empty we need to initialize the tree
-	if len(root.keys) == 0 || root == nil {
-		return initTree(key)
-		// if root is filled max
-	} else if len(root.keys) == 2*root.t-1 {
+	if len(root.keys) == 2*T-1 {
 		// when split, middle element goes to parent node
 		// create pseudo-parent so it has somewhere to 'spil'
 		newNode := &BTreeNode{
-			parent:      nil,
-			t:           2,
-			maxChildren: 3,
-			currentKeys: 0,
-			maxKeys:     2,
-			keys:        []int{},
-			children:    []*BTreeNode{},
-			leaf:        false, // new root
+			parent:   nil,
+			t:        T,
+			keys:     []int{},
+			children: []*BTreeNode{},
+			leaf:     false, // new root
 		}
 		newNode.children = append(newNode.children, root)
 		root.parent = newNode
@@ -173,13 +155,10 @@ upper neighbor
 func split(i int, child *BTreeNode, parent *BTreeNode) {
 	keyToMove := child.keys[T-1]
 	newNode := &BTreeNode{
-		t:           T,
-		maxChildren: 2*T + 1,
-		currentKeys: T - 1,
-		maxKeys:     2*T - 1,
-		keys:        []int{},
-		children:    []*BTreeNode{},
-		leaf:        child.leaf, // if child is leaf so is new node
+		t:        T,
+		keys:     []int{},
+		children: []*BTreeNode{},
+		leaf:     child.leaf, // if child is leaf so is new node
 	}
 	newNode.keys = append(newNode.keys, child.keys[T:]...)
 	child.keys = child.keys[:T-1]
@@ -329,11 +308,16 @@ func mergeWithSibling(node *BTreeNode, indexLeft, indexRight, key int) *BTreeNod
 			leftChild.children = append(leftChild.children, rightChild.children[j])
 		}
 	}
+	node.children = deleteAtIndexNode(indexRight, node.children)
 	// move parents keys and children
 	for j := indexRight; j <= len(node.keys); j++ {
 		if j != len(node.keys) {
 			node.keys[j-1] = node.keys[j]
 		}
+	}
+	if len(node.keys) == 0 {
+		// remove the root
+		node = leftChild
 	}
 	Delete(key, node)
 	return node
@@ -361,10 +345,10 @@ func removeFromInternal(key, index int, node *BTreeNode) {
 	// get predecessor of the key
 	// check first left child
 	if len(node.children[index].keys) > (T - 1) { // bigger that minimum
-		node.keys[index] = swichPredecessor(node.children[index])
+		node.keys[index] = switchPredecessor(node.children[index])
 		// check right child next
 	} else if len(node.children[index+1].keys) > (T - 1) {
-		node.keys[index] = swichSuccessor(node.children[index+1])
+		node.keys[index] = switchSuccessor(node.children[index+1])
 		// combine nodes
 	} else {
 		mergeWithSibling(node, index, index+1, key)
@@ -384,7 +368,31 @@ func deleteAtIndexNode(index int, list []*BTreeNode) []*BTreeNode {
 
 	return append(list[:index], list[index+1:]...)
 }
-func swichPredecessor(node *BTreeNode) int {
+
+/*
+	func switchPredecessor(node *BTreeNode, key int) int {
+		if node.leaf {
+			last := node.keys[len(node.keys)-1]
+			node.keys = deleteAtIndex(len(node.keys)-1, node.keys) // remove predecessor
+			return last                                            // return last
+		}
+
+		child := node.children[len(node.children)-1]
+		if len(child.keys) > T-1 {
+			// Borrow from the rightmost child
+			node.keys[len(node.keys)-1] = switchPredecessor(child, key)
+		} else {
+			// Merge with the rightmost child
+			mergeWithSibling(node, len(node.children)-1, len(node.children), key)
+			// After merging, we need to call switchPredecessor again on the merged child
+			node.keys[len(node.keys)-1] = switchPredecessor(node.children[len(node.children)-1], key)
+		}
+
+		// Ensure there's a return statement for all code paths
+		return node.keys[len(node.keys)-1]
+	}
+*/
+func switchPredecessor(node *BTreeNode) int {
 	if node.leaf {
 		last := node.keys[len(node.keys)-1]
 		node.keys = deleteAtIndex(len(node.keys)-1, node.keys) // remove predecessor
@@ -392,7 +400,7 @@ func swichPredecessor(node *BTreeNode) int {
 	}
 	return -1
 }
-func swichSuccessor(node *BTreeNode) int {
+func switchSuccessor(node *BTreeNode) int {
 	if node.leaf {
 		first := node.keys[0]
 		node.keys = deleteAtIndex(0, node.keys) // remove predecessor
@@ -418,42 +426,15 @@ func main() {
 	// Initialize an empty root node
 	root := initTree(40)
 
-	leaf1 := newLeaf([]int{1, 9})
-	leaf2 := newLeaf([]int{17, 19, 21})
-	leaf3 := newLeaf([]int{23, 25, 27})
-	leaf4 := newLeaf([]int{31, 32, 39})
+	Insert(50, root)
+	Insert(10, root)
+	Insert(20, root)
+	Insert(30, root)
+	Insert(60, root)
+	Insert(70, root)
+	Insert(80, root)
+	Insert(90, root)
+	Insert(100, root)
 
-	leaf5 := newLeaf([]int{41, 47, 50})
-	leaf6 := newLeaf([]int{56, 60})
-	leaf7 := newLeaf([]int{72, 90})
-
-	node1 := newNode([]int{15, 22, 30})
-	node1.children = append(node1.children, leaf1)
-	node1.children = append(node1.children, leaf2)
-	node1.children = append(node1.children, leaf3)
-	node1.children = append(node1.children, leaf4)
-
-	node2 := newNode([]int{55, 63})
-	node2.children = append(node2.children, leaf5)
-	node2.children = append(node2.children, leaf6)
-	node2.children = append(node2.children, leaf7)
-
-	root.children = append(root.children, node1)
-	root.children = append(root.children, node2)
-	PrintBTree(root, 0)
-
-	root.leaf = false
-
-	fmt.Println("delete 21--------------")
-	Delete(21, root)
-	PrintBTree(root, 0)
-	fmt.Println("delete 30--------------")
-	Delete(30, root)
-	PrintBTree(root, 0)
-	fmt.Println("delete 27--------------")
-	Delete(27, root)
-	PrintBTree(root, 0)
-	fmt.Println("delete 22--------------")
-	Delete(22, root)
 	PrintBTree(root, 0)
 }
