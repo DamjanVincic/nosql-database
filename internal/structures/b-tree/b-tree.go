@@ -55,29 +55,24 @@ func newLeaf(keys []int) *BTreeNode {
 searches whether the key is in the tree
 optimize to not check branch that cant possible have the key
 */
-func search(key int, node *BTreeNode) (bool, *BTreeNode) {
+func Search(key int, node *BTreeNode) (bool, *BTreeNode) {
 	if contains(node.keys, key) {
 		return true, node
 	}
 
-	// check if the key is less than the minimum key in the current nodes keys
-	if len(node.keys) > 0 && key < node.keys[0] {
-		return false, nil
+	index := 0
+	for i := 0; i < len(node.keys); i++ {
+		if node.keys[i] < key {
+			index++
+		}
 	}
-
-	// check if the key is greater than the maximum key in the current nodes keys
-	if len(node.keys) > 0 && key > node.keys[len(node.keys)-1] {
-		return false, nil
+	if index < len(node.keys) && node.keys[index] == key {
+		return true, node
 	}
 
 	// iterate through children only if its not a leaf node
 	if !node.leaf {
-		for _, child := range node.children {
-			found, foundNode := search(key, child)
-			if found {
-				return true, foundNode
-			}
-		}
+		return Search(key, node.children[index])
 	}
 
 	return false, nil
@@ -90,7 +85,7 @@ if the root is full its split,
 if not key is added in empty space
 */
 func Insert(key int, root *BTreeNode) *BTreeNode {
-	found, _ := search(key, root)
+	found, _ := Search(key, root)
 	if found {
 		return nil
 	}
@@ -107,7 +102,7 @@ func Insert(key int, root *BTreeNode) *BTreeNode {
 		}
 		newNode.children = append(newNode.children, root)
 		root.parent = newNode
-		split(0, root, newNode)
+		newNode = split(0, root, newNode)
 		insertInNodeThatHasRoom(key, newNode)
 		return newNode
 	} else {
@@ -125,6 +120,9 @@ func insertInNodeThatHasRoom(key int, node *BTreeNode) {
 			//node.children[i] = node.children[i-1]
 			i--
 		}
+		if node.keys[len(node.keys)-1] == -1 {
+			node.keys = deleteAtIndex(len(node.keys)-1, node.keys)
+		}
 		if i+1 < len(node.keys) {
 			node.keys[i] = key
 		} else {
@@ -132,13 +130,13 @@ func insertInNodeThatHasRoom(key int, node *BTreeNode) {
 		}
 	} else {
 		for i > 0 && node.keys[i-1] > key {
-			i -= 1
+			i--
 		}
 		// check overflow
 		if len(node.children[i].keys) == 2*node.t-1 {
-			split(i, node.children[i], node)
+			node = split(i, node.children[i], node)
 			if node.keys[i] < key {
-				i += 1
+				i++
 			}
 		}
 		insertInNodeThatHasRoom(key, node.children[i])
@@ -152,7 +150,7 @@ from the overflowing node to the new node
 then insert the pointer to the new node into the
 upper neighbor
 */
-func split(i int, child *BTreeNode, parent *BTreeNode) {
+func split(i int, child *BTreeNode, parent *BTreeNode) *BTreeNode {
 	keyToMove := child.keys[T-1]
 	newNode := &BTreeNode{
 		t:        T,
@@ -188,6 +186,7 @@ func split(i int, child *BTreeNode, parent *BTreeNode) {
 		}
 	}
 	parent.keys[i] = keyToMove
+	return parent
 }
 
 /*
@@ -421,20 +420,4 @@ func PrintBTree(node *BTreeNode, level int) {
 			PrintBTree(child, level+1)
 		}
 	}
-}
-func main() {
-	// Initialize an empty root node
-	root := initTree(40)
-
-	Insert(50, root)
-	Insert(10, root)
-	Insert(20, root)
-	Insert(30, root)
-	Insert(60, root)
-	Insert(70, root)
-	Insert(80, root)
-	Insert(90, root)
-	Insert(100, root)
-
-	PrintBTree(root, 0)
 }
