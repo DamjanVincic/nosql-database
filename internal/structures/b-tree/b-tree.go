@@ -231,7 +231,7 @@ func Delete(key int, node *BTreeNode) *BTreeNode {
 		if node.leaf {
 			removeFromLeaf(index, node)
 		} else {
-			removeFromInternal(index, node)
+			removeFromInternal(key, index, node)
 		}
 		// look for key in child with given index
 	} else {
@@ -284,7 +284,7 @@ func Delete(key int, node *BTreeNode) *BTreeNode {
 			if borrow {
 				node = borrowKeyFromSibling(node, indexLeft, indexRight)
 			} else if merge {
-				node = mergeWithSibling(node, indexLeft, indexRight)
+				node = mergeWithSibling(node, indexLeft, indexRight, key)
 				// again delete because its moved
 				Delete(key, node)
 			}
@@ -315,7 +315,7 @@ func borrowKeyFromSibling(node *BTreeNode, indexLeft, indexRight int) *BTreeNode
 	leftChild.keys = deleteAtIndex(indexLeft-(T-1), leftChild.keys)
 	return node
 }
-func mergeWithSibling(node *BTreeNode, indexLeft, indexRight int) *BTreeNode {
+func mergeWithSibling(node *BTreeNode, indexLeft, indexRight, key int) *BTreeNode {
 	leftChild := node.children[indexLeft]
 	rightChild := node.children[indexRight]
 	leftChild.keys = append(leftChild.keys, node.keys[indexLeft])
@@ -335,7 +335,7 @@ func mergeWithSibling(node *BTreeNode, indexLeft, indexRight int) *BTreeNode {
 			node.keys[j-1] = node.keys[j]
 		}
 	}
-	node.children = deleteAtIndexNode(indexRight, node.children)
+	Delete(key, node)
 	return node
 }
 func find(key int, root *BTreeNode) int {
@@ -348,15 +348,11 @@ func find(key int, root *BTreeNode) int {
 	return index
 }
 func removeFromLeaf(index int, node *BTreeNode) {
-	for j := index; j < len(node.keys); j++ { // we shift one place at the time
-		if len(node.keys) == 1 {
-			node = nil // needs to be removed from parent, will never get to this case
-		} else {
-			node.keys = deleteAtIndex(index, node.keys)
-		}
+	if index < len(node.keys) {
+		node.keys = deleteAtIndex(index, node.keys)
 	}
 }
-func removeFromInternal(index int, node *BTreeNode) {
+func removeFromInternal(key, index int, node *BTreeNode) {
 	if node.leaf {
 		removeFromLeaf(index, node)
 	}
@@ -371,12 +367,7 @@ func removeFromInternal(index int, node *BTreeNode) {
 		node.keys[index] = swichSuccessor(node.children[index+1])
 		// combine nodes
 	} else {
-		mergeWithSibling(node, index, index+1)
-		if node.children[index].leaf {
-			removeFromLeaf(index, node.children[index])
-		} else {
-			removeFromInternal(T-1, node.children[index])
-		}
+		mergeWithSibling(node, index, index+1, key)
 	}
 }
 func deleteAtIndex(index int, list []int) []int {
@@ -422,4 +413,47 @@ func PrintBTree(node *BTreeNode, level int) {
 			PrintBTree(child, level+1)
 		}
 	}
+}
+func main() {
+	// Initialize an empty root node
+	root := initTree(40)
+
+	leaf1 := newLeaf([]int{1, 9})
+	leaf2 := newLeaf([]int{17, 19, 21})
+	leaf3 := newLeaf([]int{23, 25, 27})
+	leaf4 := newLeaf([]int{31, 32, 39})
+
+	leaf5 := newLeaf([]int{41, 47, 50})
+	leaf6 := newLeaf([]int{56, 60})
+	leaf7 := newLeaf([]int{72, 90})
+
+	node1 := newNode([]int{15, 22, 30})
+	node1.children = append(node1.children, leaf1)
+	node1.children = append(node1.children, leaf2)
+	node1.children = append(node1.children, leaf3)
+	node1.children = append(node1.children, leaf4)
+
+	node2 := newNode([]int{55, 63})
+	node2.children = append(node2.children, leaf5)
+	node2.children = append(node2.children, leaf6)
+	node2.children = append(node2.children, leaf7)
+
+	root.children = append(root.children, node1)
+	root.children = append(root.children, node2)
+	PrintBTree(root, 0)
+
+	root.leaf = false
+
+	fmt.Println("delete 21--------------")
+	Delete(21, root)
+	PrintBTree(root, 0)
+	fmt.Println("delete 30--------------")
+	Delete(30, root)
+	PrintBTree(root, 0)
+	fmt.Println("delete 27--------------")
+	Delete(27, root)
+	PrintBTree(root, 0)
+	fmt.Println("delete 22--------------")
+	Delete(22, root)
+	PrintBTree(root, 0)
 }
