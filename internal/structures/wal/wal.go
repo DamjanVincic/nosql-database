@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/edsrzf/mmap-go"
-	"hash/crc32"
 	"os"
 	"path/filepath"
 	"strings"
@@ -66,6 +65,7 @@ func NewWAL(segmentSize uint64) (*WAL, error) {
 			return nil, err
 		}
 	}
+
 	var filename string
 	// If there are no files in the directory, create the first one
 	if len(dirEntries) == 0 {
@@ -106,15 +106,14 @@ func (wal *WAL) createNewSegment() error {
 	if err != nil {
 		return err
 	}
-	defer func(file *os.File, err *error) {
-		*err = file.Close()
-	}(file, &err)
+
+	// Leave the first HeaderSize bytes for the file header
+	err = file.Truncate(HeaderSize)
 	if err != nil {
 		return err
 	}
 
-	// Leave the first HeaderSize bytes for the file header
-	err = file.Truncate(HeaderSize)
+	err = file.Close()
 	if err != nil {
 		return err
 	}
@@ -165,6 +164,7 @@ func (wal *WAL) getRemainingBytesAndFileSize(file *os.File) (uint64, uint64, err
 	}
 	remainingBytes = wal.segmentSize - (fileSize - HeaderSize)
 
+	// We return the file size to avoid getting it in multiple other functions
 	return remainingBytes, fileSize, nil
 }
 
@@ -179,15 +179,14 @@ func (wal *WAL) writeBytes(file *os.File, bytes []byte, fileSize uint64) error {
 	if err != nil {
 		return err
 	}
-	defer func(mmapFile *mmap.MMap, err *error) {
-		*err = mmapFile.Unmap()
-	}(&mmapFile, &err)
-	if err != nil {
-		return err
-	}
 
 	// Copy the bytes that can fit in the current file
 	copy(mmapFile[fileSize:], bytes)
+
+	err = mmapFile.Unmap()
+	if err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -348,6 +347,7 @@ func (wal *WAL) readRecordsFromFile(fileName string, buffer []byte) ([]*Record, 
 	if err != nil {
 		return nil, nil, err
 	}
+
 	err = file.Close()
 	if err != nil {
 		return nil, nil, err
@@ -515,8 +515,4 @@ func (wal *WAL) DeleteSegments() error {
 	}
 
 	return nil
-}
-
-func CRC32(data []byte) uint32 {
-	return crc32.ChecksumIEEE(data)
 }

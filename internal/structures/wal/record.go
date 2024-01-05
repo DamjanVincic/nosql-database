@@ -3,6 +3,7 @@ package wal
 import (
 	"encoding/binary"
 	"errors"
+	"hash/crc32"
 	"time"
 )
 
@@ -35,7 +36,7 @@ func NewRecord(key string, value []byte, tombstone bool) *Record {
 	bytes = append(bytes, value...)
 
 	return &Record{
-		Crc:       CRC32(bytes),
+		Crc:       crc32.ChecksumIEEE(bytes),
 		Timestamp: timestamp,
 		Tombstone: tombstone,
 		KeySize:   keySize,
@@ -81,7 +82,7 @@ func Deserialize(bytes []byte) (*Record, error) {
 	copy(value, bytes[KeyStart+keySize:])
 
 	// Check if the CRC matches
-	if crc != CRC32(bytes[TimestampStart:]) {
+	if crc != crc32.ChecksumIEEE(bytes[TimestampStart:]) {
 		return nil, errors.New("CRC does not match")
 	}
 
