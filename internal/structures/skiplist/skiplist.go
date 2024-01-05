@@ -1,12 +1,15 @@
-package skipList
+package main
 
 import (
 	"errors"
-	"math"
 	"math/rand"
 )
 
-const maxHeight = 10
+const (
+	maxHeight        = 10
+	positiveInfinity = "+∞"
+	negativeInfinity = "-∞"
+)
 
 type SkipListValue struct {
 	value     []byte
@@ -15,7 +18,7 @@ type SkipListValue struct {
 }
 
 type SkipListNode struct {
-	key      float64
+	key      string
 	value    SkipListValue
 	previous *SkipListNode
 	next     *SkipListNode
@@ -53,13 +56,13 @@ func CreateSkipList() SkipList {
 		height: 1,
 		size:   0,
 	}
-	s.heads = append(s.heads, &SkipListNode{key: math.Inf(-1)})
-	s.tails = append(s.tails, &SkipListNode{key: math.Inf(1), previous: s.heads[0]})
+	s.heads = append(s.heads, &SkipListNode{key: negativeInfinity})
+	s.tails = append(s.tails, &SkipListNode{key: positiveInfinity, previous: s.heads[0]})
 	s.heads[0].next = s.tails[0]
 	return s
 }
 
-func (skipList *SkipList) find(key float64, findClosest bool) (err error, found *SkipListNode) {
+func (skipList *SkipList) find(key string, findClosest bool) (err error, found *SkipListNode) {
 	err = nil
 	found = nil
 
@@ -70,9 +73,9 @@ func (skipList *SkipList) find(key float64, findClosest bool) (err error, found 
 		if next.key == key {
 			found = next
 			return
-		} else if next.key < key {
+		} else if next.key < key && next.key != positiveInfinity {
 			current = current.next
-		} else if next.key > key { //key is not on this level, if possible go below
+		} else if next.key > key || next.key == positiveInfinity { //key is not on this level, if possible go below
 			if current.below != nil {
 				current = current.below
 			} else { //key does not exist
@@ -87,7 +90,7 @@ func (skipList *SkipList) find(key float64, findClosest bool) (err error, found 
 	}
 }
 
-func (skipList *SkipList) Get(key float64) (ok error, found SkipListValue) {
+func (skipList *SkipList) Get(key string) (ok error, found SkipListValue) {
 	ok, elem := skipList.find(key, false)
 	if ok == nil {
 		found = elem.value
@@ -97,7 +100,7 @@ func (skipList *SkipList) Get(key float64) (ok error, found SkipListValue) {
 	return
 }
 
-func (skipList *SkipList) Add(key float64, value SkipListValue) error {
+func (skipList *SkipList) Add(key string, value SkipListValue) error {
 	ok, closestNode := skipList.find(key, true)
 
 	if ok != nil {
@@ -122,9 +125,9 @@ func (skipList *SkipList) Add(key float64, value SkipListValue) error {
 		level = skipList.height + 1
 		skipList.height = level
 
-		skipList.heads = append(skipList.heads, &SkipListNode{key: math.Inf(-1), below: skipList.heads[level-2]})
+		skipList.heads = append(skipList.heads, &SkipListNode{key: negativeInfinity, below: skipList.heads[level-2]})
 		skipList.heads[level-2].above = skipList.heads[level-1]
-		skipList.tails = append(skipList.tails, &SkipListNode{key: math.Inf(1), below: skipList.tails[level-2], previous: skipList.heads[level-1]})
+		skipList.tails = append(skipList.tails, &SkipListNode{key: positiveInfinity, below: skipList.tails[level-2], previous: skipList.heads[level-1]})
 		skipList.heads[level-1].next = skipList.tails[level-1]
 		skipList.tails[level-2].above = skipList.tails[level-1]
 	}
@@ -157,7 +160,7 @@ func (skipList *SkipList) Add(key float64, value SkipListValue) error {
 	return ok
 }
 
-func (skipList *SkipList) Remove(key float64) error {
+func (skipList *SkipList) Remove(key string) error {
 	ok, found := skipList.find(key, false)
 	if ok != nil {
 		return ok
