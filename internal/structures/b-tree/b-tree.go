@@ -218,10 +218,62 @@ func Delete(key int, node *BTreeNode) {
 		// key is not in the tree
 		if node.leaf {
 			return
-			// check next node
+		}
+		// if key is not in this node we do further
+		// need to check whether the node in the recursion path
+		// has minimal number of keys
+		if node.currentKeys == T-1 {
+			borrow := false
+			merge := false
+			indexLeft := index
+			indexRight := index
+			if index+1 == len(node.children) {
+				// then node is the last one
+				indexLeft--
+				if node.children[indexLeft].currentKeys >= T-1 {
+					// sibling has more than minimum number of keys
+					// we can borrow
+					borrow = true
+				} else {
+					merge = true
+				}
+			} else if index == 0 {
+				// then node is first
+				indexRight++
+				if node.children[indexRight].currentKeys >= T-1 {
+					borrow = true
+				} else {
+					merge = true
+				}
+			} else if index != 0 && index+1 == len(node.children)-1 {
+				// node is in the middle, second to last at most
+				// we can get from both right and left
+				if node.children[index-1].currentKeys >= T-1 {
+					// we borrow from left child
+					indexLeft--
+					borrow = true
+				} else if node.children[index+1].currentKeys > T-1 {
+					// we borrow from right child
+					indexRight++
+				} else {
+					merge = true
+					indexRight++
+				}
+			}
+			if borrow {
+				borrowKeyFromSibling()
+			} else if merge {
+				mergeWithSibling()
+			}
 		}
 		Delete(key, node.children[index])
 	}
+}
+func borrowKeyFromSibling() {
+
+}
+func mergeWithSibling() {
+
 }
 func find(key int, root *BTreeNode) int {
 	index := 0 // if the key is smaller than first key in node
