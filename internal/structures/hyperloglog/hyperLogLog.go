@@ -1,8 +1,8 @@
 package hyperLogLog
 
 import (
-	"crypto/md5"
 	"encoding/binary"
+	"github.com/DamjanVincic/key-value-engine/internal/structures/hash"
 	"log"
 	"math"
 	"math/bits"
@@ -17,9 +17,10 @@ const (
 )
 
 type HyperLogLog struct {
-	m   uint64  //number of registries
-	p   uint8   //precision (number of bits for registry index)
-	reg []uint8 //registries
+	m            uint64  //number of registries
+	p            uint8   //precision (number of bits for registry index)
+	reg          []uint8 //registries
+	hashFunction hash.HashWithSeed
 }
 
 func NewHyperLogLog(bucketBits uint8) HyperLogLog {
@@ -27,7 +28,11 @@ func NewHyperLogLog(bucketBits uint8) HyperLogLog {
 		panic("Hll precision must be between" + string(rune(HLL_MIN_PRECISION)) + " and " + string(rune(HLL_MIN_PRECISION)))
 	}
 	size := uint64(math.Pow(2, float64(bucketBits)))
-	return HyperLogLog{p: bucketBits, m: size, reg: make([]uint8, size)}
+	return HyperLogLog{p: bucketBits,
+		m:            size,
+		reg:          make([]uint8, size),
+		hashFunction: hash.CreateHashFunctions(1)[0],
+	}
 }
 
 func (hyperLogLog *HyperLogLog) Estimate() float64 {
@@ -60,7 +65,7 @@ func (hyperLogLog *HyperLogLog) emptyCount() int {
 }
 
 func (hyperLogLog *HyperLogLog) Add(value []byte) {
-	hashValue := Hash(value)
+	hashValue := hyperLogLog.Hash(value)
 	//get index of registry in which to put the result
 	bucketIndex := hashValue >> (64 - hyperLogLog.p)
 
@@ -85,6 +90,10 @@ func (hyperLogLog *HyperLogLog) Serialize() []byte {
 	for _, item := range hyperLogLog.reg {
 		serializedHll = append(serializedHll, item)
 	}
+
+	// Append hash function seed
+	serializedHll = append(serializedHll, hash.Serialize([]hash.HashWithSeed{hyperLogLog.hashFunction})...)
+
 	return serializedHll
 }
 
@@ -100,7 +109,14 @@ func Deserialize(serializedHll []byte) HyperLogLog {
 	for i = 0; i < m; i++ {
 		reg[i] = serializedHll[9+i]
 	}
-	return HyperLogLog{p: p, m: m, reg: reg}
+	// Deserialize hash function
+	hashFunction := hash.Deserialize(serializedHll[len(serializedHll)-4:])[0]
+
+	return HyperLogLog{p: p,
+		m:            m,
+		reg:          reg,
+		hashFunction: hashFunction,
+	}
 }
 
 func (hyperLogLog *HyperLogLog) WriteToFile(destination string) {
@@ -119,11 +135,6 @@ func LoadFromFile(destination string) HyperLogLog {
 	return Deserialize(serializedHll)
 }
 
-func Hash(data []byte) uint64 {
-	fn := md5.New()
-	_, err := fn.Write(data)
-	if err != nil {
-		panic("Error occurred while getting hash value.")
-	}
-	return binary.BigEndian.Uint64(fn.Sum(nil))
+func (hyperLogLog *HyperLogLog) Hash(data []byte) uint64 {
+	return hyperLogLog.hashFunction.Hash(data)
 }
