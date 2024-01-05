@@ -12,14 +12,14 @@ const (
 )
 
 type SkipListValue struct {
-	value     []byte
-	tombstone bool
-	timestamp string
+	Value     []byte
+	Tombstone bool
+	Timestamp string
 }
 
 type SkipListNode struct {
 	key      string
-	value    SkipListValue
+	value    *SkipListValue
 	previous *SkipListNode
 	next     *SkipListNode
 	below    *SkipListNode
@@ -62,7 +62,7 @@ func CreateSkipList() SkipList {
 	return s
 }
 
-func (skipList *SkipList) find(key string, findClosest bool) (err error, found *SkipListNode) {
+func (skipList *SkipList) find(key string, findClosest bool) (found *SkipListNode, err error) {
 	err = nil
 	found = nil
 
@@ -90,33 +90,32 @@ func (skipList *SkipList) find(key string, findClosest bool) (err error, found *
 	}
 }
 
-func (skipList *SkipList) Get(key string) (ok error, found SkipListValue) {
-	ok, elem := skipList.find(key, false)
+func (skipList *SkipList) Get(key string) (found *SkipListValue, ok error) {
+	elem, ok := skipList.find(key, false)
 	if ok == nil {
 		found = elem.value
 	} else {
-		found = SkipListValue{}
+		found = nil
 	}
 	return
 }
 
-func (skipList *SkipList) Add(key string, value SkipListValue) error {
-	ok, closestNode := skipList.find(key, true)
+func (skipList *SkipList) Add(key string, value []byte, tombstone bool, timestamp string) error {
+	closestNode, ok := skipList.find(key, true)
 
 	if ok != nil {
 		return ok
 	}
 
-	//if node already exists, update value
+	//if node already exists, update values in Value field
 	if closestNode.key == key {
-		closestNode.value = value
-		//update values on all levels
-		for closestNode.below != nil {
-			closestNode = closestNode.below
-			closestNode.value = value
-		}
+		closestNode.value.Value = value
+		closestNode.value.Tombstone = tombstone
+		closestNode.value.Timestamp = timestamp
 		return ok
 	}
+
+	skipListValue := &SkipListValue{Value: value, Timestamp: timestamp, Tombstone: tombstone}
 
 	level := roll()
 
@@ -136,7 +135,7 @@ func (skipList *SkipList) Add(key string, value SkipListValue) error {
 	lastNewNode = nil
 
 	for i := 0; i < level; i++ { //create new node on all levels needed
-		newNode := &SkipListNode{previous: closestNode, next: closestNode.next, below: lastNewNode, above: nil, key: key, value: value}
+		newNode := &SkipListNode{previous: closestNode, next: closestNode.next, below: lastNewNode, above: nil, key: key, value: skipListValue}
 		newNode.next.previous = newNode
 		closestNode.next = newNode
 		if lastNewNode != nil { //connect new node to nodes below
@@ -161,7 +160,7 @@ func (skipList *SkipList) Add(key string, value SkipListValue) error {
 }
 
 func (skipList *SkipList) Remove(key string) error {
-	ok, found := skipList.find(key, false)
+	found, ok := skipList.find(key, false)
 	if ok != nil {
 		return ok
 	}
