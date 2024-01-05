@@ -168,31 +168,49 @@ func (wal *WAL) getRemainingBytesAndFileSize(file *os.File) (uint64, uint64, err
 	return remainingBytes, fileSize, nil
 }
 
+// Write the forwarded bytes to the file.
+func (wal *WAL) writeBytes(file *os.File, bytes []byte, fileSize uint64) error {
+	err := file.Truncate(int64(fileSize + uint64(len(bytes))))
+	if err != nil {
+		return err
+	}
+
+	mmapFile, err := mmap.Map(file, mmap.RDWR, 0)
+	if err != nil {
+		return err
+	}
+	defer func(mmapFile *mmap.MMap, err *error) {
+		*err = mmapFile.Unmap()
+	}(&mmapFile, &err)
+	if err != nil {
+		return err
+	}
+
+	// Copy the bytes that can fit in the current file
+	copy(mmapFile[fileSize:], bytes)
+
+	return nil
+}
+
 /*
 Write the record bytes to the file, starting from the given index.
 If the record bytes overflow the current file, create a new segment and write the remaining bytes to it.
 Return the number of bytes that can fit in the file (the amount of bytes written).
 */
-func (wal *WAL) writeBytes(file *os.File, recordBytes []byte, idx uint64) (uint64, error) {
+func (wal *WAL) writeRecordBytes(file *os.File, recordBytes []byte, idx uint64) (uint64, error) {
 	recordSize := uint64(len(recordBytes))
 
 	remainingBytes, fileSize, err := wal.getRemainingBytesAndFileSize(file)
+	if err != nil {
+		return 0, err
+	}
 
-	var mmapFile mmap.MMap
 	// If the record can't fit in the current file
 	if idx+remainingBytes < recordSize {
-		err = file.Truncate(int64(fileSize + remainingBytes))
+		err := wal.writeBytes(file, recordBytes[idx:idx+remainingBytes], fileSize)
 		if err != nil {
 			return 0, err
 		}
-
-		mmapFile, err = mmap.Map(file, mmap.RDWR, 0)
-		if err != nil {
-			return 0, err
-		}
-
-		// Copy the bytes that can fit in the current file
-		copy(mmapFile[fileSize:], recordBytes[idx:idx+remainingBytes])
 
 		err = wal.createNewSegment()
 		if err != nil {
@@ -223,24 +241,12 @@ func (wal *WAL) writeBytes(file *os.File, recordBytes []byte, idx uint64) (uint6
 	} else {
 		// If the record can fit in the current file
 
-		err = file.Truncate(int64(fileSize + recordSize - idx))
-		if err != nil {
-			return 0, err
-		}
 		remainingBytes = recordSize - idx // To return the amount of bytes written in the last part of the byte array
 
-		mmapFile, err = mmap.Map(file, mmap.RDWR, 0)
+		err := wal.writeBytes(file, recordBytes[idx:], fileSize)
 		if err != nil {
 			return 0, err
 		}
-
-		// Copy the remaining bytes to the new file
-		copy(mmapFile[fileSize:], recordBytes[idx:])
-	}
-
-	err = mmapFile.Unmap()
-	if err != nil {
-		return 0, err
 	}
 
 	return remainingBytes, nil
@@ -260,7 +266,7 @@ func (wal *WAL) AddRecord(key string, value []byte, tombstone bool) error {
 			return err
 		}
 
-		bytesWritten, err := wal.writeBytes(file, recordBytes, idx)
+		bytesWritten, err := wal.writeRecordBytes(file, recordBytes, idx)
 		if err != nil {
 			return err
 		}
