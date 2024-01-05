@@ -2,6 +2,7 @@ package hyperLogLog
 
 import (
 	"encoding/binary"
+	"errors"
 	"github.com/DamjanVincic/key-value-engine/internal/structures/hash"
 	"math"
 	"math/bits"
@@ -21,16 +22,16 @@ type HyperLogLog struct {
 	hashFunction hash.HashWithSeed
 }
 
-func NewHyperLogLog(bucketBits uint8) *HyperLogLog {
+func NewHyperLogLog(bucketBits uint8) (*HyperLogLog, error) {
 	if bucketBits < HllMinPrecision || bucketBits > HllMaxPrecision {
-		panic("Hll precision must be between" + string(rune(HllMinPrecision)) + " and " + string(rune(HllMinPrecision)))
+		return nil, errors.New("Hll precision must be between" + string(rune(HllMinPrecision)) + " and " + string(rune(HllMinPrecision)))
 	}
 	size := uint64(math.Pow(2, float64(bucketBits)))
 	return &HyperLogLog{p: bucketBits,
 		m:            size,
 		reg:          make([]uint8, size),
 		hashFunction: hash.CreateHashFunctions(1)[0],
-	}
+	}, nil
 }
 
 func (hyperLogLog *HyperLogLog) Estimate() float64 {
