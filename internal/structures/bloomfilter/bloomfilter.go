@@ -37,7 +37,7 @@ func CreateBloomFilter(expectedElements int, falsePositiveRate float64) BloomFil
 func (bf *BloomFilter) AddElement(element []byte) {
 	// Hash all elements and set the corresponding bits in the byte array to 1
 	for _, fn := range bf.hashFunctions {
-		idx := fn.Hash(element) % bf.m
+		idx := fn.Hash(element) % uint64(bf.m)
 		bf.byteArray[idx] = 1
 	}
 }
@@ -45,7 +45,7 @@ func (bf *BloomFilter) AddElement(element []byte) {
 func (bf *BloomFilter) ContainsElement(element []byte) bool {
 	// Hash the element and check if all bits at the corresponding indexes in the byte array are 1
 	for _, fn := range bf.hashFunctions {
-		idx := fn.Hash(element) % bf.m
+		idx := fn.Hash(element) % uint64(bf.m)
 		if bf.byteArray[idx] == 0 {
 			return false
 		}

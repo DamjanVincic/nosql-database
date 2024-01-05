@@ -35,7 +35,7 @@ func (cms *CountMinSketch) Add(element []byte) {
 	// Hash the element and increase the value of the corresponding matrix cell by 1
 	for key, seed := range cms.hashFunctions {
 		value := seed.Hash(element)
-		cms.matrix[key][value%cms.m] += 1
+		cms.matrix[key][value%uint64(cms.m)] += 1
 	}
 }
 
@@ -44,7 +44,7 @@ func (cms *CountMinSketch) GetFrequency(element []byte) uint32 {
 	var count = make([]uint32, cms.k)
 	for key, seed := range cms.hashFunctions {
 		value := seed.Hash(element)
-		count[key] = cms.matrix[key][value%cms.m]
+		count[key] = cms.matrix[key][value%uint64(cms.m)]
 	}
 	return slices.Min(count)
 }

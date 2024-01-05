@@ -10,13 +10,13 @@ type HashWithSeed struct {
 	seed []byte
 }
 
-func (h HashWithSeed) Hash(data []byte) uint32 {
-	fn := fnv.New32()
+func (h HashWithSeed) Hash(data []byte) uint64 {
+	fn := fnv.New64()
 	_, err := fn.Write(append(data, h.seed...))
 	if err != nil {
 		panic(err)
 	}
-	return fn.Sum32()
+	return fn.Sum64()
 }
 
 func CreateHashFunctions(k uint32) []HashWithSeed {
