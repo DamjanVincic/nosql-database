@@ -1,6 +1,7 @@
 package skipList
 
 import (
+	"errors"
 	"math"
 	"math/rand"
 )
@@ -58,8 +59,8 @@ func CreateSkipList() SkipList {
 	return s
 }
 
-func (skipList *SkipList) find(key float64, findClosest bool) (ok bool, found *SkipListNode) {
-	ok = false
+func (skipList *SkipList) find(key float64, findClosest bool) (err error, found *SkipListNode) {
+	err = nil
 	found = nil
 
 	current := skipList.heads[skipList.height-1] //starting search from top level
@@ -67,7 +68,6 @@ func (skipList *SkipList) find(key float64, findClosest bool) (ok bool, found *S
 	for {
 		next := current.next
 		if next.key == key {
-			ok = true
 			found = next
 			return
 		} else if next.key < key {
@@ -77,10 +77,9 @@ func (skipList *SkipList) find(key float64, findClosest bool) (ok bool, found *S
 				current = current.below
 			} else { //key does not exist
 				if findClosest {
-					ok = true
 					found = current
 				} else {
-					ok = false
+					err = errors.New("could not find element with given key")
 				}
 				return
 			}
@@ -88,21 +87,21 @@ func (skipList *SkipList) find(key float64, findClosest bool) (ok bool, found *S
 	}
 }
 
-func (skipList *SkipList) Get(key float64) (ok bool, found SkipListValue) {
+func (skipList *SkipList) Get(key float64) (ok error, found SkipListValue) {
 	ok, elem := skipList.find(key, false)
-	if !ok {
-		found = SkipListValue{}
-	} else {
+	if ok == nil {
 		found = elem.value
+	} else {
+		found = SkipListValue{}
 	}
 	return
 }
 
-func (skipList *SkipList) Add(key float64, value SkipListValue) {
+func (skipList *SkipList) Add(key float64, value SkipListValue) error {
 	ok, closestNode := skipList.find(key, true)
 
-	if !ok {
-		panic("Error when trying to find closest node")
+	if ok != nil {
+		return ok
 	}
 
 	//if node already exists, update value
@@ -113,7 +112,7 @@ func (skipList *SkipList) Add(key float64, value SkipListValue) {
 			closestNode = closestNode.below
 			closestNode.value = value
 		}
-		return
+		return ok
 	}
 
 	level := roll()
@@ -155,12 +154,13 @@ func (skipList *SkipList) Add(key float64, value SkipListValue) {
 	}
 
 	skipList.size++
+	return ok
 }
 
-func (skipList *SkipList) Remove(key float64) bool {
+func (skipList *SkipList) Remove(key float64) error {
 	ok, found := skipList.find(key, false)
-	if !ok {
-		return false
+	if ok != nil {
+		return ok
 	}
 
 	//remove node on the highest level
@@ -172,17 +172,5 @@ func (skipList *SkipList) Remove(key float64) bool {
 		found.next.previous = found.previous
 	}
 	skipList.size--
-	return true
-}
-
-func (skipList *SkipList) LogicallyRemove(key float64) bool {
-	ok, found := skipList.find(key, false)
-	if !ok {
-		return false
-	}
-	//make value with updated tombstone
-	newValue := found.value
-	newValue.tombstone = false
-	skipList.Add(key, newValue) //save changes in all nodes
-	return true
+	return ok
 }
