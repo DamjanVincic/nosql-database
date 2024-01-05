@@ -262,7 +262,7 @@ func Delete(key int, node *BTreeNode) *BTreeNode {
 				}
 			}
 			if borrow {
-				borrowKeyFromSibling()
+				node = borrowKeyFromSibling(node, indexLeft, indexRight)
 			} else if merge {
 				node = mergeWithSibling(node, indexLeft, indexRight)
 				// again delete because its moved
@@ -273,8 +273,27 @@ func Delete(key int, node *BTreeNode) *BTreeNode {
 	}
 	return node
 }
-func borrowKeyFromSibling() {
+func borrowKeyFromSibling(node *BTreeNode, indexLeft, indexRight int) *BTreeNode {
+	leftChild := node.children[indexLeft]
+	rightChild := node.children[indexRight]
 
+	leftChild.keys = append(leftChild.keys, node.keys[indexLeft])
+	if !leftChild.leaf {
+		leftChild.children = append(leftChild.children, rightChild.children[0])
+	}
+
+	node.keys[indexLeft] = rightChild.keys[0]
+	for j := 0; j < rightChild.currentKeys-1; j++ {
+		rightChild.keys[j] = rightChild.keys[j+1]
+	}
+	rightChild.keys = deleteAtIndex(len(rightChild.keys)-1, rightChild.keys)
+	if !rightChild.leaf {
+		for j := 0; j < rightChild.currentKeys; j++ {
+			rightChild.children[j] = rightChild.children[j+1]
+		}
+	}
+	leftChild.keys = deleteAtIndex(indexLeft-(T-1), leftChild.keys)
+	return node
 }
 func mergeWithSibling(node *BTreeNode, indexLeft, indexRight int) *BTreeNode {
 	leftChild := node.children[indexLeft]
