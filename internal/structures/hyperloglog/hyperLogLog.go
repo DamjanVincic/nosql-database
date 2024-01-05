@@ -3,17 +3,15 @@ package hyperLogLog
 import (
 	"encoding/binary"
 	"github.com/DamjanVincic/key-value-engine/internal/structures/hash"
-	"log"
 	"math"
 	"math/bits"
-	"os"
 )
 
 // min and max number of bits that represent index of registry in which result is stored
 // TBD should be read from config file?
 const (
-	HLL_MIN_PRECISION = 4
-	HLL_MAX_PRECISION = 16
+	HllMinPrecision = 4
+	HllMaxPrecision = 16
 )
 
 type HyperLogLog struct {
@@ -23,12 +21,12 @@ type HyperLogLog struct {
 	hashFunction hash.HashWithSeed
 }
 
-func NewHyperLogLog(bucketBits uint8) HyperLogLog {
-	if bucketBits < HLL_MIN_PRECISION || bucketBits > HLL_MAX_PRECISION {
-		panic("Hll precision must be between" + string(rune(HLL_MIN_PRECISION)) + " and " + string(rune(HLL_MIN_PRECISION)))
+func NewHyperLogLog(bucketBits uint8) *HyperLogLog {
+	if bucketBits < HllMinPrecision || bucketBits > HllMaxPrecision {
+		panic("Hll precision must be between" + string(rune(HllMinPrecision)) + " and " + string(rune(HllMinPrecision)))
 	}
 	size := uint64(math.Pow(2, float64(bucketBits)))
-	return HyperLogLog{p: bucketBits,
+	return &HyperLogLog{p: bucketBits,
 		m:            size,
 		reg:          make([]uint8, size),
 		hashFunction: hash.CreateHashFunctions(1)[0],
@@ -65,7 +63,7 @@ func (hyperLogLog *HyperLogLog) emptyCount() int {
 }
 
 func (hyperLogLog *HyperLogLog) Add(value []byte) {
-	hashValue := hyperLogLog.Hash(value)
+	hashValue := hyperLogLog.hashFunction.Hash(value)
 	//get index of registry in which to put the result
 	bucketIndex := hashValue >> (64 - hyperLogLog.p)
 
@@ -97,7 +95,7 @@ func (hyperLogLog *HyperLogLog) Serialize() []byte {
 	return serializedHll
 }
 
-func Deserialize(serializedHll []byte) HyperLogLog {
+func Deserialize(serializedHll []byte) *HyperLogLog {
 	//get m from first 8 bytes of serialized hll
 	m := binary.BigEndian.Uint64(serializedHll[:8])
 	//get p from 9th byte of serialized hll
@@ -112,29 +110,9 @@ func Deserialize(serializedHll []byte) HyperLogLog {
 	// Deserialize hash function
 	hashFunction := hash.Deserialize(serializedHll[len(serializedHll)-4:])[0]
 
-	return HyperLogLog{p: p,
+	return &HyperLogLog{p: p,
 		m:            m,
 		reg:          reg,
 		hashFunction: hashFunction,
 	}
-}
-
-func (hyperLogLog *HyperLogLog) WriteToFile(destination string) {
-	bytes := hyperLogLog.Serialize()
-	err := os.WriteFile(destination, bytes, 0644)
-	if err != nil {
-		log.Fatal(err)
-	}
-}
-
-func LoadFromFile(destination string) HyperLogLog {
-	serializedHll, err := os.ReadFile(destination)
-	if err != nil {
-		log.Fatal(err)
-	}
-	return Deserialize(serializedHll)
-}
-
-func (hyperLogLog *HyperLogLog) Hash(data []byte) uint64 {
-	return hyperLogLog.hashFunction.Hash(data)
 }
