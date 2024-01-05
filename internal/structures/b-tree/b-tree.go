@@ -1,21 +1,29 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+)
 
-var T = 3
+var T = 2
 
 type BTreeNode struct {
 	parent   *BTreeNode
 	t        int          // minimum degree
-	keys     []int        // list of keys
+	keys     []string     // list of keys
 	children []*BTreeNode // list of child pointers
 	leaf     bool         // is node a leaf
+	data     map[string]Value
+}
+type Value struct {
+	Value     []byte
+	Tombstone bool
+	Timestamp uint64
 }
 
 /*
 function that checks whether key is in the node or not
 */
-func contains(list []int, element int) bool {
+func contains(list []string, element string) bool {
 	for _, value := range list {
 		if value == element {
 			return true
@@ -23,39 +31,24 @@ func contains(list []int, element int) bool {
 	}
 	return false
 }
-func initTree(key int) *BTreeNode {
-	return &BTreeNode{
+func initTree(key string, value Value) *BTreeNode {
+	root := &BTreeNode{
 		parent:   nil,
 		t:        T,
-		keys:     []int{key},
+		keys:     []string{key},
 		children: []*BTreeNode{},
 		leaf:     true,
+		data:     make(map[string]Value),
 	}
-}
-func newNode(keys []int) *BTreeNode {
-	return &BTreeNode{
-		parent:   nil,
-		t:        T,
-		keys:     keys,
-		children: []*BTreeNode{},
-		leaf:     false,
-	}
-}
-func newLeaf(keys []int) *BTreeNode {
-	return &BTreeNode{
-		parent:   nil,
-		t:        T,
-		keys:     keys,
-		children: []*BTreeNode{},
-		leaf:     true,
-	}
+	root.data[key] = value
+	return root
 }
 
 /*
 searches whether the key is in the tree
 optimize to not check branch that cant possible have the key
 */
-func Search(key int, node *BTreeNode) (bool, *BTreeNode) {
+func Search(key string, node *BTreeNode) (bool, *BTreeNode) {
 	if contains(node.keys, key) {
 		return true, node
 	}
@@ -84,7 +77,7 @@ if root is not initialized, it initializes it
 if the root is full its split,
 if not key is added in empty space
 */
-func Insert(key int, root *BTreeNode) *BTreeNode {
+func Insert(key string, value Value, root *BTreeNode) *BTreeNode {
 	found, _ := Search(key, root)
 	if found {
 		return nil
@@ -96,37 +89,41 @@ func Insert(key int, root *BTreeNode) *BTreeNode {
 		newNode := &BTreeNode{
 			parent:   nil,
 			t:        T,
-			keys:     []int{},
+			keys:     []string{},
 			children: []*BTreeNode{},
 			leaf:     false, // new root
+			data:     make(map[string]Value),
 		}
 		newNode.children = append(newNode.children, root)
 		root.parent = newNode
 		newNode = split(0, root, newNode)
-		insertInNodeThatHasRoom(key, newNode)
+		insertInNodeThatHasRoom(key, value, newNode)
 		return newNode
 	} else {
-		insertInNodeThatHasRoom(key, root)
+		insertInNodeThatHasRoom(key, value, root)
 		return root
 	}
 }
-func insertInNodeThatHasRoom(key int, node *BTreeNode) {
+func insertInNodeThatHasRoom(key string, value Value, node *BTreeNode) {
 	i := len(node.keys)
 	// if node is leaf just add and sort
 	if node.leaf {
 		for i > 0 && node.keys[i-1] > key {
-			node.keys = append(node.keys, -1)
+			node.keys = append(node.keys, "")
+			node.data[key] = value
 			node.keys[i] = node.keys[i-1]
 			//node.children[i] = node.children[i-1]
 			i--
 		}
-		if node.keys[len(node.keys)-1] == -1 {
+		if node.keys[len(node.keys)-1] == "" {
 			node.keys = deleteAtIndex(len(node.keys)-1, node.keys)
 		}
 		if i+1 < len(node.keys) {
 			node.keys[i] = key
+			node.data[key] = value
 		} else {
 			node.keys = append(node.keys, key)
+			node.data[key] = value
 		}
 	} else {
 		for i > 0 && node.keys[i-1] > key {
@@ -139,7 +136,7 @@ func insertInNodeThatHasRoom(key int, node *BTreeNode) {
 				i++
 			}
 		}
-		insertInNodeThatHasRoom(key, node.children[i])
+		insertInNodeThatHasRoom(key, value, node.children[i])
 	}
 }
 
@@ -152,14 +149,27 @@ upper neighbor
 */
 func split(i int, child *BTreeNode, parent *BTreeNode) *BTreeNode {
 	keyToMove := child.keys[T-1]
+	dataToMove := child.data[keyToMove]
 	newNode := &BTreeNode{
 		t:        T,
-		keys:     []int{},
+		keys:     []string{},
 		children: []*BTreeNode{},
 		leaf:     child.leaf, // if child is leaf so is new node
+		data:     make(map[string]Value),
 	}
+	// add all keys and data to new node
 	newNode.keys = append(newNode.keys, child.keys[T:]...)
+	for _, key := range child.keys[T:] {
+		newNode.data[key] = child.data[key]
+	}
+
+	// remove from new sibling node
+	for _, key := range child.keys[T:] {
+		delete(child.data, key)
+	}
 	child.keys = child.keys[:T-1]
+	// remove the one that goes to parent
+	delete(child.data, keyToMove)
 
 	if !child.leaf {
 		for j := 0; j < child.t; j++ {
@@ -177,7 +187,7 @@ func split(i int, child *BTreeNode, parent *BTreeNode) *BTreeNode {
 	parent.children[i+1] = newNode
 
 	for j := len(parent.keys); j >= i; j-- {
-		parent.keys = append(parent.keys, -1)
+		parent.keys = append(parent.keys, "")
 		if len(parent.keys) == 1 { // special case in the begining
 			parent.keys[i] = keyToMove
 		} else {
@@ -186,6 +196,7 @@ func split(i int, child *BTreeNode, parent *BTreeNode) *BTreeNode {
 		}
 	}
 	parent.keys[i] = keyToMove
+	parent.data[keyToMove] = dataToMove
 	return parent
 }
 
@@ -202,7 +213,7 @@ search will return node that has the key that needs to be deleted
 get index of the next node and call function again if
 node doesnt contain key
 */
-func Delete(key int, node *BTreeNode) *BTreeNode {
+func Delete(key string, node *BTreeNode) *BTreeNode {
 	index := find(key, node)
 	// key is in this node
 	if index < len(node.keys) && node.keys[index] == key {
@@ -293,7 +304,7 @@ func borrowKeyFromSibling(node *BTreeNode, indexLeft, indexRight int) *BTreeNode
 	leftChild.keys = deleteAtIndex(indexLeft-(T-1), leftChild.keys)
 	return node
 }
-func mergeWithSibling(node *BTreeNode, indexLeft, indexRight, key int) *BTreeNode {
+func mergeWithSibling(node *BTreeNode, indexLeft, indexRight int, key string) *BTreeNode {
 	leftChild := node.children[indexLeft]
 	rightChild := node.children[indexRight]
 	leftChild.keys = append(leftChild.keys, node.keys[indexLeft])
@@ -321,7 +332,7 @@ func mergeWithSibling(node *BTreeNode, indexLeft, indexRight, key int) *BTreeNod
 	Delete(key, node)
 	return node
 }
-func find(key int, root *BTreeNode) int {
+func find(key string, root *BTreeNode) int {
 	index := 0 // if the key is smaller than first key in node
 	for j := 0; j < len(root.keys); j++ {
 		if root.keys[index] < key {
@@ -335,7 +346,7 @@ func removeFromLeaf(index int, node *BTreeNode) {
 		node.keys = deleteAtIndex(index, node.keys)
 	}
 }
-func removeFromInternal(key, index int, node *BTreeNode) {
+func removeFromInternal(key string, index int, node *BTreeNode) {
 	if node.leaf {
 		removeFromLeaf(index, node)
 	}
@@ -353,7 +364,7 @@ func removeFromInternal(key, index int, node *BTreeNode) {
 		mergeWithSibling(node, index, index+1, key)
 	}
 }
-func deleteAtIndex(index int, list []int) []int {
+func deleteAtIndex(index int, list []string) []string {
 	if index < 0 || index >= len(list) {
 		return list
 	}
@@ -391,21 +402,21 @@ func deleteAtIndexNode(index int, list []*BTreeNode) []*BTreeNode {
 		return node.keys[len(node.keys)-1]
 	}
 */
-func switchPredecessor(node *BTreeNode) int {
+func switchPredecessor(node *BTreeNode) string {
 	if node.leaf {
 		last := node.keys[len(node.keys)-1]
 		node.keys = deleteAtIndex(len(node.keys)-1, node.keys) // remove predecessor
 		return last                                            // return last
 	}
-	return -1
+	return ""
 }
-func switchSuccessor(node *BTreeNode) int {
+func switchSuccessor(node *BTreeNode) string {
 	if node.leaf {
 		first := node.keys[0]
 		node.keys = deleteAtIndex(0, node.keys) // remove predecessor
 		return first                            // return last
 	}
-	return -1
+	return ""
 }
 
 /*
