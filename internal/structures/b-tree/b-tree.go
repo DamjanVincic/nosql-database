@@ -120,7 +120,7 @@ func insertInNodeThatHasRoom(key int, node *BTreeNode) {
 			i--
 		}
 		if i+1 < len(node.keys) {
-			node.keys[i+1] = key
+			node.keys[i] = key
 		} else {
 			node.keys = append(node.keys, key)
 		}
@@ -222,7 +222,7 @@ func Delete(key int, node *BTreeNode) *BTreeNode {
 		// if key is not in this node we do further
 		// need to check whether the node in the recursion path
 		// has minimal number of keys
-		if node.currentKeys == T-1 {
+		if node.children[index].currentKeys == T-1 {
 			borrow := false
 			merge := false
 			indexLeft := index
@@ -245,7 +245,7 @@ func Delete(key int, node *BTreeNode) *BTreeNode {
 				} else {
 					merge = true
 				}
-			} else if index != 0 && index+1 == len(node.children)-1 {
+			} else if index != 0 && index+1 < len(node.children)-1 {
 				// node is in the middle, second to last at most
 				// we can get from both right and left
 				if node.children[index-1].currentKeys > T-1 {
@@ -255,6 +255,7 @@ func Delete(key int, node *BTreeNode) *BTreeNode {
 				} else if node.children[index+1].currentKeys > T-1 {
 					// we borrow from right child
 					indexRight++
+					borrow = true
 				} else {
 					merge = true
 					indexRight++
