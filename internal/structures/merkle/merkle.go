@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"github.com/DamjanVincic/key-value-engine/internal/structures/hash"
 	"github.com/DamjanVincic/key-value-engine/internal/structures/skipList"
-	"os"
-
+	"github.com/edsrzf/mmap-go"
 	"math"
+	"os"
 )
 
 type MerkleTree struct {
-	root *Node
+	Root *Node
 }
 
 type Node struct {
@@ -100,43 +100,108 @@ func CreateMerkleTree(allData map[string]skipList.SkipListValue) *MerkleTree {
 		nodes = newLevel
 	}
 
-	merkleTree.root = nodes[len(nodes)-1]
+	merkleTree.Root = nodes[len(nodes)-1]
 	return &merkleTree
 }
-func writeInFile(result [][]byte, fileName string) error {
-	file, err := os.Create(fileName)
+func (tree *MerkleTree) WriteInFile(data [][]byte, filePath string) error {
+	var totalBytes int64
+	//var currentRowSize = make([]byte, 8)
+	var flatData []byte
+	for _, row := range data {
+		//binary.BigEndian.PutUint64(currentRowSize, uint64(len(row)))
+		//flatData = append(flatData, currentRowSize...)
+		flatData = append(flatData, row...)
+		totalBytes += int64(len(row))
+	}
+	file, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		return err
 	}
-	defer file.Close()
 
-	for _, data := range result {
-		err := binary.Write(file, binary.LittleEndian, uint64(len(data)))
-		if err != nil {
-			return err
-		}
-		_, err = file.Write(data)
-		if err != nil {
-			return err
-		}
+	fileStat, err := file.Stat()
+	if err != nil {
+		return err
 	}
+	fileSize := fileStat.Size()
+	err = file.Truncate(totalBytes + fileSize)
 
+	mmapFile, err := mmap.Map(file, mmap.RDWR, 0)
+	if err != nil {
+		return err
+	}
+	copy(mmapFile[fileSize:], flatData)
+	err = mmapFile.Unmap()
+	if err != nil {
+		return err
+	}
+	err = file.Close()
+	if err != nil {
+		return err
+	}
 	return nil
 }
-
-func serializeMerkleTreeBinary(result [][]byte, node *Node) [][]byte {
-	traversingByDepth(result, node)
-	fmt.Println(result)
+func LevelOrder(root *Node) [][]byte {
+	if root == nil {
+		return [][]byte{}
+	}
+	result := [][]byte{}
+	nodes := []*Node{root}
+	for len(nodes) > 0 {
+		current := nodes[0] // get next in line
+		nodes = nodes[1:]
+		result = append(result, current.data)
+		if current.left != nil {
+			nodes = append(nodes, current.left)
+		}
+		if current.right != nil {
+			nodes = append(nodes, current.right)
+		}
+	}
 	return result
 }
 
-func traversingByDepth(result [][]byte, node *Node) {
-	if node == nil {
-		return
+func (tree *MerkleTree) ReadFromFile(filePath string) (*MerkleTree, error) {
+	file, err := os.OpenFile(filePath, os.O_RDWR, 0644)
+	if err != nil {
+		return nil, err
 	}
 
-	result = append(result, node.data)
+	mmapFile, err := mmap.Map(file, mmap.RDWR, 0)
+	if err != nil {
+		return nil, err
+	}
 
-	traversingByDepth(result, node.left)
-	traversingByDepth(result, node.right)
+	data := make([][]byte, 0)
+	//var offset uint64
+	for i := uint64(0); i < uint64(len(mmapFile)); i += 8 {
+		//offset = binary.BigEndian.Uint64([]byte{mmapFile[i]})
+		//data = append(data, mmapFile[i:offset])
+		//i += offset
+		data = append(data, mmapFile[i:i+8])
+	}
+
+	fmt.Println(data)
+	tree.Root = tree.Root.binaryTree(data, 0)
+	err = mmapFile.Unmap()
+	if err != nil {
+		return nil, err
+	}
+	err = file.Close()
+	if err != nil {
+		return nil, err
+	}
+	return tree, nil
+}
+func (node *Node) binaryTree(data [][]byte, index int) *Node {
+	if index < len(data) {
+		node := &Node{
+			data:  data[0],
+			left:  nil,
+			right: nil,
+		}
+		node.left = node.binaryTree(data, 2*index+1)
+		node.right = node.binaryTree(data, 2*index+2)
+		return node
+	}
+	return nil
 }

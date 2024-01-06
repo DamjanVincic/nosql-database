@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/DamjanVincic/key-value-engine/internal/structures/merkle"
 	"github.com/DamjanVincic/key-value-engine/internal/structures/skipList"
+	"os"
 )
 
 func main() {
@@ -26,9 +27,25 @@ func main() {
 		key5: value5,
 	}
 	tree := merkle.CreateMerkleTree(dataDict)
-	result := serializeMerkleTreeBinary([][]byte{}, root)
-	err := writeInFile(result, "output.bin")
+	root := tree.Root
+	var result [][]byte
+	result = merkle.LevelOrder(root)
+	fmt.Println(result)
+
+	err := os.Remove("dgf.txt")
 	if err != nil {
-		fmt.Println("Error writing to file:", err)
+		fmt.Println(err)
+	}
+
+	err = tree.WriteInFile(result, "dgf.txt")
+	if err != nil {
+		fmt.Println(err)
+	}
+	treeNew, err := tree.ReadFromFile("dgf.txt")
+	//fmt.Println(result)
+	if tree == treeNew {
+		fmt.Println("true")
+	} else {
+		fmt.Println("false")
 	}
 }
