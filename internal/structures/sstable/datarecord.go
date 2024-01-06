@@ -6,14 +6,14 @@ import (
 	"hash/crc32"
 )
 
-type dataRecord struct {
-	Crc       uint32
-	Timestamp uint64
-	Tombstone bool
-	Value     []byte
+type DataRecord struct {
+	crc       uint32
+	timestamp uint64
+	tombstone bool
+	value     []byte
 }
 
-func NewDataRecord(memEntry MemEntry) *dataRecord {
+func NewDataRecord(memEntry MemEntry) *DataRecord {
 
 	// Bytes for checksum (9 bytes for timestamp, tombstone)
 	bytes := make([]byte, 9)
@@ -25,33 +25,33 @@ func NewDataRecord(memEntry MemEntry) *dataRecord {
 	}
 	bytes = append(bytes, memEntry.Value.Value...)
 
-	return &dataRecord{
-		Crc:       crc32.ChecksumIEEE(bytes),
-		Timestamp: memEntry.Value.Timestamp,
-		Tombstone: memEntry.Value.Tombstone,
-		Value:     memEntry.Value.Value,
+	return &DataRecord{
+		crc:       crc32.ChecksumIEEE(bytes),
+		timestamp: memEntry.Value.Timestamp,
+		tombstone: memEntry.Value.Tombstone,
+		value:     memEntry.Value.Value,
 	}
 }
 
-func (record *dataRecord) SerializeDataRecord() []byte {
+func (record *DataRecord) SerializeDataRecord() []byte {
 	bytes := make([]byte, RecordHeaderSize)
 	// Append the CRC
-	binary.BigEndian.PutUint32(bytes[CrcStart:TimestampStart], record.Crc)
+	binary.BigEndian.PutUint32(bytes[CrcStart:TimestampStart], record.crc)
 	// Append the Timestamp
-	binary.BigEndian.PutUint64(bytes[TimestampStart:TombstoneStart], record.Timestamp)
+	binary.BigEndian.PutUint64(bytes[TimestampStart:TombstoneStart], record.timestamp)
 	// Append the Tombstone
-	if record.Tombstone {
+	if record.tombstone {
 		bytes[TombstoneStart] = 1
 	} else {
 		bytes[TombstoneStart] = 0
 	}
 	// Append the Value
-	copy(bytes[ValueStart:], record.Value)
+	copy(bytes[ValueStart:], record.value)
 
 	return bytes
 }
 
-func DeserializeDataRecord(bytes []byte) (*dataRecord, error) {
+func DeserializeDataRecord(bytes []byte) (*DataRecord, error) {
 	crc := binary.BigEndian.Uint32(bytes[CrcStart:TimestampStart])
 	timestamp := binary.BigEndian.Uint64(bytes[TimestampStart:TombstoneStart])
 	tombstone := bytes[TombstoneStart] == 1
@@ -62,10 +62,10 @@ func DeserializeDataRecord(bytes []byte) (*dataRecord, error) {
 		return nil, errors.New("CRC does not match")
 	}
 
-	return &dataRecord{
-		Crc:       crc,
-		Timestamp: timestamp,
-		Tombstone: tombstone,
-		Value:     value,
+	return &DataRecord{
+		crc:       crc,
+		timestamp: timestamp,
+		tombstone: tombstone,
+		value:     value,
 	}, nil
 }
