@@ -2,7 +2,7 @@ package memtable
 
 import (
 	"fmt"
-	skipList "github.com/DamjanVincic/key-value-engine/internal/structures/skiplist"
+	"github.com/DamjanVincic/key-value-engine/internal/structures/skiplist"
 )
 
 type MemtableData interface {
