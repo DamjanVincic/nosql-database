@@ -1,10 +1,11 @@
 package merkle
 
 import (
-	"crypto/sha1"
 	"encoding/binary"
 	"fmt"
+	"github.com/DamjanVincic/key-value-engine/internal/structures/hash"
 	"github.com/DamjanVincic/key-value-engine/internal/structures/skipList"
+
 	"math"
 )
 
@@ -47,15 +48,16 @@ func boolToByte(b bool) []byte {
 
 func createNewNode(key string, value skipList.SkipListValue) *Node {
 	newData := createDataForNode(key, value)
-	return &Node{left: nil, right: nil, data: Hash(newData)}
+	hashFunc := hash.CreateHashFunctions(1)[0]
+	values, _ := hashFunc.Hash(newData)
+	valuesBinary := make([]byte, 8)
+	binary.BigEndian.PutUint64(valuesBinary, values)
+	return &Node{left: nil, right: nil, data: valuesBinary}
 }
 func isWholeNumber(n float64) bool {
 	return math.Mod(n, 1) == 0
 }
-func Hash(data []byte) []byte {
-	hashed := sha1.Sum(data)
-	return hashed[:]
-}
+
 func CreateMerkleTree(allData map[string]skipList.SkipListValue) *MerkleTree {
 	var nodes []*Node
 	var merkleTree MerkleTree
@@ -68,9 +70,12 @@ func CreateMerkleTree(allData map[string]skipList.SkipListValue) *MerkleTree {
 
 	// if number of nodes is not 2**n add empty nodes
 	n := math.Log2(float64(len(nodes)))
+	degree := math.Ceil(n)
 	fmt.Println(len(nodes))
+	fmt.Println(degree)
 	if !isWholeNumber(n) {
-		for i := 0; i < int(math.Pow(2, math.Ceil(n)))-len(nodes); i++ {
+		targetSize := int(math.Pow(2, degree))
+		for i := len(nodes); i < targetSize; i++ {
 			nodes = append(nodes, createNewNode("", skipList.SkipListValue{Value: []byte{}, Tombstone: true, Timestamp: 0}))
 		}
 	}
@@ -80,10 +85,14 @@ func CreateMerkleTree(allData map[string]skipList.SkipListValue) *MerkleTree {
 		var newLevel []*Node
 
 		for i := 0; i < len(nodes); i += 2 {
+			hashFunc := hash.CreateHashFunctions(1)[0]
+			values, _ := hashFunc.Hash(append(nodes[i].data, nodes[i+1].data...))
+			valuesBinary := make([]byte, 8)
+			binary.BigEndian.PutUint64(valuesBinary, values)
 			newNode := &Node{
 				left:  nodes[i],
 				right: nodes[i+1],
-				data:  Hash(append(nodes[i].data, nodes[i+1].data...)),
+				data:  valuesBinary,
 			}
 			newLevel = append(newLevel, newNode)
 		}
