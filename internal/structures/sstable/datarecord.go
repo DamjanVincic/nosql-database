@@ -3,7 +3,6 @@ package sstable
 import (
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"hash/crc32"
 )
 
@@ -63,9 +62,7 @@ func DeserializeDataRecord(bytes []byte) (*DataRecord, error) {
 	}
 
 	// Check if the CRC matches
-	n := crc32.ChecksumIEEE(bytes[TimestampStart:])
-	fmt.Println(len(bytes[TimestampStart:]))
-	if Crc != n {
+	if Crc != crc32.ChecksumIEEE(bytes[TimestampStart:]) {
 		return nil, errors.New("CRC does not match")
 	}
 
