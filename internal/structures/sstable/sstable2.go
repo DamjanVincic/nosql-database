@@ -32,7 +32,7 @@ const (
 	TombstoneStart   = TimestampStart + TimestampSize
 	ValueStart       = TombstoneStart + TombstoneSize
 	RecordHeaderSize = CrcSize + TimestampSize + TombstoneSize
-
+	SummaryConst     = 5
 	//for indexRecord
 	KeySizeStart = 0
 	KeyStart     = KeySizeStart + KeySizeSize
@@ -55,6 +55,7 @@ type MemEntry struct {
 }
 
 type SSTable struct {
+	summaryConst         uint16
 	tableSize            uint64
 	dataFilename         string
 	indexFilename        string
@@ -147,6 +148,7 @@ func NewSSTable(tableSize uint64) (*SSTable, error) {
 	tocFile.Close()
 
 	return &SSTable{
+		summaryConst:         SummaryConst,
 		tableSize:            tableSize,
 		dataFilename:         dataFilename,
 		indexFilename:        indexFilename,

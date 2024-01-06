@@ -2,7 +2,6 @@ package sstable
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -93,7 +92,7 @@ func NewSSTable2(memEntries []MemEntry, tableSize uint64) (*SSTable, error) {
 	// offset that points to begining of file
 	for _, entry := range memEntries {
 		addToDataSegment(dataFile, entry)
-		break
+		//addToSparseIndex(indexFile, entry)
 	}
 
 	dataFile.Close()
@@ -104,6 +103,7 @@ func NewSSTable2(memEntries []MemEntry, tableSize uint64) (*SSTable, error) {
 	tocFile.Close()
 
 	return &SSTable{
+		summaryConst:         SummaryConst,
 		tableSize:            tableSize,
 		dataFilename:         dataFilename,
 		indexFilename:        indexFilename,
@@ -120,8 +120,6 @@ func addToDataSegment(dataFile *os.File, entry MemEntry) error {
 	if err := writeToFile(dataFile, serializedRecord); err != nil {
 		return err
 	}
-	dataEntry := readFromFile(len(serializedRecord), dataFile)
-	fmt.Println(dataEntry)
 	return nil
 }
 
@@ -132,6 +130,8 @@ func writeToFile(dataFile *os.File, binaryData []byte) error {
 	}
 	return nil
 }
+
+/*
 func readFromFile(size int, dataFile *os.File) *DataRecord {
 	data, err := ioutil.ReadFile("sstable/sstable1/sst_00001_1_data.db")
 	fmt.Println(data)
@@ -142,3 +142,4 @@ func readFromFile(size int, dataFile *os.File) *DataRecord {
 	dataRecord, err := DeserializeDataRecord(n)
 	return dataRecord
 }
+*/
