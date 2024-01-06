@@ -2,6 +2,7 @@ package sstable
 
 import (
 	"fmt"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -92,6 +93,7 @@ func NewSSTable2(memEntries []MemEntry, tableSize uint64) (*SSTable, error) {
 	// offset that points to begining of file
 	for _, entry := range memEntries {
 		addToDataSegment(dataFile, entry)
+		break
 	}
 
 	dataFile.Close()
@@ -111,15 +113,32 @@ func NewSSTable2(memEntries []MemEntry, tableSize uint64) (*SSTable, error) {
 		tocFilename:          tocFilename,
 	}, nil
 }
-func addToDataSegment(dataFile *os.File, entry MemEntry) {
+func addToDataSegment(dataFile *os.File, entry MemEntry) error {
 	dataRecord := NewDataRecord(entry)
 	serializedRecord := dataRecord.SerializeDataRecord()
-	writeToFile(dataFile, serializedRecord)
+
+	if err := writeToFile(dataFile, serializedRecord); err != nil {
+		return err
+	}
+	dataEntry := readFromFile(len(serializedRecord), dataFile)
+	fmt.Println(dataEntry)
+	return nil
 }
-func writeToFile(dataFile *os.File, binaryData []byte) {
+
+func writeToFile(dataFile *os.File, binaryData []byte) error {
 	_, err := dataFile.Write(binaryData)
 	if err != nil {
-		fmt.Println("Error writing to file:", err)
-		return
+		return fmt.Errorf("error writing to file: %v", err)
 	}
+	return nil
+}
+func readFromFile(size int, dataFile *os.File) *DataRecord {
+	data, err := ioutil.ReadFile("sstable/sstable1/sst_00001_1_data.db")
+	fmt.Println(data)
+	if err != nil {
+		return nil
+	}
+	n := data[:size]
+	dataRecord, err := DeserializeDataRecord(n)
+	return dataRecord
 }
