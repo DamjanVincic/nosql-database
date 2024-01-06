@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/DamjanVincic/key-value-engine/internal/structures/hash"
 	"github.com/DamjanVincic/key-value-engine/internal/structures/skipList"
+	"os"
 
 	"math"
 )
@@ -101,4 +102,41 @@ func CreateMerkleTree(allData map[string]skipList.SkipListValue) *MerkleTree {
 
 	merkleTree.root = nodes[len(nodes)-1]
 	return &merkleTree
+}
+func writeInFile(result [][]byte, fileName string) error {
+	file, err := os.Create(fileName)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	for _, data := range result {
+		err := binary.Write(file, binary.LittleEndian, uint64(len(data)))
+		if err != nil {
+			return err
+		}
+		_, err = file.Write(data)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func serializeMerkleTreeBinary(result [][]byte, node *Node) [][]byte {
+	traversingByDepth(result, node)
+	fmt.Println(result)
+	return result
+}
+
+func traversingByDepth(result [][]byte, node *Node) {
+	if node == nil {
+		return
+	}
+
+	result = append(result, node.data)
+
+	traversingByDepth(result, node.left)
+	traversingByDepth(result, node.right)
 }

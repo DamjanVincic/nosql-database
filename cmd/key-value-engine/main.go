@@ -26,5 +26,9 @@ func main() {
 		key5: value5,
 	}
 	tree := merkle.CreateMerkleTree(dataDict)
-	fmt.Println(tree)
+	result := serializeMerkleTreeBinary([][]byte{}, root)
+	err := writeInFile(result, "output.bin")
+	if err != nil {
+		fmt.Println("Error writing to file:", err)
+	}
 }
