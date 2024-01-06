@@ -2,6 +2,7 @@ package skipList
 
 import (
 	"errors"
+	"github.com/DamjanVincic/key-value-engine/internal/models"
 	"math/rand"
 )
 
@@ -11,15 +12,9 @@ const (
 	negativeInfinity = "-∞"
 )
 
-type SkipListValue struct {
-	Value     []byte
-	Tombstone bool
-	Timestamp uint64
-}
-
 type SkipListNode struct {
 	key      string
-	value    *SkipListValue
+	value    *models.MemtableValue
 	previous *SkipListNode
 	next     *SkipListNode
 	below    *SkipListNode
@@ -116,7 +111,7 @@ func (skipList *SkipList) Put(key string, value []byte, tombstone bool, timestam
 		return ok
 	}
 
-	skipListValue := &SkipListValue{Value: value, Timestamp: timestamp, Tombstone: tombstone}
+	skipListValue := &models.MemtableValue{Value: value, Timestamp: timestamp, Tombstone: tombstone}
 
 	level := roll()
 
