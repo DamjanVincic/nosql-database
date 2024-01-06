@@ -37,13 +37,3 @@ type MemEntry struct {
 	Key   string
 	Value *skipList.SkipListValue
 }
-
-type SSTable struct {
-	tableSize            uint64
-	dataFilename         string
-	indexFilename        string
-	summaryIndexFilename string
-	filterFilename       string
-	metadataFilename     string
-	tocFilename          string
-}
