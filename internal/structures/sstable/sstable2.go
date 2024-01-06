@@ -1,7 +1,7 @@
 package sstable
 
 import (
-	"github.com/DamjanVincic/key-value-engine/internal/structures/skiplist"
+	skipList "github.com/DamjanVincic/key-value-engine/internal/structures/skiplist"
 )
 
 /*
@@ -19,15 +19,18 @@ const (
 	CrcSize       = 4
 	TimestampSize = 8
 	TombstoneSize = 1
-
+	KeySizeSize   = 8
+	OffsetSize    = 8
 	//for dataRecord
-	CrcStart       = 0
-	TimestampStart = CrcStart + CrcSize
-	TombstoneStart = TimestampStart + TimestampSize
-	ValueStart     = TombstoneStart + TombstoneSize
-
-	// RecordHeaderSize The size of the record header
+	CrcStart         = 0
+	TimestampStart   = CrcStart + CrcSize
+	TombstoneStart   = TimestampStart + TimestampSize
+	ValueStart       = TombstoneStart + TombstoneSize
 	RecordHeaderSize = CrcSize + TimestampSize + TombstoneSize
+
+	//for indexRecord
+	KeySizeStart = 0
+	KeyStart     = KeySizeStart + KeySizeSize
 
 	// Path to store the SSTable files
 	Path = "sstable"
