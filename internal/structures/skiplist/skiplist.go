@@ -90,17 +90,18 @@ func (skipList *SkipList) find(key string, findClosest bool) (found *SkipListNod
 	}
 }
 
-func (skipList *SkipList) Get(key string) (found *SkipListValue, ok error) {
+func (skipList *SkipList) Get(key string) (found *interface{}, ok error) {
 	elem, ok := skipList.find(key, false)
 	if ok == nil {
-		found = elem.value
+		var skipListValue interface{} = elem.value
+		found = &skipListValue
 	} else {
 		found = nil
 	}
 	return
 }
 
-func (skipList *SkipList) Add(key string, value []byte, tombstone bool, timestamp uint64) error {
+func (skipList *SkipList) Put(key string, value []byte, tombstone bool, timestamp uint64) error {
 	closestNode, ok := skipList.find(key, true)
 
 	if ok != nil {
@@ -159,7 +160,7 @@ func (skipList *SkipList) Add(key string, value []byte, tombstone bool, timestam
 	return ok
 }
 
-func (skipList *SkipList) Remove(key string) error {
+func (skipList *SkipList) Delete(key string) error {
 	found, ok := skipList.find(key, false)
 	if ok != nil {
 		return ok
