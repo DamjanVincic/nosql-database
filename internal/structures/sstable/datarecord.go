@@ -7,15 +7,15 @@ import (
 )
 
 type DataRecord struct {
-	crc       uint32
-	timestamp uint64
-	tombstone bool
-	value     []byte
+	Crc       uint32
+	Timestamp uint64
+	Tombstone bool
+	Value     []byte
 }
 
 func NewDataRecord(memEntry MemEntry) *DataRecord {
 
-	// Bytes for checksum (9 bytes for timestamp, tombstone)
+	// Bytes for checksum (9 bytes for Timestamp, Tombstone)
 	bytes := make([]byte, 9)
 	binary.BigEndian.PutUint64(bytes, memEntry.Value.Timestamp)
 	if memEntry.Value.Tombstone {
@@ -26,46 +26,50 @@ func NewDataRecord(memEntry MemEntry) *DataRecord {
 	bytes = append(bytes, memEntry.Value.Value...)
 
 	return &DataRecord{
-		crc:       crc32.ChecksumIEEE(bytes),
-		timestamp: memEntry.Value.Timestamp,
-		tombstone: memEntry.Value.Tombstone,
-		value:     memEntry.Value.Value,
+		Crc:       crc32.ChecksumIEEE(bytes),
+		Timestamp: memEntry.Value.Timestamp,
+		Tombstone: memEntry.Value.Tombstone,
+		Value:     memEntry.Value.Value,
 	}
 }
 
 func (record *DataRecord) SerializeDataRecord() []byte {
 	bytes := make([]byte, RecordHeaderSize)
 	// Append the CRC
-	binary.BigEndian.PutUint32(bytes[CrcStart:TimestampStart], record.crc)
+	binary.BigEndian.PutUint32(bytes[CrcStart:TimestampStart], record.Crc)
 	// Append the Timestamp
-	binary.BigEndian.PutUint64(bytes[TimestampStart:TombstoneStart], record.timestamp)
+	binary.BigEndian.PutUint64(bytes[TimestampStart:TombstoneStart], record.Timestamp)
 	// Append the Tombstone
-	if record.tombstone {
+	if record.Tombstone {
 		bytes[TombstoneStart] = 1
+		return bytes
 	} else {
 		bytes[TombstoneStart] = 0
 	}
 	// Append the Value
-	copy(bytes[ValueStart:], record.value)
+	bytes = append(bytes, record.Value...)
 
 	return bytes
 }
 
 func DeserializeDataRecord(bytes []byte) (*DataRecord, error) {
-	crc := binary.BigEndian.Uint32(bytes[CrcStart:TimestampStart])
-	timestamp := binary.BigEndian.Uint64(bytes[TimestampStart:TombstoneStart])
-	tombstone := bytes[TombstoneStart] == 1
-	value := bytes[ValueStart:]
+	Crc := binary.BigEndian.Uint32(bytes[CrcStart:TimestampStart])
+	Timestamp := binary.BigEndian.Uint64(bytes[TimestampStart:TombstoneStart])
+	Tombstone := bytes[TombstoneStart] == 1
+	var Value []byte
+	if !Tombstone {
+		Value = bytes[ValueStart:]
+	}
 
 	// Check if the CRC matches
-	if crc != crc32.ChecksumIEEE(bytes[TimestampStart:]) {
+	if Crc != crc32.ChecksumIEEE(bytes[TimestampStart:]) {
 		return nil, errors.New("CRC does not match")
 	}
 
 	return &DataRecord{
-		crc:       crc,
-		timestamp: timestamp,
-		tombstone: tombstone,
-		value:     value,
+		Crc:       Crc,
+		Timestamp: Timestamp,
+		Tombstone: Tombstone,
+		Value:     Value,
 	}, nil
 }
