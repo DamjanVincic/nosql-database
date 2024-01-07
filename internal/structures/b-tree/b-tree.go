@@ -2,6 +2,7 @@ package btree
 
 import (
 	"fmt"
+	"github.com/DamjanVincic/key-value-engine/internal/models"
 )
 
 const (
@@ -13,15 +14,10 @@ type BTreeNode struct {
 	keys     []string     // list of keys
 	children []*BTreeNode // list of child pointers
 	leaf     bool         // is node a leaf
-	data     map[string]*BTreeValue
+	data     map[string]*models.Data
 }
 type BTree struct {
 	root *BTreeNode
-}
-type BTreeValue struct {
-	Value     []byte
-	Tombstone bool
-	Timestamp uint64
 }
 
 /*
@@ -35,18 +31,17 @@ func contains(list []string, element string) bool {
 	}
 	return false
 }
-func InitTree(key string, value *BTreeValue) *BTree {
+func CreateBTree() *BTree {
 	root := &BTreeNode{
 		t:        T,
-		keys:     []string{key},
+		keys:     []string{},
 		children: []*BTreeNode{},
 		leaf:     true,
-		data:     make(map[string]*BTreeValue),
+		data:     make(map[string]*models.Data),
 	}
 	tree := &BTree{
 		root: root,
 	}
-	root.data[key] = value
 	return tree
 }
 
@@ -83,7 +78,8 @@ if root is not initialized, it initializes it
 if the root is full its split,
 if not key is added in empty space
 */
-func (tree *BTree) Insert(key string, value *BTreeValue) *BTreeNode {
+func (tree *BTree) Insert(key string, dataValue []byte, tombstone bool, timestamp uint64) *BTreeNode {
+	value := &models.Data{Value: dataValue, Tombstone: tombstone, Timestamp: timestamp}
 	root := tree.root
 	found, _ := Search(key, root)
 	if found {
@@ -98,7 +94,7 @@ func (tree *BTree) Insert(key string, value *BTreeValue) *BTreeNode {
 			keys:     []string{},
 			children: []*BTreeNode{},
 			leaf:     false, // new root
-			data:     make(map[string]*BTreeValue),
+			data:     make(map[string]*models.Data),
 		}
 		newNode.children = append(newNode.children, root)
 		newNode = split(0, root, newNode)
@@ -109,7 +105,7 @@ func (tree *BTree) Insert(key string, value *BTreeValue) *BTreeNode {
 		return root
 	}
 }
-func insertInNodeThatHasRoom(key string, value *BTreeValue, node *BTreeNode) {
+func insertInNodeThatHasRoom(key string, value *models.Data, node *BTreeNode) {
 	i := len(node.keys)
 	// if node is leaf just add and sort
 	if node.leaf {
@@ -161,7 +157,7 @@ func split(i int, child *BTreeNode, parent *BTreeNode) *BTreeNode {
 		keys:     []string{},
 		children: []*BTreeNode{},
 		leaf:     child.leaf, // if child is leaf so is new node
-		data:     make(map[string]*BTreeValue),
+		data:     make(map[string]*models.Data),
 	}
 	// add all keys and data to new node
 	newNode.keys = append(newNode.keys, child.keys[T:]...)
