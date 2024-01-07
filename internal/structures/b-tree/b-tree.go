@@ -52,6 +52,7 @@ searches whether the key is in the tree
 optimize to not check branch that cant possibly have the key
 */
 func (tree *BTree) Get(key string) (*models.Data, error) {
+	//tree.root.PrintBTree(0)
 	found, node := search(key, tree.root)
 	if found {
 		return node.data[key], nil
@@ -114,6 +115,9 @@ func (tree *BTree) Put(key string, dataValue []byte, tombstone bool, timestamp u
 		insertInNodeThatHasRoom(key, value, root)
 		tree.root = root
 	}
+	//tree.root.PrintBTree(0)
+	fmt.Println(len(tree.GetSortedList()))
+	fmt.Println("-----------------------------------------------")
 	return nil
 }
 
@@ -164,53 +168,40 @@ i - index of a nodes child that is to be split
 func split(i int, child *BTreeNode, parent *BTreeNode) *BTreeNode {
 	keyToMove := child.keys[T-1]
 	dataToMove := child.data[keyToMove]
+
 	newNode := &BTreeNode{
 		t:        T,
-		keys:     []string{},
-		children: []*BTreeNode{},
+		keys:     make([]string, 0, 2*T-1),
+		children: make([]*BTreeNode, 0, 2*T),
 		leaf:     child.leaf, // if child is leaf so is new node
 		data:     make(map[string]*models.Data),
 	}
-	// add all keys and data to new node
+
 	newNode.keys = append(newNode.keys, child.keys[T:]...)
 	for _, key := range child.keys[T:] {
 		newNode.data[key] = child.data[key]
 	}
 
-	// remove from new sibling node
-	for _, key := range child.keys[T:] {
+	child.keys = child.keys[:T-1]
+	for _, key := range newNode.keys {
 		delete(child.data, key)
 	}
-	child.keys = child.keys[:T-1]
-	// remove the one that goes to parent
-	delete(child.data, keyToMove)
 
+	// If the child is not a leaf, move children
 	if !child.leaf {
-		for j := 0; j < child.t; j++ {
-			// move children if node is not a leaf
-			newNode.children = append(newNode.children, nil)
-			newNode.children[j] = child.children[j+T]
-		}
+		newNode.children = append(newNode.children, child.children[T:]...)
 		child.children = child.children[:T]
 	}
 
-	for j := len(parent.keys); j >= i; j-- {
-		parent.children = append(parent.children, nil) //create space for new node, fix index out of range
-		parent.children[j+1] = parent.children[j]
-	}
+	parent.children = append(parent.children, nil)
+	copy(parent.children[i+2:], parent.children[i+1:])
 	parent.children[i+1] = newNode
 
-	for j := len(parent.keys); j >= i; j-- {
-		parent.keys = append(parent.keys, "")
-		if len(parent.keys) == 1 { // special case in the begining
-			parent.keys[i] = keyToMove
-		} else {
-			j--
-			parent.keys[j+1] = parent.keys[j]
-		}
-	}
+	parent.keys = append(parent.keys, "")
+	copy(parent.keys[i+1:], parent.keys[i:])
 	parent.keys[i] = keyToMove
 	parent.data[keyToMove] = dataToMove
+
 	return parent
 }
 
@@ -423,13 +414,13 @@ func deleteAtIndex(index int, list []string) []string {
 /*
 helper function to see structure of the tree
 */
-func PrintBTree(node *BTreeNode, level int) {
+func (node *BTreeNode) PrintBTree(level int) {
 	if node != nil {
 		fmt.Printf("Level %d: ", level)
 		fmt.Println(node.keys)
 
 		for _, child := range node.children {
-			PrintBTree(child, level+1)
+			child.PrintBTree(level + 1)
 		}
 	}
 }
