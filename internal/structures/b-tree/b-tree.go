@@ -49,6 +49,13 @@ func CreateBTree() *BTree {
 searches whether the key is in the tree
 optimize to not check branch that cant possible have the key
 */
+func (tree *BTree) Get(key string) *models.Data {
+	found, node := Search(key, tree.root)
+	if found {
+		return node.data[key]
+	}
+	return nil
+}
 func Search(key string, node *BTreeNode) (bool, *BTreeNode) {
 	if contains(node.keys, key) {
 		return true, node
@@ -78,7 +85,7 @@ if root is not initialized, it initializes it
 if the root is full its split,
 if not key is added in empty space
 */
-func (tree *BTree) Insert(key string, dataValue []byte, tombstone bool, timestamp uint64) *BTreeNode {
+func (tree *BTree) Put(key string, dataValue []byte, tombstone bool, timestamp uint64) *BTreeNode {
 	value := &models.Data{Value: dataValue, Tombstone: tombstone, Timestamp: timestamp}
 	root := tree.root
 	found, _ := Search(key, root)
