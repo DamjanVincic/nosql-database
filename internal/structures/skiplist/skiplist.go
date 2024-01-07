@@ -1,7 +1,8 @@
-package skipList
+package skiplist
 
 import (
 	"errors"
+	"github.com/DamjanVincic/key-value-engine/internal/models"
 	"math/rand"
 )
 
@@ -11,15 +12,9 @@ const (
 	negativeInfinity = "-∞"
 )
 
-type SkipListValue struct {
-	Value     []byte
-	Tombstone bool
-	Timestamp uint64
-}
-
 type SkipListNode struct {
 	key      string
-	value    *SkipListValue
+	value    *models.Data
 	previous *SkipListNode
 	next     *SkipListNode
 	below    *SkipListNode
@@ -90,7 +85,7 @@ func (skipList *SkipList) find(key string, findClosest bool) (found *SkipListNod
 	}
 }
 
-func (skipList *SkipList) Get(key string) (found *SkipListValue, ok error) {
+func (skipList *SkipList) Get(key string) (found *models.Data, ok error) {
 	elem, ok := skipList.find(key, false)
 	if ok == nil {
 		found = elem.value
@@ -100,7 +95,7 @@ func (skipList *SkipList) Get(key string) (found *SkipListValue, ok error) {
 	return
 }
 
-func (skipList *SkipList) Add(key string, value []byte, tombstone bool, timestamp uint64) error {
+func (skipList *SkipList) Put(key string, value []byte, tombstone bool, timestamp uint64) error {
 	closestNode, ok := skipList.find(key, true)
 
 	if ok != nil {
@@ -115,7 +110,7 @@ func (skipList *SkipList) Add(key string, value []byte, tombstone bool, timestam
 		return ok
 	}
 
-	skipListValue := &SkipListValue{Value: value, Timestamp: timestamp, Tombstone: tombstone}
+	skipListValue := &models.Data{Value: value, Timestamp: timestamp, Tombstone: tombstone}
 
 	level := roll()
 
@@ -159,7 +154,7 @@ func (skipList *SkipList) Add(key string, value []byte, tombstone bool, timestam
 	return ok
 }
 
-func (skipList *SkipList) Remove(key string) error {
+func (skipList *SkipList) Delete(key string) error {
 	found, ok := skipList.find(key, false)
 	if ok != nil {
 		return ok
