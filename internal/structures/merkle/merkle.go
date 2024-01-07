@@ -24,13 +24,17 @@ func createDataForNode(key string, data *models.Data) []byte {
 	value := data.Value
 	tombstone := data.Tombstone
 	timestamp := data.Timestamp
-
+	var tombstoneByte []byte
+	if tombstone {
+		tombstoneByte = []byte{1}
+	} else {
+		tombstoneByte = []byte{0}
+	}
 	keyBytes := []byte(key)
 	result := keyBytes
 
 	result = append(result, value...)
 
-	tombstoneByte := boolToByte(tombstone)
 	result = append(result, tombstoneByte...)
 
 	timestampBytes := make([]byte, 8)
@@ -38,13 +42,6 @@ func createDataForNode(key string, data *models.Data) []byte {
 	result = append(result, timestampBytes...)
 
 	return result
-}
-
-func boolToByte(b bool) []byte {
-	if b {
-		return []byte{1}
-	}
-	return []byte{0}
 }
 
 func createNewNode(key string, value *models.Data) *Node {
@@ -55,10 +52,6 @@ func createNewNode(key string, value *models.Data) *Node {
 	binary.BigEndian.PutUint64(valuesBinary, values)
 	return &Node{left: nil, right: nil, data: valuesBinary}
 }
-func isWholeNumber(n float64) bool {
-	return math.Mod(n, 1) == 0
-}
-
 func CreateMerkleTree(allData map[string]*models.Data) *MerkleTree {
 	var nodes []*Node
 	var merkleTree MerkleTree
@@ -74,7 +67,7 @@ func CreateMerkleTree(allData map[string]*models.Data) *MerkleTree {
 	degree := math.Ceil(n)
 	fmt.Println(len(nodes))
 	fmt.Println(degree)
-	if !isWholeNumber(n) {
+	if math.Mod(n, 1) != 0 {
 		targetSize := int(math.Pow(2, degree))
 		for i := len(nodes); i < targetSize; i++ {
 			nodes = append(nodes, createNewNode("", &models.Data{Value: []byte{}, Tombstone: true, Timestamp: 0}))
