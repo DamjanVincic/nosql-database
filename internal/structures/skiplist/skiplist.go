@@ -1,4 +1,4 @@
-package skipList
+package skiplist
 
 import (
 	"errors"
@@ -14,7 +14,7 @@ const (
 
 type SkipListNode struct {
 	key      string
-	value    *models.MemtableValue
+	value    *models.Data
 	previous *SkipListNode
 	next     *SkipListNode
 	below    *SkipListNode
@@ -85,11 +85,10 @@ func (skipList *SkipList) find(key string, findClosest bool) (found *SkipListNod
 	}
 }
 
-func (skipList *SkipList) Get(key string) (found *interface{}, ok error) {
+func (skipList *SkipList) Get(key string) (found *models.Data, ok error) {
 	elem, ok := skipList.find(key, false)
 	if ok == nil {
-		var skipListValue interface{} = elem.value
-		found = &skipListValue
+		found = elem.value
 	} else {
 		found = nil
 	}
@@ -111,7 +110,7 @@ func (skipList *SkipList) Put(key string, value []byte, tombstone bool, timestam
 		return ok
 	}
 
-	skipListValue := &models.MemtableValue{Value: value, Timestamp: timestamp, Tombstone: tombstone}
+	skipListValue := &models.Data{Value: value, Timestamp: timestamp, Tombstone: tombstone}
 
 	level := roll()
 
