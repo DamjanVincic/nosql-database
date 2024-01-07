@@ -21,17 +21,6 @@ type BTree struct {
 	root *BTreeNode
 }
 
-/*
-function that checks whether key is in the node or not
-*/
-func contains(list []string, element string) bool {
-	for _, value := range list {
-		if value == element {
-			return true
-		}
-	}
-	return false
-}
 func CreateBTree() *BTree {
 	root := &BTreeNode{
 		t:        T,
@@ -47,17 +36,30 @@ func CreateBTree() *BTree {
 }
 
 /*
+function that checks whether key is in the node or not
+*/
+func contains(list []string, element string) bool {
+	for _, value := range list {
+		if value == element {
+			return true
+		}
+	}
+	return false
+}
+
+/*
 searches whether the key is in the tree
-optimize to not check branch that cant possible have the key
+optimize to not check branch that cant possibly have the key
 */
 func (tree *BTree) Get(key string) (*models.Data, error) {
-	found, node := Search(key, tree.root)
+	found, node := search(key, tree.root)
 	if found {
 		return node.data[key], nil
 	}
 	return nil, errors.New("key not found")
 }
-func Search(key string, node *BTreeNode) (bool, *BTreeNode) {
+
+func search(key string, node *BTreeNode) (bool, *BTreeNode) {
 	if contains(node.keys, key) {
 		return true, node
 	}
@@ -74,14 +76,14 @@ func Search(key string, node *BTreeNode) (bool, *BTreeNode) {
 
 	// iterate through children only if its not a leaf node
 	if !node.leaf {
-		return Search(key, node.children[index])
+		return search(key, node.children[index])
 	}
 
 	return false, nil
 }
 
 /*
-after failed searched,
+after failed search,
 if root is not initialized, it initializes it
 if the root is full its split,
 if not key is added in empty space
@@ -89,7 +91,7 @@ if not key is added in empty space
 func (tree *BTree) Put(key string, dataValue []byte, tombstone bool, timestamp uint64) error {
 	value := &models.Data{Value: dataValue, Tombstone: tombstone, Timestamp: timestamp}
 	root := tree.root
-	found, _ := Search(key, root)
+	found, _ := search(key, root)
 	if found {
 		return errors.New("key already in tree")
 	}
@@ -114,6 +116,7 @@ func (tree *BTree) Put(key string, dataValue []byte, tombstone bool, timestamp u
 	}
 	return nil
 }
+
 func insertInNodeThatHasRoom(key string, value *models.Data, node *BTreeNode) {
 	i := len(node.keys)
 	// if node is leaf just add and sort
@@ -224,157 +227,166 @@ search will return node that has the key that needs to be deleted
 get index of the next node and call function again if
 node doesnt contain key
 */
-func Delete(key string, node *BTreeNode) *BTreeNode {
-	index := find(key, node)
-	// key is in this node
-	if index < len(node.keys) && node.keys[index] == key {
-		if node.leaf {
-			removeFromLeaf(index, node)
-		} else {
-			removeFromInternal(key, index, node)
-		}
-		// look for key in child with given index
-	} else {
-		// key is not in the tree
-		if node.leaf {
-			return node
-		}
-		// if key is not in this node we do further
-		// need to check whether the node in the recursion path
-		// has minimal number of keys
-		if len(node.children[index].keys) == T-1 {
-			borrow := false
-			merge := false
-			indexLeft := index
-			indexRight := index
-			if index+1 == len(node.children) {
-				// then node is the last one
-				indexLeft--
-				if len(node.children[indexLeft].keys) > T-1 {
-					// sibling has more than minimum number of keys
-					// we can borrow
-					borrow = true
-				} else {
-					merge = true
-				}
-			} else if index == 0 {
-				// then node is first
-				indexRight++
-				if len(node.children[indexRight].keys) > T-1 {
-					borrow = true
-				} else {
-					merge = true
-				}
-			} else if index != 0 && index+1 < len(node.children)-1 {
-				// node is in the middle, second to last at most
-				// we can get from both right and left
-				if len(node.children[index-1].keys) > T-1 {
-					// we borrow from left child
-					indexLeft--
-					borrow = true
-				} else if len(node.children[index+1].keys) > T-1 {
-					// we borrow from right child
-					indexRight++
-					borrow = true
-				} else {
-					merge = true
-					indexRight++
-				}
-			}
-			if borrow {
-				node = borrowKeyFromSibling(node, indexLeft, indexRight)
-			} else if merge {
-				node = mergeWithSibling(node, indexLeft, indexRight, key)
-				// again delete because its moved
-				Delete(key, node)
-			}
-		}
-		Delete(key, node.children[index])
-	}
-	return node
-}
-func borrowKeyFromSibling(node *BTreeNode, indexLeft, indexRight int) *BTreeNode {
-	leftChild := node.children[indexLeft]
-	rightChild := node.children[indexRight]
+//func Delete(key string, node *BTreeNode) *BTreeNode {
+//	index := find(key, node)
+//	// key is in this node
+//	if index < len(node.keys) && node.keys[index] == key {
+//		if node.leaf {
+//			removeFromLeaf(index, node)
+//		} else {
+//			removeFromInternal(key, index, node)
+//		}
+//		// look for key in child with given index
+//	} else {
+//		// key is not in the tree
+//		if node.leaf {
+//			return node
+//		}
+//		// if key is not in this node we do further
+//		// need to check whether the node in the recursion path
+//		// has minimal number of keys
+//		if len(node.children[index].keys) == T-1 {
+//			borrow := false
+//			merge := false
+//			indexLeft := index
+//			indexRight := index
+//			if index+1 == len(node.children) {
+//				// then node is the last one
+//				indexLeft--
+//				if len(node.children[indexLeft].keys) > T-1 {
+//					// sibling has more than minimum number of keys
+//					// we can borrow
+//					borrow = true
+//				} else {
+//					merge = true
+//				}
+//			} else if index == 0 {
+//				// then node is first
+//				indexRight++
+//				if len(node.children[indexRight].keys) > T-1 {
+//					borrow = true
+//				} else {
+//					merge = true
+//				}
+//			} else if index != 0 && index+1 < len(node.children)-1 {
+//				// node is in the middle, second to last at most
+//				// we can get from both right and left
+//				if len(node.children[index-1].keys) > T-1 {
+//					// we borrow from left child
+//					indexLeft--
+//					borrow = true
+//				} else if len(node.children[index+1].keys) > T-1 {
+//					// we borrow from right child
+//					indexRight++
+//					borrow = true
+//				} else {
+//					merge = true
+//					indexRight++
+//				}
+//			}
+//			if borrow {
+//				node = borrowKeyFromSibling(node, indexLeft, indexRight)
+//			} else if merge {
+//				node = mergeWithSibling(node, indexLeft, indexRight, key)
+//				// again delete because its moved
+//				Delete(key, node)
+//			}
+//		}
+//		Delete(key, node.children[index])
+//	}
+//	return node
+//}
 
-	leftChild.keys = append(leftChild.keys, node.keys[indexLeft])
-	if !leftChild.leaf {
-		leftChild.children = append(leftChild.children, rightChild.children[0])
-	}
+// Mock delete function to implement the interface
+func (tree *BTree) Delete(key string) error {
+	return nil
+}
 
-	node.keys[indexLeft] = rightChild.keys[0]
-	for j := 0; j < len(rightChild.keys)-1; j++ {
-		rightChild.keys[j] = rightChild.keys[j+1]
-	}
-	rightChild.keys = deleteAtIndex(len(rightChild.keys)-1, rightChild.keys)
-	if !rightChild.leaf {
-		for j := 0; j < len(rightChild.keys); j++ {
-			rightChild.children[j] = rightChild.children[j+1]
-		}
-	}
-	leftChild.keys = deleteAtIndex(indexLeft-(T-1), leftChild.keys)
-	return node
-}
-func mergeWithSibling(node *BTreeNode, indexLeft, indexRight int, key string) *BTreeNode {
-	leftChild := node.children[indexLeft]
-	rightChild := node.children[indexRight]
-	leftChild.keys = append(leftChild.keys, node.keys[indexLeft])
-	node.keys = deleteAtIndex(indexLeft, node.keys)
-	// move keys and children
-	for j := 0; j <= len(rightChild.keys); j++ {
-		if j != len(rightChild.keys) { // index out of range
-			leftChild.keys = append(leftChild.keys, rightChild.keys[j])
-		}
-		if !leftChild.leaf {
-			leftChild.children = append(leftChild.children, rightChild.children[j])
-		}
-	}
-	node.children = deleteAtIndexNode(indexRight, node.children)
-	// move parents keys and children
-	for j := indexRight; j <= len(node.keys); j++ {
-		if j != len(node.keys) {
-			node.keys[j-1] = node.keys[j]
-		}
-	}
-	if len(node.keys) == 0 {
-		// remove the root
-		node = leftChild
-	}
-	Delete(key, node)
-	return node
-}
-func find(key string, root *BTreeNode) int {
-	index := 0 // if the key is smaller than first key in node
-	for j := 0; j < len(root.keys); j++ {
-		if root.keys[index] < key {
-			index++
-		}
-	}
-	return index
-}
-func removeFromLeaf(index int, node *BTreeNode) {
-	if index < len(node.keys) {
-		node.keys = deleteAtIndex(index, node.keys)
-	}
-}
-func removeFromInternal(key string, index int, node *BTreeNode) {
-	if node.leaf {
-		removeFromLeaf(index, node)
-	}
-	// delete from internal node
-	// find child that has above minimum number of keys
-	// get predecessor of the key
-	// check first left child
-	if len(node.children[index].keys) > (T - 1) { // bigger that minimum
-		node.keys[index] = switchPredecessor(node.children[index])
-		// check right child next
-	} else if len(node.children[index+1].keys) > (T - 1) {
-		node.keys[index] = switchSuccessor(node.children[index+1])
-		// combine nodes
-	} else {
-		mergeWithSibling(node, index, index+1, key)
-	}
-}
+//func borrowKeyFromSibling(node *BTreeNode, indexLeft, indexRight int) *BTreeNode {
+//	leftChild := node.children[indexLeft]
+//	rightChild := node.children[indexRight]
+//
+//	leftChild.keys = append(leftChild.keys, node.keys[indexLeft])
+//	if !leftChild.leaf {
+//		leftChild.children = append(leftChild.children, rightChild.children[0])
+//	}
+//
+//	node.keys[indexLeft] = rightChild.keys[0]
+//	for j := 0; j < len(rightChild.keys)-1; j++ {
+//		rightChild.keys[j] = rightChild.keys[j+1]
+//	}
+//	rightChild.keys = deleteAtIndex(len(rightChild.keys)-1, rightChild.keys)
+//	if !rightChild.leaf {
+//		for j := 0; j < len(rightChild.keys); j++ {
+//			rightChild.children[j] = rightChild.children[j+1]
+//		}
+//	}
+//	leftChild.keys = deleteAtIndex(indexLeft-(T-1), leftChild.keys)
+//	return node
+//}
+
+//	func mergeWithSibling(node *BTreeNode, indexLeft, indexRight int, key string) *BTreeNode {
+//		leftChild := node.children[indexLeft]
+//		rightChild := node.children[indexRight]
+//		leftChild.keys = append(leftChild.keys, node.keys[indexLeft])
+//		node.keys = deleteAtIndex(indexLeft, node.keys)
+//		// move keys and children
+//		for j := 0; j <= len(rightChild.keys); j++ {
+//			if j != len(rightChild.keys) { // index out of range
+//				leftChild.keys = append(leftChild.keys, rightChild.keys[j])
+//			}
+//			if !leftChild.leaf {
+//				leftChild.children = append(leftChild.children, rightChild.children[j])
+//			}
+//		}
+//		node.children = deleteAtIndexNode(indexRight, node.children)
+//		// move parents keys and children
+//		for j := indexRight; j <= len(node.keys); j++ {
+//			if j != len(node.keys) {
+//				node.keys[j-1] = node.keys[j]
+//			}
+//		}
+//		if len(node.keys) == 0 {
+//			// remove the root
+//			node = leftChild
+//		}
+//		Delete(key, node)
+//		return node
+//	}
+//func find(key string, root *BTreeNode) int {
+//	index := 0 // if the key is smaller than first key in node
+//	for j := 0; j < len(root.keys); j++ {
+//		if root.keys[index] < key {
+//			index++
+//		}
+//	}
+//	return index
+//}
+//func removeFromLeaf(index int, node *BTreeNode) {
+//	if index < len(node.keys) {
+//		node.keys = deleteAtIndex(index, node.keys)
+//	}
+//}
+
+//	func removeFromInternal(key string, index int, node *BTreeNode) {
+//		if node.leaf {
+//			removeFromLeaf(index, node)
+//		}
+//		// delete from internal node
+//		// find child that has above minimum number of keys
+//		// get predecessor of the key
+//		// check first left child
+//		if len(node.children[index].keys) > (T - 1) { // bigger that minimum
+//			node.keys[index] = switchPredecessor(node.children[index])
+//			// check right child next
+//		} else if len(node.children[index+1].keys) > (T - 1) {
+//			node.keys[index] = switchSuccessor(node.children[index+1])
+//			// combine nodes
+//		} else {
+//			mergeWithSibling(node, index, index+1, key)
+//		}
+//	}
+
 func deleteAtIndex(index int, list []string) []string {
 	if index < 0 || index >= len(list) {
 		return list
@@ -382,30 +394,31 @@ func deleteAtIndex(index int, list []string) []string {
 
 	return append(list[:index], list[index+1:]...)
 }
-func deleteAtIndexNode(index int, list []*BTreeNode) []*BTreeNode {
-	if index < 0 || index >= len(list) {
-		return list
-	}
 
-	return append(list[:index], list[index+1:]...)
-}
+//func deleteAtIndexNode(index int, list []*BTreeNode) []*BTreeNode {
+//	if index < 0 || index >= len(list) {
+//		return list
+//	}
+//
+//	return append(list[:index], list[index+1:]...)
+//}
 
-func switchPredecessor(node *BTreeNode) string {
-	if node.leaf {
-		last := node.keys[len(node.keys)-1]
-		node.keys = deleteAtIndex(len(node.keys)-1, node.keys) // remove predecessor
-		return last                                            // return last
-	}
-	return ""
-}
-func switchSuccessor(node *BTreeNode) string {
-	if node.leaf {
-		first := node.keys[0]
-		node.keys = deleteAtIndex(0, node.keys) // remove predecessor
-		return first                            // return last
-	}
-	return ""
-}
+//func switchPredecessor(node *BTreeNode) string {
+//	if node.leaf {
+//		last := node.keys[len(node.keys)-1]
+//		node.keys = deleteAtIndex(len(node.keys)-1, node.keys) // remove predecessor
+//		return last                                            // return last
+//	}
+//	return ""
+//}
+//func switchSuccessor(node *BTreeNode) string {
+//	if node.leaf {
+//		first := node.keys[0]
+//		node.keys = deleteAtIndex(0, node.keys) // remove predecessor
+//		return first                            // return last
+//	}
+//	return ""
+//}
 
 /*
 helper function to see structure of the tree
@@ -420,6 +433,7 @@ func PrintBTree(node *BTreeNode, level int) {
 		}
 	}
 }
+
 func (tree *BTree) GetSortedList() map[string]*models.Data {
 	result := make(map[string]*models.Data)
 	tree.root.traverse(result)
