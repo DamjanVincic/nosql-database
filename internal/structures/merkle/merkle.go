@@ -3,11 +3,12 @@ package merkle
 import (
 	"encoding/binary"
 	"fmt"
+	"math"
+	"os"
+
 	"github.com/DamjanVincic/key-value-engine/internal/models"
 	"github.com/DamjanVincic/key-value-engine/internal/structures/hash"
 	"github.com/edsrzf/mmap-go"
-	"math"
-	"os"
 )
 
 type MerkleTree struct {
@@ -99,12 +100,21 @@ func CreateMerkleTree(allData map[string]*models.Data) *MerkleTree {
 	return &merkleTree
 }
 func (tree *MerkleTree) WriteInFile(data [][]byte, filePath string) error {
-	var totalBytes int64
-	//var currentRowSize = make([]byte, 8)
-	var flatData []byte
+	// necessary for mapping the file on disc, we have to take care of memory space
+	// initialize to 8 because the hashWithSeed size is variable
+	totalBytes := int64(8)
+	// all data that needs to be written to disc
+	// append serialized hash function
+	serializedHash := hash.Serialize(tree.hashWithSeed)
+	hashFuncSize := uint64(len(serializedHash))
+	totalBytes += int64(hashFuncSize)
+	// first save size of hash function with seeds
+	flatData := make([]byte, 8)
+
+	binary.BigEndian.PutUint64(flatData[:8], hashFuncSize)
+	flatData = append(flatData, serializedHash...)
+
 	for _, row := range data {
-		//binary.BigEndian.PutUint64(currentRowSize, uint64(len(row)))
-		//flatData = append(flatData, currentRowSize...)
 		flatData = append(flatData, row...)
 		totalBytes += int64(len(row))
 	}
@@ -118,7 +128,9 @@ func (tree *MerkleTree) WriteInFile(data [][]byte, filePath string) error {
 		return err
 	}
 	fileSize := fileStat.Size()
-	err = file.Truncate(totalBytes + fileSize)
+	if err = file.Truncate(totalBytes + fileSize); err != nil {
+		return err
+	}
 
 	mmapFile, err := mmap.Map(file, mmap.RDWR, 0)
 	if err != nil {
