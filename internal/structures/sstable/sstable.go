@@ -127,20 +127,6 @@ func writeToFile(dataFile *os.File, binaryData []byte) error {
 	return nil
 }
 
-/*
-	func readFromFile(size int, dataFile *os.File) *IndexRecord {
-		data, err := ioutil.ReadFile("sstable/sstable1/sst_00001_1_index.db")
-		fmt.Println(data)
-		if err != nil {
-			return nil
-		}
-		n := data[:size]
-		fmt.Println(data)
-		dataRecord, err := DeserializeIndexRecord(n)
-		fmt.Println(dataRecord)
-		return dataRecord
-	}
-*/
 func addToSparseIndex(indexFile *os.File, entry MemEntry, offset uint64) (uint64, error) {
 	indexRecord := NewIndexRecord(entry, offset)
 	serializedIndexRecord := indexRecord.SerializeIndexRecord()
