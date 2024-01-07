@@ -90,9 +90,11 @@ func NewSSTable2(memEntries []MemEntry, tableSize uint64) (*SSTable, error) {
 	}
 
 	// offset that points to begining of file
+	offset := uint64(0)
 	for _, entry := range memEntries {
-		addToDataSegment(dataFile, entry)
-		//addToSparseIndex(indexFile, entry)
+		offset, _ = addToDataSegment(dataFile, entry)
+		addToSparseIndex(indexFile, entry, offset)
+		break
 	}
 
 	dataFile.Close()
@@ -113,14 +115,14 @@ func NewSSTable2(memEntries []MemEntry, tableSize uint64) (*SSTable, error) {
 		tocFilename:          tocFilename,
 	}, nil
 }
-func addToDataSegment(dataFile *os.File, entry MemEntry) error {
+func addToDataSegment(dataFile *os.File, entry MemEntry) (uint64, error) {
 	dataRecord := NewDataRecord(entry)
 	serializedRecord := dataRecord.SerializeDataRecord()
 
 	if err := writeToFile(dataFile, serializedRecord); err != nil {
-		return err
+		return uint64(len(serializedRecord)), err
 	}
-	return nil
+	return uint64(len(serializedRecord)), nil
 }
 
 func writeToFile(dataFile *os.File, binaryData []byte) error {
@@ -132,14 +134,25 @@ func writeToFile(dataFile *os.File, binaryData []byte) error {
 }
 
 /*
-func readFromFile(size int, dataFile *os.File) *DataRecord {
-	data, err := ioutil.ReadFile("sstable/sstable1/sst_00001_1_data.db")
-	fmt.Println(data)
-	if err != nil {
-		return nil
+	func readFromFile(size int, dataFile *os.File) *IndexRecord {
+		data, err := ioutil.ReadFile("sstable/sstable1/sst_00001_1_index.db")
+		fmt.Println(data)
+		if err != nil {
+			return nil
+		}
+		n := data[:size]
+		fmt.Println(data)
+		dataRecord, err := DeserializeIndexRecord(n)
+		fmt.Println(dataRecord)
+		return dataRecord
 	}
-	n := data[:size]
-	dataRecord, err := DeserializeDataRecord(n)
-	return dataRecord
-}
 */
+func addToSparseIndex(indexFile *os.File, entry MemEntry, offset uint64) error {
+	indexRecord := NewIndexRecord(entry, offset)
+	serializedIndexRecord := indexRecord.SerializeIndexRecord()
+
+	if err := writeToFile(indexFile, serializedIndexRecord); err != nil {
+		return err
+	}
+	return nil
+}
