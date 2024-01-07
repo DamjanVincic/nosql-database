@@ -1,10 +1,12 @@
-package main
+package btree
 
 import (
 	"fmt"
 )
 
-var T = 2
+const (
+	T = 2 // degree of nodes
+)
 
 type BTreeNode struct {
 	parent   *BTreeNode
@@ -12,9 +14,9 @@ type BTreeNode struct {
 	keys     []string     // list of keys
 	children []*BTreeNode // list of child pointers
 	leaf     bool         // is node a leaf
-	data     map[string]Value
+	data     map[string]*BTreeValue
 }
-type Value struct {
+type BTreeValue struct {
 	Value     []byte
 	Tombstone bool
 	Timestamp uint64
@@ -31,14 +33,14 @@ func contains(list []string, element string) bool {
 	}
 	return false
 }
-func initTree(key string, value Value) *BTreeNode {
+func initTree(key string, value *BTreeValue) *BTreeNode {
 	root := &BTreeNode{
 		parent:   nil,
 		t:        T,
 		keys:     []string{key},
 		children: []*BTreeNode{},
 		leaf:     true,
-		data:     make(map[string]Value),
+		data:     make(map[string]*BTreeValue),
 	}
 	root.data[key] = value
 	return root
@@ -77,7 +79,7 @@ if root is not initialized, it initializes it
 if the root is full its split,
 if not key is added in empty space
 */
-func Insert(key string, value Value, root *BTreeNode) *BTreeNode {
+func (value *BTreeValue) Insert(key string, root *BTreeNode) *BTreeNode {
 	found, _ := Search(key, root)
 	if found {
 		return nil
@@ -92,7 +94,7 @@ func Insert(key string, value Value, root *BTreeNode) *BTreeNode {
 			keys:     []string{},
 			children: []*BTreeNode{},
 			leaf:     false, // new root
-			data:     make(map[string]Value),
+			data:     make(map[string]*BTreeValue),
 		}
 		newNode.children = append(newNode.children, root)
 		root.parent = newNode
@@ -104,7 +106,7 @@ func Insert(key string, value Value, root *BTreeNode) *BTreeNode {
 		return root
 	}
 }
-func insertInNodeThatHasRoom(key string, value Value, node *BTreeNode) {
+func insertInNodeThatHasRoom(key string, value *BTreeValue, node *BTreeNode) {
 	i := len(node.keys)
 	// if node is leaf just add and sort
 	if node.leaf {
@@ -146,6 +148,7 @@ create a new node and move half the entries
 from the overflowing node to the new node
 then insert the pointer to the new node into the
 upper neighbor
+i - index of a nodes child that is to be split
 */
 func split(i int, child *BTreeNode, parent *BTreeNode) *BTreeNode {
 	keyToMove := child.keys[T-1]
@@ -155,7 +158,7 @@ func split(i int, child *BTreeNode, parent *BTreeNode) *BTreeNode {
 		keys:     []string{},
 		children: []*BTreeNode{},
 		leaf:     child.leaf, // if child is leaf so is new node
-		data:     make(map[string]Value),
+		data:     make(map[string]*BTreeValue),
 	}
 	// add all keys and data to new node
 	newNode.keys = append(newNode.keys, child.keys[T:]...)
@@ -431,4 +434,7 @@ func PrintBTree(node *BTreeNode, level int) {
 			PrintBTree(child, level+1)
 		}
 	}
+}
+func GetSortedList() {
+
 }
