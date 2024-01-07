@@ -3,10 +3,11 @@ package sstable
 import (
 	"encoding/binary"
 	"fmt"
-	"github.com/DamjanVincic/key-value-engine/internal/models"
 	"os"
 	"path/filepath"
 	"strconv"
+
+	"github.com/DamjanVincic/key-value-engine/internal/models"
 
 	"github.com/DamjanVincic/key-value-engine/internal/structures/bloomfilter"
 )
@@ -53,6 +54,11 @@ const (
 	FilterBlockSizeSize  = 8
 	SummaryBlockSizeSize = 8
 	HeaderSize           = DataBlockSizeSize + IndexBlockSizeSize + FilterBlockSizeSize + SummaryBlockSizeSize
+	DataBlockStart       = 0
+	FilterBlockStart     = DataBlockStart + DataBlockSizeSize
+	IndexBlockStart      = FilterBlockStart + FilterBlockSizeSize
+	SummaryBlockStart    = IndexBlockStart + IndexBlockSizeSize
+	MetaBlockStart       = SummaryBlockStart + SummaryBlockSizeSize
 	// Path to store SSTable files
 	Path = "sstable"
 	// Path to store the SimpleSStable file
@@ -178,9 +184,9 @@ func createFile(memEntries []MemEntry, file *os.File) error {
 	file.Seek(0, 0)
 	header := make([]byte, HeaderSize)
 	binary.BigEndian.PutUint64(header[:DataBlockSizeSize], dataBlockSize)
-	binary.BigEndian.PutUint64(header[DataBlockSizeSize:FilterBlockSizeSize], filterBlockSize)
-	binary.BigEndian.PutUint64(header[FilterBlockSizeSize:IndexBlockSizeSize], indexBlockSize)
-	binary.BigEndian.PutUint64(header[IndexBlockSizeSize:SummaryBlockSizeSize], summaryBlockSize)
+	binary.BigEndian.PutUint64(header[DataBlockStart:FilterBlockStart], filterBlockSize)
+	binary.BigEndian.PutUint64(header[FilterBlockStart:SummaryBlockStart], indexBlockSize)
+	binary.BigEndian.PutUint64(header[SummaryBlockStart:MetaBlockStart], summaryBlockSize)
 	if _, err := file.Write(header); err != nil {
 		return err
 	}
