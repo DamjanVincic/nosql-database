@@ -1,6 +1,7 @@
 package btree
 
 import (
+	"errors"
 	"fmt"
 	"github.com/DamjanVincic/key-value-engine/internal/models"
 )
@@ -49,12 +50,12 @@ func CreateBTree() *BTree {
 searches whether the key is in the tree
 optimize to not check branch that cant possible have the key
 */
-func (tree *BTree) Get(key string) *models.Data {
+func (tree *BTree) Get(key string) (*models.Data, error) {
 	found, node := Search(key, tree.root)
 	if found {
-		return node.data[key]
+		return node.data[key], nil
 	}
-	return nil
+	return nil, errors.New("key not found")
 }
 func Search(key string, node *BTreeNode) (bool, *BTreeNode) {
 	if contains(node.keys, key) {
@@ -85,12 +86,12 @@ if root is not initialized, it initializes it
 if the root is full its split,
 if not key is added in empty space
 */
-func (tree *BTree) Put(key string, dataValue []byte, tombstone bool, timestamp uint64) *BTreeNode {
+func (tree *BTree) Put(key string, dataValue []byte, tombstone bool, timestamp uint64) error {
 	value := &models.Data{Value: dataValue, Tombstone: tombstone, Timestamp: timestamp}
 	root := tree.root
 	found, _ := Search(key, root)
 	if found {
-		return nil
+		return errors.New("key already in tree")
 	}
 	// if root is empty we need to initialize the tree
 	if len(root.keys) == 2*T-1 {
@@ -106,11 +107,12 @@ func (tree *BTree) Put(key string, dataValue []byte, tombstone bool, timestamp u
 		newNode.children = append(newNode.children, root)
 		newNode = split(0, root, newNode)
 		insertInNodeThatHasRoom(key, value, newNode)
-		return newNode
+		tree.root = newNode
 	} else {
 		insertInNodeThatHasRoom(key, value, root)
-		return root
+		tree.root = root
 	}
+	return nil
 }
 func insertInNodeThatHasRoom(key string, value *models.Data, node *BTreeNode) {
 	i := len(node.keys)
@@ -123,7 +125,7 @@ func insertInNodeThatHasRoom(key string, value *models.Data, node *BTreeNode) {
 			//node.children[i] = node.children[i-1]
 			i--
 		}
-		if node.keys[len(node.keys)-1] == "" {
+		if len(node.keys) != 0 && node.keys[len(node.keys)-1] == "" {
 			node.keys = deleteAtIndex(len(node.keys)-1, node.keys)
 		}
 		if i+1 < len(node.keys) {
@@ -418,14 +420,20 @@ func PrintBTree(node *BTreeNode, level int) {
 		}
 	}
 }
-func (tree *BTreeNode) GetSortedList(result *[]string) {
-	for i := 0; i < len(tree.keys); i++ {
-		if tree.children[i] == nil {
-			*result = append(*result, tree.children[i].keys[i])
-			*result = append(*result, tree.keys[i])
-		} else {
-			tree.children[i].GetSortedList(result)
-		}
-	}
+func (tree *BTree) GetSortedList() []string {
+	var result []string
+	tree.root.traverse(&result)
+	return result
+}
 
+func (node *BTreeNode) traverse(result *[]string) {
+	for i := 0; i < len(node.keys); i++ {
+		if !node.leaf {
+			node.children[i].traverse(result)
+		}
+		*result = append(*result, node.keys[i])
+	}
+	if !node.leaf {
+		node.children[len(node.keys)].traverse(result)
+	}
 }
