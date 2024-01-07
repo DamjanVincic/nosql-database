@@ -11,6 +11,11 @@ import (
 	"github.com/edsrzf/mmap-go"
 )
 
+const (
+	// number of bytes used for writting the size of hashWithSeed in file
+	HashWithSeedSizeSize = 8
+)
+
 type MerkleTree struct {
 	Root         *Node
 	hashWithSeed []hash.HashWithSeed
@@ -99,7 +104,7 @@ func CreateMerkleTree(allData map[string]*models.Data) *MerkleTree {
 	merkleTree.Root = nodes[len(nodes)-1]
 	return &merkleTree
 }
-func (tree *MerkleTree) WriteInFile(data [][]byte, filePath string) error {
+func (tree *MerkleTree) WriteInFile(data []byte, filePath string) error {
 	// necessary for mapping the file on disc, we have to take care of memory space
 	// initialize to 8 because the hashWithSeed size is variable
 	totalBytes := int64(8)
@@ -108,16 +113,16 @@ func (tree *MerkleTree) WriteInFile(data [][]byte, filePath string) error {
 	serializedHash := hash.Serialize(tree.hashWithSeed)
 	hashFuncSize := uint64(len(serializedHash))
 	totalBytes += int64(hashFuncSize)
-	// first save size of hash function with seeds
+	// save size of hash function with seeds
 	flatData := make([]byte, 8)
-
 	binary.BigEndian.PutUint64(flatData[:8], hashFuncSize)
+	//append hashWithSeed
 	flatData = append(flatData, serializedHash...)
+	//append merkleTree data
+	flatData = append(flatData, data...)
+	totalBytes += int64(len(data))
 
-	for _, row := range data {
-		flatData = append(flatData, row...)
-		totalBytes += int64(len(row))
-	}
+	//open file
 	file, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		return err
@@ -128,10 +133,12 @@ func (tree *MerkleTree) WriteInFile(data [][]byte, filePath string) error {
 		return err
 	}
 	fileSize := fileStat.Size()
+
+	// ensure that the file has enough space to accommodate the new data
 	if err = file.Truncate(totalBytes + fileSize); err != nil {
 		return err
 	}
-
+	// mapping the file
 	mmapFile, err := mmap.Map(file, mmap.RDWR, 0)
 	if err != nil {
 		return err
@@ -147,16 +154,16 @@ func (tree *MerkleTree) WriteInFile(data [][]byte, filePath string) error {
 	}
 	return nil
 }
-func LevelOrder(root *Node) [][]byte {
+func merkleBFS(root *Node) []byte {
 	if root == nil {
-		return [][]byte{}
+		return []byte{}
 	}
-	result := [][]byte{}
+	result := []byte{}
 	nodes := []*Node{root}
 	for len(nodes) > 0 {
 		current := nodes[0] // get next in line
 		nodes = nodes[1:]
-		result = append(result, current.data)
+		result = append(result, current.data...)
 		if current.left != nil {
 			nodes = append(nodes, current.left)
 		}
@@ -177,13 +184,15 @@ func (tree *MerkleTree) ReadFromFile(filePath string) (*MerkleTree, error) {
 		return nil, err
 	}
 
-	data := make([][]byte, 0)
-	//var offset uint64
-	for i := uint64(0); i < uint64(len(mmapFile)); i += 8 {
-		//offset = binary.BigEndian.Uint64([]byte{mmapFile[i]})
-		//data = append(data, mmapFile[i:offset])
-		//i += offset
-		data = append(data, mmapFile[i:i+8])
+	//read hashWithSeed len
+	hashWithSeedSize := binary.BigEndian.Uint64(mmapFile[:HashWithSeedSizeSize])
+	//read and deserialize hashWithSeed
+	tree.hashWithSeed = hash.Deserialize(mmapFile[HashWithSeedSizeSize:hashWithSeedSize])
+
+	//read merkleTree data, every node contains hashed array of 8 bytes
+	data := make([]byte, 0)
+	for offset := uint64(0); offset < uint64(len(mmapFile)); offset += 8 {
+		data = append(data, mmapFile[offset:offset+8]...)
 	}
 
 	fmt.Println(data)
@@ -198,10 +207,10 @@ func (tree *MerkleTree) ReadFromFile(filePath string) (*MerkleTree, error) {
 	}
 	return tree, nil
 }
-func (node *Node) binaryTree(data [][]byte, index int) *Node {
+func (node *Node) binaryTree(data []byte, index int) *Node {
 	if index < len(data) {
 		node := &Node{
-			data:  data[0],
+			data:  data,
 			left:  nil,
 			right: nil,
 		}
