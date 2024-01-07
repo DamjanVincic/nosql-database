@@ -9,12 +9,14 @@ const (
 )
 
 type BTreeNode struct {
-	parent   *BTreeNode
 	t        int          // minimum degree
 	keys     []string     // list of keys
 	children []*BTreeNode // list of child pointers
 	leaf     bool         // is node a leaf
 	data     map[string]*BTreeValue
+}
+type BTree struct {
+	root *BTreeNode
 }
 type BTreeValue struct {
 	Value     []byte
@@ -33,17 +35,19 @@ func contains(list []string, element string) bool {
 	}
 	return false
 }
-func initTree(key string, value *BTreeValue) *BTreeNode {
+func InitTree(key string, value *BTreeValue) *BTree {
 	root := &BTreeNode{
-		parent:   nil,
 		t:        T,
 		keys:     []string{key},
 		children: []*BTreeNode{},
 		leaf:     true,
 		data:     make(map[string]*BTreeValue),
 	}
+	tree := &BTree{
+		root: root,
+	}
 	root.data[key] = value
-	return root
+	return tree
 }
 
 /*
@@ -79,7 +83,8 @@ if root is not initialized, it initializes it
 if the root is full its split,
 if not key is added in empty space
 */
-func (value *BTreeValue) Insert(key string, root *BTreeNode) *BTreeNode {
+func (tree *BTree) Insert(key string, value *BTreeValue) *BTreeNode {
+	root := tree.root
 	found, _ := Search(key, root)
 	if found {
 		return nil
@@ -89,7 +94,6 @@ func (value *BTreeValue) Insert(key string, root *BTreeNode) *BTreeNode {
 		// when split, middle element goes to parent node
 		// create pseudo-parent so it has somewhere to 'spil'
 		newNode := &BTreeNode{
-			parent:   nil,
 			t:        T,
 			keys:     []string{},
 			children: []*BTreeNode{},
@@ -97,7 +101,6 @@ func (value *BTreeValue) Insert(key string, root *BTreeNode) *BTreeNode {
 			data:     make(map[string]*BTreeValue),
 		}
 		newNode.children = append(newNode.children, root)
-		root.parent = newNode
 		newNode = split(0, root, newNode)
 		insertInNodeThatHasRoom(key, value, newNode)
 		return newNode
@@ -382,29 +385,6 @@ func deleteAtIndexNode(index int, list []*BTreeNode) []*BTreeNode {
 	return append(list[:index], list[index+1:]...)
 }
 
-/*
-	func switchPredecessor(node *BTreeNode, key int) int {
-		if node.leaf {
-			last := node.keys[len(node.keys)-1]
-			node.keys = deleteAtIndex(len(node.keys)-1, node.keys) // remove predecessor
-			return last                                            // return last
-		}
-
-		child := node.children[len(node.children)-1]
-		if len(child.keys) > T-1 {
-			// Borrow from the rightmost child
-			node.keys[len(node.keys)-1] = switchPredecessor(child, key)
-		} else {
-			// Merge with the rightmost child
-			mergeWithSibling(node, len(node.children)-1, len(node.children), key)
-			// After merging, we need to call switchPredecessor again on the merged child
-			node.keys[len(node.keys)-1] = switchPredecessor(node.children[len(node.children)-1], key)
-		}
-
-		// Ensure there's a return statement for all code paths
-		return node.keys[len(node.keys)-1]
-	}
-*/
 func switchPredecessor(node *BTreeNode) string {
 	if node.leaf {
 		last := node.keys[len(node.keys)-1]
@@ -435,6 +415,14 @@ func PrintBTree(node *BTreeNode, level int) {
 		}
 	}
 }
-func GetSortedList() {
+func (tree *BTreeNode) GetSortedList(result *[]string) {
+	for i := 0; i < len(tree.keys); i++ {
+		if tree.children[i] == nil {
+			*result = append(*result, tree.children[i].keys[i])
+			*result = append(*result, tree.keys[i])
+		} else {
+			tree.children[i].GetSortedList(result)
+		}
+	}
 
 }
