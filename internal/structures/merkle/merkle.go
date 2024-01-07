@@ -3,8 +3,8 @@ package merkle
 import (
 	"encoding/binary"
 	"fmt"
+	"github.com/DamjanVincic/key-value-engine/internal/models"
 	"github.com/DamjanVincic/key-value-engine/internal/structures/hash"
-	"github.com/DamjanVincic/key-value-engine/internal/structures/skipList"
 	"github.com/edsrzf/mmap-go"
 	"math"
 	"os"
@@ -20,7 +20,7 @@ type Node struct {
 	right *Node
 }
 
-func createDataForNode(key string, data skipList.SkipListValue) []byte {
+func createDataForNode(key string, data *models.Data) []byte {
 	value := data.Value
 	tombstone := data.Tombstone
 	timestamp := data.Timestamp
@@ -47,7 +47,7 @@ func boolToByte(b bool) []byte {
 	return []byte{0}
 }
 
-func createNewNode(key string, value skipList.SkipListValue) *Node {
+func createNewNode(key string, value *models.Data) *Node {
 	newData := createDataForNode(key, value)
 	hashFunc := hash.CreateHashFunctions(1)[0]
 	values, _ := hashFunc.Hash(newData)
@@ -59,7 +59,7 @@ func isWholeNumber(n float64) bool {
 	return math.Mod(n, 1) == 0
 }
 
-func CreateMerkleTree(allData map[string]skipList.SkipListValue) *MerkleTree {
+func CreateMerkleTree(allData map[string]*models.Data) *MerkleTree {
 	var nodes []*Node
 	var merkleTree MerkleTree
 
@@ -77,7 +77,7 @@ func CreateMerkleTree(allData map[string]skipList.SkipListValue) *MerkleTree {
 	if !isWholeNumber(n) {
 		targetSize := int(math.Pow(2, degree))
 		for i := len(nodes); i < targetSize; i++ {
-			nodes = append(nodes, createNewNode("", skipList.SkipListValue{Value: []byte{}, Tombstone: true, Timestamp: 0}))
+			nodes = append(nodes, createNewNode("", &models.Data{Value: []byte{}, Tombstone: true, Timestamp: 0}))
 		}
 	}
 	fmt.Println(len(nodes))
