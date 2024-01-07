@@ -115,9 +115,6 @@ func (tree *BTree) Put(key string, dataValue []byte, tombstone bool, timestamp u
 		insertInNodeThatHasRoom(key, value, root)
 		tree.root = root
 	}
-	//tree.root.PrintBTree(0)
-	fmt.Println(len(tree.GetSortedList()))
-	fmt.Println("-----------------------------------------------")
 	return nil
 }
 
