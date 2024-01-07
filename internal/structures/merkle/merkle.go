@@ -154,6 +154,7 @@ func (tree *MerkleTree) WriteInFile(data []byte, filePath string) error {
 	}
 	return nil
 }
+
 func merkleBFS(root *Node) []byte {
 	if root == nil {
 		return []byte{}
