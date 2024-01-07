@@ -2,6 +2,8 @@ package sstable
 
 import (
 	"fmt"
+	"github.com/DamjanVincic/key-value-engine/internal/structures/bloomfilter"
+
 	"os"
 	"path/filepath"
 	"strconv"
@@ -92,6 +94,7 @@ func NewSSTable2(memEntries []MemEntry, tableSize uint64) (*SSTable, error) {
 	// offset that points to begining of file
 	offset := uint64(0)
 	countKeysBetween := 0
+	filter := bloomfilter.CreateBloomFilter(len(memEntries), 0.2)
 	for _, entry := range memEntries {
 		offset, _ = addToDataSegment(dataFile, entry)
 		// handle errors ?
@@ -99,9 +102,11 @@ func NewSSTable2(memEntries []MemEntry, tableSize uint64) (*SSTable, error) {
 		if countKeysBetween == 0 || countKeysBetween%SummaryConst == 0 {
 			addToSummaryIndex(summaryFile, entry, indexOffset)
 		}
+		filter.AddElement([]byte(entry.Key))
 		countKeysBetween++
 		break
 	}
+	saveBloomFilter(filter, filterFile)
 
 	dataFile.Close()
 	indexFile.Close()
@@ -170,4 +175,12 @@ func addToSummaryIndex(summaryFile *os.File, entry MemEntry, indexOffset uint64)
 		return uint64(len(serializedIndexRecord)), err
 	}
 	return uint64(len(serializedIndexRecord)), nil
+}
+func saveBloomFilter(filter bloomfilter.BloomFilter, filterFile *os.File) error {
+	serializedFilter := filter.Serialize()
+	err := writeToFile(filterFile, serializedFilter)
+	if err != nil {
+		return err
+	}
+	return nil
 }
