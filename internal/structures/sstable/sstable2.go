@@ -1,11 +1,13 @@
 package sstable
 
 import (
+	"encoding/binary"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 
+	"github.com/DamjanVincic/key-value-engine/internal/structures/bloomfilter"
 	skipList "github.com/DamjanVincic/key-value-engine/internal/structures/skiplist"
 )
 
@@ -19,6 +21,14 @@ Value = Value data
 Timestamp = Timestamp of the operation in seconds
 
 In order to optimize memory, we will not store the Key, KeySize and ValueSize found in Index.
+
+The user can choose the way tables are written to disk, whether all structures are written in the same or separate files.
+If user chooses the option to save structures to the same file, the program works with the SimpleSSTable structure and its functions,otherwise with SSTable.
+
+Write path : DOPISATI
+Read path : DOPISATI
+
+sta cemo za summary proredjenost??
 */
 const (
 	CrcSize       = 4
@@ -32,11 +42,17 @@ const (
 	TombstoneStart   = TimestampStart + TimestampSize
 	ValueStart       = TombstoneStart + TombstoneSize
 	RecordHeaderSize = CrcSize + TimestampSize + TombstoneSize
-	SummaryConst     = 5
+	SummaryConst     = 5 //from config file
 	//for indexRecord
 	KeySizeStart = 0
 	KeyStart     = KeySizeStart + KeySizeSize
-
+	//sizes of each block in file for SimpleSSTable and size of header which we will use for reading and positioning in file
+	//reason why we store offsets in uint64 (8 bytes) is because max value od unit32 is 0.0.00429497 TB
+	DataBlockSizeSize    = 8
+	IndexBlockSizeSize   = 8
+	FilterBlockSizeSize  = 8
+	SummaryBlockSizeSize = 8
+	HeaderSize           = DataBlockSizeSize + IndexBlockSizeSize + FilterBlockSizeSize + SummaryBlockSizeSize
 	// Path to store SSTable files
 	Path = "sstable"
 	// Path to store the SimpleSStable file
@@ -60,7 +76,6 @@ type MemEntry struct {
 
 type SSTable struct {
 	summaryConst         uint16
-	tableSize            uint64
 	dataFilename         string
 	indexFilename        string
 	summaryIndexFilename string
@@ -70,11 +85,10 @@ type SSTable struct {
 }
 
 type SimpleSSTable struct {
-	tableSize uint64
-	filename  string
+	filename string
 }
 
-func NewSimpleSSTable(memEntries []MemEntry, tableSize uint64) (*SimpleSSTable, error) {
+func NewSimpleSSTable(memEntries []MemEntry) (*SimpleSSTable, error) {
 	// Create the directory if it doesn't exist
 	dirEntries, err := os.ReadDir(SimplePath)
 	if os.IsNotExist(err) {
@@ -103,18 +117,94 @@ func NewSimpleSSTable(memEntries []MemEntry, tableSize uint64) (*SimpleSSTable, 
 	}
 	filename = fmt.Sprintf("%s%05d_%d.db", SimplePrefix, index, lsmIndex)
 	file, err := os.OpenFile(filepath.Join(SimplePath, filename), os.O_CREATE|os.O_RDWR, 0644)
-	fmt.Print(file)
+	if err != nil {
+		return nil, err
+	}
+
+	err = createFile(memEntries, file)
 	if err != nil {
 		return nil, err
 	}
 
 	file.Close()
 	return &SimpleSSTable{
-		tableSize: tableSize,
-		filename:  filename,
+		filename: filename,
 	}, nil
 
 }
+
+func createFile(memEntries []MemEntry, file *os.File) error {
+	// Create one file for one SSTable, file contains data, index, summarry, filter and merkle blocks and in header we store offsets of each block
+	// skip first HeaderSize bytes for header
+	offset := uint64(HeaderSize)
+	file.Seek(int64(offset), 0)
+	var indexRecords []byte
+	var summaryRecords []byte
+
+	bf := bloomfilter.CreateBloomFilter(len(memEntries), 0.2)
+	counter := 0
+	dataBlockSize := uint64(0)
+	indexBlockSize := uint64(0)
+	summaryBlockSize := uint64(0)
+
+	for _, memEntry := range memEntries {
+		sizeOfDR, err := writeDataRecord(file, memEntry)
+		if err != nil {
+			return err
+		}
+		serializedIndexRecord := NewIndexRecord(memEntry, offset).SerializeIndexRecord()
+		indexRecords = append(indexRecords, serializedIndexRecord...)
+		indexBlockSize += uint64(len(serializedIndexRecord))
+		if counter%SummaryConst == 0 {
+			summaryRecords = append(summaryRecords, serializedIndexRecord...)
+			summaryBlockSize += uint64(len(serializedIndexRecord))
+		}
+		counter++
+		offset += sizeOfDR
+		dataBlockSize += sizeOfDR
+		bf.AddElement([]byte(memEntry.Key))
+	}
+	filterBlockSize, err := writeBF(bf, file)
+	if err != nil {
+		return err
+	}
+	if _, err := file.Write(indexRecords); err != nil {
+		return err
+	}
+	if _, err := file.Write(summaryRecords); err != nil {
+		return err
+	}
+
+	file.Seek(0, 0)
+	header := make([]byte, HeaderSize)
+	binary.BigEndian.PutUint64(header[:DataBlockSizeSize], dataBlockSize)
+	binary.BigEndian.PutUint64(header[DataBlockSizeSize:FilterBlockSizeSize], filterBlockSize)
+	binary.BigEndian.PutUint64(header[FilterBlockSizeSize:IndexBlockSizeSize], indexBlockSize)
+	binary.BigEndian.PutUint64(header[IndexBlockSizeSize:SummaryBlockSizeSize], summaryBlockSize)
+	if _, err := file.Write(header); err != nil {
+		return err
+	}
+	return nil
+}
+func writeDataRecord(file *os.File, entry MemEntry) (uint64, error) {
+	dRecord := *NewDataRecord(entry)
+	serializedRecord := dRecord.SerializeDataRecord()
+
+	if _, err := file.Write(serializedRecord); err != nil {
+		return uint64(len(serializedRecord)), err
+	}
+	return uint64(len(serializedRecord)), nil
+
+}
+func writeBF(bf bloomfilter.BloomFilter, file *os.File) (uint64, error) {
+	serializedBF := bf.Serialize()
+	filterBlockSize := uint64(len(serializedBF))
+	if err := writeToFile(file, serializedBF); err != nil {
+		return filterBlockSize, err
+	}
+	return filterBlockSize, nil
+}
+
 func NewSSTable(memEntries []MemEntry, tableSize uint64) (*SSTable, error) {
 	// Create the directory if it doesn't exist
 	dirEntries, err := os.ReadDir(Path)
@@ -207,7 +297,6 @@ func NewSSTable(memEntries []MemEntry, tableSize uint64) (*SSTable, error) {
 
 	return &SSTable{
 		summaryConst:         SummaryConst,
-		tableSize:            tableSize,
 		dataFilename:         dataFilename,
 		indexFilename:        indexFilename,
 		summaryIndexFilename: summaryFilename,

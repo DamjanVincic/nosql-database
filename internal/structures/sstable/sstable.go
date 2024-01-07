@@ -101,7 +101,6 @@ func NewSSTable2(memEntries []MemEntry, tableSize uint64) (*SSTable, error) {
 
 	return &SSTable{
 		summaryConst:         SummaryConst,
-		tableSize:            tableSize,
 		dataFilename:         dataFilename,
 		indexFilename:        indexFilename,
 		summaryIndexFilename: summaryFilename,
