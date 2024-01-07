@@ -11,7 +11,8 @@ import (
 )
 
 type MerkleTree struct {
-	Root *Node
+	Root         *Node
+	hashWithSeed []hash.HashWithSeed
 }
 
 type Node struct {
@@ -78,8 +79,9 @@ func CreateMerkleTree(allData map[string]*models.Data) *MerkleTree {
 	for len(nodes) > 1 {
 		var newLevel []*Node
 
+		merkleTree.hashWithSeed = hash.CreateHashFunctions(1)
 		for i := 0; i < len(nodes); i += 2 {
-			hashFunc := hash.CreateHashFunctions(1)[0]
+			hashFunc := merkleTree.hashWithSeed[0]
 			values, _ := hashFunc.Hash(append(nodes[i].data, nodes[i+1].data...))
 			valuesBinary := make([]byte, 8)
 			binary.BigEndian.PutUint64(valuesBinary, values)
@@ -152,7 +154,6 @@ func LevelOrder(root *Node) [][]byte {
 	}
 	return result
 }
-
 func (tree *MerkleTree) ReadFromFile(filePath string) (*MerkleTree, error) {
 	file, err := os.OpenFile(filePath, os.O_RDWR, 0644)
 	if err != nil {
