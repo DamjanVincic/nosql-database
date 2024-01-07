@@ -27,6 +27,11 @@ type Node struct {
 	right *Node
 }
 
+/*
+create data for node
+get binary value of value tombtone and timestamp
+append it to result and return serialized data
+*/
 func createDataForNode(key string, data *models.Data) []byte {
 	value := data.Value
 	tombstone := data.Tombstone
@@ -51,6 +56,9 @@ func createDataForNode(key string, data *models.Data) []byte {
 	return result
 }
 
+/*
+get binary data and hash function and return new node with no children and hashed values
+*/
 func createNewNode(key string, value *models.Data) *Node {
 	newData := createDataForNode(key, value)
 	hashFunc := hash.CreateHashFunctions(1)[0]
@@ -59,6 +67,12 @@ func createNewNode(key string, value *models.Data) *Node {
 	binary.BigEndian.PutUint64(valuesBinary, values)
 	return &Node{left: nil, right: nil, data: valuesBinary}
 }
+
+/*
+since merkle tree if build from bottom up we need all data as leafs
+if number of leafs is not 2**n we need to add empty nodes
+there hash wont change anything
+*/
 func CreateMerkleTree(allData map[string]*models.Data) *MerkleTree {
 	var nodes []*Node
 	var merkleTree MerkleTree
@@ -72,15 +86,13 @@ func CreateMerkleTree(allData map[string]*models.Data) *MerkleTree {
 	// if number of nodes is not 2**n add empty nodes
 	n := math.Log2(float64(len(nodes)))
 	degree := math.Ceil(n)
-	fmt.Println(len(nodes))
-	fmt.Println(degree)
-	if math.Mod(n, 1) != 0 {
-		targetSize := int(math.Pow(2, degree))
+	if math.Mod(n, 1) != 0 { // check if hole number
+		targetSize := int(math.Pow(2, degree)) // ex. n is 2.3 then degree is 3 and we need 8 nodes since 2**3
 		for i := len(nodes); i < targetSize; i++ {
+			// add number of empty nodes that is needed
 			nodes = append(nodes, createNewNode("", &models.Data{Value: []byte{}, Tombstone: true, Timestamp: 0}))
 		}
 	}
-	fmt.Println(len(nodes))
 
 	for len(nodes) > 1 {
 		var newLevel []*Node
@@ -88,9 +100,12 @@ func CreateMerkleTree(allData map[string]*models.Data) *MerkleTree {
 		merkleTree.hashWithSeed = hash.CreateHashFunctions(1)
 		for i := 0; i < len(nodes); i += 2 {
 			hashFunc := merkleTree.hashWithSeed[0]
+			// add two array together and hash
 			values, _ := hashFunc.Hash(append(nodes[i].data, nodes[i+1].data...))
 			valuesBinary := make([]byte, 8)
 			binary.BigEndian.PutUint64(valuesBinary, values)
+			// create new node with nodes at index i and i + 1, parent-left and right child
+			// add new hash value of two nodes as data of new node
 			newNode := &Node{
 				left:  nodes[i],
 				right: nodes[i+1],
@@ -116,13 +131,13 @@ func (tree *MerkleTree) WriteInFile(data []byte, filePath string) error {
 	// save size of hash function with seeds
 	flatData := make([]byte, 8)
 	binary.BigEndian.PutUint64(flatData[:8], hashFuncSize)
-	//append hashWithSeed
+	// append hashWithSeed
 	flatData = append(flatData, serializedHash...)
-	//append merkleTree data
+	// append merkleTree data
 	flatData = append(flatData, data...)
 	totalBytes += int64(len(data))
 
-	//open file
+	// open file
 	file, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		return err
@@ -155,7 +170,7 @@ func (tree *MerkleTree) WriteInFile(data []byte, filePath string) error {
 	return nil
 }
 
-func merkleBFS(root *Node) []byte {
+func MerkleBFS(root *Node) []byte {
 	if root == nil {
 		return []byte{}
 	}
@@ -179,20 +194,26 @@ func (tree *MerkleTree) ReadFromFile(filePath string) (*MerkleTree, error) {
 	if err != nil {
 		return nil, err
 	}
+	fileStat, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	fileSize := fileStat.Size()
+	fmt.Println(fileSize)
 
 	mmapFile, err := mmap.Map(file, mmap.RDWR, 0)
 	if err != nil {
 		return nil, err
 	}
 
-	//read hashWithSeed len
+	// read hashWithSeed len
 	hashWithSeedSize := binary.BigEndian.Uint64(mmapFile[:HashWithSeedSizeSize])
 	//read and deserialize hashWithSeed
-	tree.hashWithSeed = hash.Deserialize(mmapFile[HashWithSeedSizeSize:hashWithSeedSize])
+	tree.hashWithSeed = hash.Deserialize(mmapFile[HashWithSeedSizeSize : HashWithSeedSizeSize+hashWithSeedSize])
 
-	//read merkleTree data, every node contains hashed array of 8 bytes
+	// read merkleTree data, every node contains hashed array of 8 bytes
 	data := make([]byte, 0)
-	for offset := uint64(0); offset < uint64(len(mmapFile)); offset += 8 {
+	for offset := uint64(HashWithSeedSizeSize + hashWithSeedSize); offset < uint64(len(mmapFile)); offset += 8 {
 		data = append(data, mmapFile[offset:offset+8]...)
 	}
 
