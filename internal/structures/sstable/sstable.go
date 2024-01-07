@@ -91,9 +91,15 @@ func NewSSTable2(memEntries []MemEntry, tableSize uint64) (*SSTable, error) {
 
 	// offset that points to begining of file
 	offset := uint64(0)
+	countKeysBetween := 0
 	for _, entry := range memEntries {
 		offset, _ = addToDataSegment(dataFile, entry)
-		addToSparseIndex(indexFile, entry, offset)
+		// handle errors ?
+		indexOffset, _ := addToSparseIndex(indexFile, entry, offset)
+		if countKeysBetween == 0 || countKeysBetween%SummaryConst == 0 {
+			addToSummaryIndex(summaryFile, entry, indexOffset)
+		}
+		countKeysBetween++
 		break
 	}
 
@@ -147,12 +153,21 @@ func writeToFile(dataFile *os.File, binaryData []byte) error {
 		return dataRecord
 	}
 */
-func addToSparseIndex(indexFile *os.File, entry MemEntry, offset uint64) error {
+func addToSparseIndex(indexFile *os.File, entry MemEntry, offset uint64) (uint64, error) {
 	indexRecord := NewIndexRecord(entry, offset)
 	serializedIndexRecord := indexRecord.SerializeIndexRecord()
 
 	if err := writeToFile(indexFile, serializedIndexRecord); err != nil {
-		return err
+		return uint64(len(serializedIndexRecord)), err
 	}
-	return nil
+	return uint64(len(serializedIndexRecord)), nil
+}
+func addToSummaryIndex(summaryFile *os.File, entry MemEntry, indexOffset uint64) (uint64, error) {
+	indexRecord := NewIndexRecord(entry, indexOffset)
+	serializedIndexRecord := indexRecord.SerializeIndexRecord()
+
+	if err := writeToFile(summaryFile, serializedIndexRecord); err != nil {
+		return uint64(len(serializedIndexRecord)), err
+	}
+	return uint64(len(serializedIndexRecord)), nil
 }
