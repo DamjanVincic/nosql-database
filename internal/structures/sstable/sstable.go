@@ -3,7 +3,6 @@ package sstable
 import (
 	"fmt"
 	"github.com/DamjanVincic/key-value-engine/internal/structures/bloomfilter"
-
 	"os"
 	"path/filepath"
 	"strconv"
@@ -91,22 +90,7 @@ func NewSSTable2(memEntries []MemEntry, tableSize uint64) (*SSTable, error) {
 		return nil, err
 	}
 
-	// offset that points to begining of file
-	offset := uint64(0)
-	countKeysBetween := 0
-	filter := bloomfilter.CreateBloomFilter(len(memEntries), 0.2)
-	for _, entry := range memEntries {
-		offset, _ = addToDataSegment(dataFile, entry)
-		// handle errors ?
-		indexOffset, _ := addToSparseIndex(indexFile, entry, offset)
-		if countKeysBetween == 0 || countKeysBetween%SummaryConst == 0 {
-			addToSummaryIndex(summaryFile, entry, indexOffset)
-		}
-		filter.AddElement([]byte(entry.Key))
-		countKeysBetween++
-		break
-	}
-	saveBloomFilter(filter, filterFile)
+	createFiles(memEntries, dataFile, indexFile, summaryFile, filterFile)
 
 	dataFile.Close()
 	indexFile.Close()
@@ -183,4 +167,22 @@ func saveBloomFilter(filter bloomfilter.BloomFilter, filterFile *os.File) error 
 		return err
 	}
 	return nil
+}
+func createFiles(memEntries []MemEntry, dataFile, indexFile, summaryFile, filterFile *os.File) {
+	// offset that points to begining of file
+	offset := uint64(0)
+	countKeysBetween := 0
+	filter := bloomfilter.CreateBloomFilter(len(memEntries), 0.2)
+	for _, entry := range memEntries {
+		offset, _ = addToDataSegment(dataFile, entry)
+		// handle errors ?
+		indexOffset, _ := addToSparseIndex(indexFile, entry, offset)
+		if countKeysBetween == 0 || countKeysBetween%SummaryConst == 0 {
+			addToSummaryIndex(summaryFile, entry, indexOffset)
+		}
+		filter.AddElement([]byte(entry.Key))
+		countKeysBetween++
+		break
+	}
+	saveBloomFilter(filter, filterFile)
 }
