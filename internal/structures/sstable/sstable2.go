@@ -3,12 +3,12 @@ package sstable
 import (
 	"encoding/binary"
 	"fmt"
+	"github.com/DamjanVincic/key-value-engine/internal/models"
 	"os"
 	"path/filepath"
 	"strconv"
 
 	"github.com/DamjanVincic/key-value-engine/internal/structures/bloomfilter"
-	skipList "github.com/DamjanVincic/key-value-engine/internal/structures/skiplist"
 )
 
 /*
@@ -71,7 +71,7 @@ const (
 
 type MemEntry struct {
 	Key   string
-	Value *skipList.SkipListValue
+	Value *models.Data
 }
 
 type SSTable struct {
@@ -134,7 +134,7 @@ func NewSimpleSSTable(memEntries []MemEntry) (*SimpleSSTable, error) {
 }
 
 func createFile(memEntries []MemEntry, file *os.File) error {
-	// Create one file for one SSTable, file contains data, index, summarry, filter and merkle blocks and in header we store offsets of each block
+	// Create one file for one SSTable, file contains data, index, summary, filter and merkle blocks and in header we store offsets of each block
 	// skip first HeaderSize bytes for header
 	offset := uint64(HeaderSize)
 	file.Seek(int64(offset), 0)
