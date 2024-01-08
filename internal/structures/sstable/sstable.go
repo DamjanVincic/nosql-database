@@ -3,6 +3,7 @@ package sstable
 import (
 	"fmt"
 	"github.com/DamjanVincic/key-value-engine/internal/structures/bloomfilter"
+	"github.com/edsrzf/mmap-go"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -112,13 +113,63 @@ func NewSSTable2(memEntries []MemEntry, tableSize uint64) (*SSTable, error) {
 func addToDataSegment(dataFile *os.File, entry MemEntry) (uint64, error) {
 	dataRecord := NewDataRecord(entry)
 	serializedRecord := dataRecord.SerializeDataRecord()
+	//*******************************************************
+	flatData := make([]byte, 8)
+	flatData = append(flatData, serializedRecord...)
+	totalBytes := int64(len(serializedRecord))
+	//*******************************************************
 
-	if err := writeToFile(dataFile, serializedRecord); err != nil {
-		return uint64(len(serializedRecord)), err
+	fileStat, err := dataFile.Stat()
+	if err != nil {
+		return 0, err
+	}
+	fileSize := fileStat.Size()
+	if err = dataFile.Truncate(fileSize + totalBytes); err != nil {
+		return 0, err
+	}
+	mmapFile, err := mmap.Map(dataFile, mmap.RDWR, 0)
+	if err != nil {
+		return 0, err
+	}
+	copy(mmapFile[fileSize:], flatData)
+	err = mmapFile.Unmap()
+	if err != nil {
+		return 0, err
+	}
+	err = dataFile.Close()
+	if err != nil {
+		return 0, err
 	}
 	return uint64(len(serializedRecord)), nil
 }
+func ReadFromFile(file *os.File, offsetStart, offsetEnd int) (*DataRecord, error) {
+	fileStat, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	fileSize := fileStat.Size()
+	fmt.Println(fileSize)
 
+	mmapFile, err := mmap.Map(file, mmap.RDWR, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	serializedDataRecord := mmapFile[offsetStart:offsetEnd]
+	dataRecord, err := DeserializeDataRecord(serializedDataRecord)
+	if err != nil {
+		return nil, err
+	}
+	err = mmapFile.Unmap()
+	if err != nil {
+		return nil, err
+	}
+	err = file.Close()
+	if err != nil {
+		return nil, err
+	}
+	return dataRecord, nil
+}
 func writeToFile(dataFile *os.File, binaryData []byte) error {
 	_, err := dataFile.Write(binaryData)
 	if err != nil {
