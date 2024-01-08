@@ -17,9 +17,43 @@ type MemtableData interface {
 	GetSorted() []*models.MemEntry
 	Put(key string, value []byte, tombstone bool, timestamp uint64) error
 	Delete(key string) error
+	Size() int
 }
 
 type Memtable struct {
+	partitions       []MemtableData //read-only partitions
+	currentPartition MemtableData   //read-write partition
+}
+
+func newMemtable() *Memtable {
+	memtable := Memtable{partitions: []MemtableData{}, currentPartition: nil}
+	memtable.makePartition()
+	return &memtable
+}
+
+// appends new partition to partitions, and makes it currentPartition
+func (memtable *Memtable) makePartition() {
+	var newPartition MemtableData
+	switch dataStructure {
+	case 1:
+		newPartition = skiplist.CreateSkipList()
+
+	}
+	if memtable.currentPartition == nil {
+		memtable.currentPartition = newPartition
+		return
+	}
+	if len(memtable.partitions)-1 >= maxPartitions {
+		memtable.partitions = memtable.partitions[1:]
+	}
+	memtable.partitions = append(memtable.partitions, memtable.currentPartition)
+	memtable.currentPartition = newPartition
+}
+
+func (memtable *Memtable) Put(key string, value []byte, timestamp uint64, tombstone bool) (toFlush []*models.MemEntry, err error) {
+	toFlush = nil
+	err = nil
+	return
 }
 
 func Test(choice int) {

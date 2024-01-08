@@ -182,3 +182,7 @@ func (skipList *SkipList) GetSorted() []*models.MemEntry {
 	}
 	return entries
 }
+
+func (skipList *SkipList) Size() int {
+	return skipList.size
+}
