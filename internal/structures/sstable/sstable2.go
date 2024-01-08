@@ -156,12 +156,16 @@ func ssstWriteFile(memEntries []MemEntry, file *os.File) error {
 	file.Seek(int64(offset), 0)
 	var indexRecords []byte
 	var summaryRecords []byte
+	var merkleData map[string]*models.Data
 
 	// summary structure must store min and max key value
 	var summaryMin []byte
 	var summaryMax []byte
 	bf := bloomfilter.CreateBloomFilter(len(memEntries), 0.2)
+
+	//counter variable is for summary partition
 	counter := 0
+
 	dataBlockSize := uint64(0)
 	indexBlockSize := uint64(0)
 	summaryBlockSize := uint64(0)
@@ -191,6 +195,7 @@ func ssstWriteFile(memEntries []MemEntry, file *os.File) error {
 		dataBlockSize += sizeOfDR
 		bf.AddElement([]byte(memEntry.Key))
 		summaryMax = serializedIndexRecord
+		merkleData[memEntry.Key] = memEntry.Value
 	}
 	//append filter to data
 	serializedBF := bf.Serialize()
@@ -212,6 +217,10 @@ func ssstWriteFile(memEntries []MemEntry, file *os.File) error {
 	//append summary to data
 	data = append(data, summaryHeader...)
 	data = append(data, summaryRecords...)
+
+	//create and append merkle
+	merkle := CreateMerkleTree(merkleData)
+	fmt.Print(merkle)
 
 	file.Seek(0, 0)
 	header := make([]byte, HeaderSize)
