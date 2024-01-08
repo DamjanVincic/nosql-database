@@ -270,7 +270,7 @@ func WriteSummaryToFile(summaryFile *os.File, data, summaryMin, summaryMax []byt
 func ReadSummaryFromFile(file *os.File, key string) (uint64, error) {
 	mmapFile, err := mmap.Map(file, mmap.RDWR, 0)
 	if err != nil {
-		return -1, err
+		return 0, err
 	}
 	mmapFileSize := uint64(len(mmapFile))
 	summaryMinSize := binary.BigEndian.Uint64(mmapFile[SummaryMinSizestart:SummaryMaxSizeStart])
@@ -282,15 +282,15 @@ func ReadSummaryFromFile(file *os.File, key string) (uint64, error) {
 	mmapFile = mmapFile[keysStart+summaryMinSize+summaryMaxSize:]
 	summaryMin, err := DeserializeIndexRecord(serializedSummaryMin)
 	if err != nil {
-		return -1, err
+		return 0, err
 	}
 	summaryMax, err := DeserializeIndexRecord(serializedSummaryMax)
 	if err != nil {
-		return -1, err
+		return 0, err
 	}
 	// check if key is in range of summary indexes
 	if key < summaryMin.key || key > summaryMax.key {
-		return -1, errors.New("key not in range of summary index table")
+		return 0, errors.New("key not in range of summary index table")
 	}
 	var summaryRecords []*IndexRecord
 	offset := uint64(0)
@@ -301,7 +301,7 @@ func ReadSummaryFromFile(file *os.File, key string) (uint64, error) {
 		offset = KeySizeSize + keySize + indexOffset
 		indexRecord, err := DeserializeIndexRecord(mmapFile[:offset])
 		if err != nil {
-			return -1, errors.New("error deserializing index record")
+			return 0, errors.New("error deserializing index record")
 		}
 		summaryRecords = append(summaryRecords, indexRecord)
 		if len(summaryRecords) >= 2 && summaryRecords[len(summaryRecords)-1].key > key && summaryRecords[len(summaryRecords)-2].key < key {
@@ -309,7 +309,7 @@ func ReadSummaryFromFile(file *os.File, key string) (uint64, error) {
 		}
 		mmapFile = mmapFile[offset:]
 	}
-	return -1, errors.New("key not found")
+	return 0, errors.New("key not found")
 }
 func WriteBloomFilter(filter bloomfilter.BloomFilter, filterFile *os.File) error {
 	return nil
