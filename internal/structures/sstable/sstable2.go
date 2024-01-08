@@ -156,7 +156,7 @@ func ssstWriteFile(memEntries []MemEntry, file *os.File) error {
 	file.Seek(int64(offset), 0)
 	var indexRecords []byte
 	var summaryRecords []byte
-	var merkleData map[string]*models.Data
+	merkleData := map[string]*models.Data{}
 
 	// summary structure must store min and max key value
 	var summaryMin []byte
@@ -220,7 +220,9 @@ func ssstWriteFile(memEntries []MemEntry, file *os.File) error {
 
 	//create and append merkle
 	merkle := CreateMerkleTree(merkleData)
-	fmt.Print(merkle)
+	serializedMerkle := merkle.Serialize()
+	data = append(data, serializedMerkle...)
+	metaBlockSize += uint64(len(serializedMerkle))
 
 	file.Seek(0, 0)
 	header := make([]byte, HeaderSize)
@@ -283,13 +285,13 @@ func (ssst *SimpleSSTable) Get() (*models.Data, error) {
 	datasize := uint64(binary.BigEndian.Uint64(header[:8]))
 	filtersize := uint64(binary.BigEndian.Uint64(header[8:16]))
 	indexsize := uint64(binary.BigEndian.Uint64(header[16:24]))
-	// summarysize := uint64(binary.BigEndian.Uint64(header[24:]))
+	summarysize := uint64(binary.BigEndian.Uint64(header[24:]))
 
 	dataStart := HeaderSize
 	filterStart := dataStart + int(datasize)
 	indexStart := filterStart + int(filtersize)
 	summaryStart := indexStart + int(indexsize)
-	// metaStart := summaryStart + int(summarysize)
+	metaStart := summaryStart + int(summarysize)
 
 	data := []byte{}
 	filter := []byte{}
@@ -300,8 +302,8 @@ func (ssst *SimpleSSTable) Get() (*models.Data, error) {
 	data = append(data, mmapFile[dataStart:filterStart]...)
 	filter = append(filter, mmapFile[filterStart:indexStart]...)
 	index = append(index, mmapFile[indexStart:summaryStart]...)
-	summary = append(summary, mmapFile[summaryStart:]...)
-	// meta = append(filter, mmapFile[metaStart:]...)
+	summary = append(summary, mmapFile[summaryStart:metaStart]...)
+	meta = append(meta, mmapFile[metaStart:]...)
 
 	d, _ := DeserializeDataRecord(data)
 	fmt.Println(d)
