@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/DamjanVincic/key-value-engine/internal/models"
 	"github.com/DamjanVincic/key-value-engine/internal/structures/bloomfilter"
 	"github.com/edsrzf/mmap-go"
 	"os"
@@ -11,7 +12,7 @@ import (
 	"strconv"
 )
 
-func NewSSTable2(memEntries []MemEntry, tableSize uint64) (*SSTable, error) {
+func NewSSTable2(memEntries []MemEntry) (*SSTable, error) {
 	// Create the directory if it doesn't exist
 	dirEntries, err := os.ReadDir(Path)
 	if os.IsNotExist(err) {
@@ -55,6 +56,8 @@ func NewSSTable2(memEntries []MemEntry, tableSize uint64) (*SSTable, error) {
 		index++
 		subdirName = fmt.Sprintf("sstable%d", index)
 		subdirPath = filepath.Join(Path, subdirName)
+		dirEntries, err := os.ReadDir(subdirPath)
+		fmt.Println(dirEntries)
 		err = os.Mkdir(subdirPath, os.ModePerm)
 		if err != nil {
 			return nil, err
@@ -93,7 +96,7 @@ func NewSSTable2(memEntries []MemEntry, tableSize uint64) (*SSTable, error) {
 		return nil, err
 	}
 
-	createFiles(memEntries, dataFile, indexFile, summaryFile, filterFile)
+	createFiles(memEntries, dataFilename, indexFilename, summaryFilename, filterFile)
 
 	dataFile.Close()
 	indexFile.Close()
@@ -113,7 +116,11 @@ func NewSSTable2(memEntries []MemEntry, tableSize uint64) (*SSTable, error) {
 	}, nil
 }
 
-func WriteToDataFile(dataFile *os.File, data []byte) error {
+func WriteToDataFile(file string, data []byte) error {
+	dataFile, err := os.OpenFile(file, os.O_RDWR, 0644)
+	if err != nil {
+		return err
+	}
 	flatData := make([]byte, 8)
 	flatData = append(flatData, data...)
 	totalBytes := int64(len(data))
@@ -142,7 +149,7 @@ func WriteToDataFile(dataFile *os.File, data []byte) error {
 	}
 	return nil
 }
-func ReadDataFromFile(file *os.File, offsetStart, offsetEnd int) (*DataRecord, error) {
+func ReadDataFromFile(file *os.File, offsetStart, offsetEnd uint64) (*DataRecord, error) {
 	fileStat, err := file.Stat()
 	if err != nil {
 		return nil, err
@@ -171,7 +178,11 @@ func ReadDataFromFile(file *os.File, offsetStart, offsetEnd int) (*DataRecord, e
 	return dataRecord, nil
 }
 
-func WriteToIndexFile(indexFile *os.File, data []byte) error {
+func WriteToIndexFile(file string, data []byte) error {
+	indexFile, err := os.OpenFile(file, os.O_RDWR, 0644)
+	if err != nil {
+		return err
+	}
 	flatData := make([]byte, 8)
 	flatData = append(flatData, data...)
 	totalBytes := int64(len(data))
@@ -201,7 +212,7 @@ func WriteToIndexFile(indexFile *os.File, data []byte) error {
 }
 
 // it returns data offset
-func ReadIndexFromFile(indexFile *os.File, offsetStart, offsetEnd uint64) ([]*IndexRecord, error) {
+func ReadIndexFromFile(indexFile *os.File, offsetStart uint64) ([]*IndexRecord, error) {
 	var result []*IndexRecord
 	mmapFile, err := mmap.Map(indexFile, mmap.RDWR, 0)
 	if err != nil {
@@ -229,9 +240,14 @@ func ReadIndexFromFile(indexFile *os.File, offsetStart, offsetEnd uint64) ([]*In
 		result = append(result, indexRecord)
 		mmapFile = mmapFile[offset:]
 	}
+
 	return result, nil
 }
-func WriteSummaryToFile(summaryFile *os.File, data, summaryMin, summaryMax []byte) error {
+func WriteSummaryToFile(file string, data, summaryMin, summaryMax []byte) error {
+	summaryFile, err := os.OpenFile(file, os.O_RDWR, 0644)
+	if err != nil {
+		return err
+	}
 	summaryMinSize := int64(len(summaryMin))
 	summaryMaxSize := int64(len(summaryMax))
 	totalBytes := int64(len(data))
@@ -314,24 +330,25 @@ func ReadSummaryFromFile(file *os.File, key string) (uint64, error) {
 func WriteBloomFilter(filter bloomfilter.BloomFilter, filterFile *os.File) error {
 	// First 4 bytes are the number of bytes in the byte array
 	// Next 4 bytes are the number of hash functions
+
 	data := filter.Serialize()
 	totalBytes := int64(len(data))
-	flatData := make([]byte, 8)
-	flatData = append(flatData, data...)
+	//var flatData []byte
+	//flatData = append(flatData, data...)
 	fileStat, err := filterFile.Stat()
 	if err != nil {
 		return err
 	}
 	fileSize := fileStat.Size()
 
-	if err = filterFile.Truncate(totalBytes + fileSize); err != nil {
+	if err = filterFile.Truncate(int64(fileSize + totalBytes)); err != nil {
 		return err
 	}
 	mmapFile, err := mmap.Map(filterFile, mmap.RDWR, 0)
 	if err != nil {
 		return err
 	}
-	copy(mmapFile[fileSize:], flatData)
+	copy(mmapFile[fileSize:], data)
 	err = mmapFile.Unmap()
 	if err != nil {
 		return err
@@ -343,7 +360,7 @@ func WriteBloomFilter(filter bloomfilter.BloomFilter, filterFile *os.File) error
 	return nil
 }
 func ReadBloomFilterFromFile(key string, file *os.File) (bool, error) {
-	mmapFile, err := mmap.Map(file, mmap.RDWR, 0)
+	mmapFile, err := mmap.Map(file, mmap.RDONLY, 0)
 	if err != nil {
 		return false, err
 	}
@@ -368,9 +385,68 @@ func addToSummaryIndex(entry MemEntry, indexOffset uint64, result []byte) ([]byt
 	serializedIndexRecord := indexRecord.SerializeIndexRecord()
 	return serializedIndexRecord, append(result, serializedIndexRecord...)
 }
+func (sstable SSTable) Get(key string) (*models.Data, error) {
+	fmt.Println("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	dirEntries, err := os.ReadDir(Path)
+	if os.IsNotExist(err) {
+		err := os.Mkdir(Path, os.ModePerm)
+		if err != nil {
+			return nil, err
+		}
+	}
+	//open last added subdir in sstable dir
+	//sstable/sstableN
+	lastSubDirName := dirEntries[len(dirEntries)-1].Name()
+	index, err := strconv.ParseUint(lastSubDirName[7:8], 10, 64)
+	if err != nil {
+		return nil, err
+	}
+	subDirPath := filepath.Join(Path, lastSubDirName)
+	subDirEntries, err := os.ReadDir(subDirPath)
+	if os.IsNotExist(err) {
+		err := os.Mkdir(subDirPath, os.ModePerm)
+		if err != nil {
+			return nil, err
+		}
+	}
+	dataFilePath := filepath.Join(subDirPath, subDirEntries[0].Name())
+	filterFilePath := filepath.Join(subDirPath, subDirEntries[1].Name())
+	indexFilePath := filepath.Join(subDirPath, subDirEntries[2].Name())
+	metaFilePath := filepath.Join(subDirPath, subDirEntries[3].Name())
+	summaryFilePath := filepath.Join(subDirPath, subDirEntries[4].Name())
+	tocFilePath := filepath.Join(subDirPath, subDirEntries[5].Name())
+
+	dataFile, err := os.OpenFile(dataFilePath, os.O_RDWR, 0644)
+	filterFile, err := os.OpenFile(filterFilePath, os.O_RDWR, 0644)
+	indexFile, err := os.OpenFile(indexFilePath, os.O_RDWR, 0644)
+	metaFile, err := os.OpenFile(metaFilePath, os.O_RDWR, 0644)
+	summaryFile, err := os.OpenFile(summaryFilePath, os.O_RDWR, 0644)
+	tocFile, err := os.OpenFile(tocFilePath, os.O_RDWR, 0644)
+	fmt.Println(metaFile, tocFile)
+	found, err := ReadBloomFilterFromFile(key, filterFile)
+	if !found || err != nil {
+		return nil, err
+	}
+	indexOffset, err := ReadSummaryFromFile(summaryFile, key)
+	if err != nil {
+		return nil, err
+	}
+	indexRecords, err := ReadIndexFromFile(indexFile, indexOffset)
+	for i := 0; i < len(indexRecords); i++ {
+		if indexRecords[i].key == key {
+			dataRecord, err := ReadDataFromFile(dataFile, indexRecords[i].offset, indexRecords[i+1].offset)
+			if err != nil {
+				return nil, err
+			}
+			return &models.Data{Value: dataRecord.value, Tombstone: dataRecord.tombstone, Timestamp: dataRecord.timestamp}, nil
+		}
+	}
+	index--
+	return nil, nil
+}
 
 // //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-func createFiles(memEntries []MemEntry, dataFile, indexFile, summaryFile, filterFile *os.File) {
+func createFiles(memEntries []MemEntry, dataFile, indexFile, summaryFile string, filterFile *os.File) {
 	dataRecords := []byte{}
 	indexRecords := []byte{}
 	summaryRecords := []byte{}
