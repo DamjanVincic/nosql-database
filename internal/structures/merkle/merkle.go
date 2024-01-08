@@ -68,7 +68,7 @@ func createNewNode(key string, value *models.Data) *Node {
 }
 
 /*
-since merkle tree if build from bottom up we need all data as leafs
+since merkle tree is build from bottom up we need all data as leafs
 if number of leafs is not 2**n we need to add empty nodes
 there hash wont change anything
 */
