@@ -342,7 +342,7 @@ func WriteBloomFilter(filter bloomfilter.BloomFilter, filterFile *os.File) error
 	}
 	return nil
 }
-func ReadBloomFilterFromFile(key string, file *os.File) (bool, err) {
+func ReadBloomFilterFromFile(key string, file *os.File) (bool, error) {
 	mmapFile, err := mmap.Map(file, mmap.RDWR, 0)
 	if err != nil {
 		return false, err
