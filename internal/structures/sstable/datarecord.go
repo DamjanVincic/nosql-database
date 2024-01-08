@@ -22,8 +22,8 @@ func NewDataRecord(memEntry MemEntry) *DataRecord {
 		bytes[8] = 1
 	} else {
 		bytes[8] = 0
+		bytes = append(bytes, memEntry.Value.Value...)
 	}
-	bytes = append(bytes, memEntry.Value.Value...)
 
 	return &DataRecord{
 		crc:       crc32.ChecksumIEEE(bytes),
