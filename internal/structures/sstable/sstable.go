@@ -4,12 +4,13 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"github.com/DamjanVincic/key-value-engine/internal/models"
-	"github.com/DamjanVincic/key-value-engine/internal/structures/bloomfilter"
-	"github.com/edsrzf/mmap-go"
 	"os"
 	"path/filepath"
 	"strconv"
+
+	"github.com/DamjanVincic/key-value-engine/internal/models"
+	"github.com/DamjanVincic/key-value-engine/internal/structures/bloomfilter"
+	"github.com/edsrzf/mmap-go"
 )
 
 func NewSSTable2(memEntries []MemEntry) (*SSTable, error) {
@@ -365,6 +366,10 @@ func ReadBloomFilterFromFile(key string, file *os.File) (bool, error) {
 		return false, err
 	}
 	filter := bloomfilter.Deserialize(mmapFile)
+	err = mmapFile.Unmap()
+	if err != nil {
+		return false, err
+	}
 	return filter.ContainsElement([]byte(key))
 }
 
@@ -395,7 +400,7 @@ func (sstable SSTable) Get(key string) (*models.Data, error) {
 		}
 	}
 	//open last added subdir in sstable dir
-	//sstable/sstableN
+	//sstable\sstableN
 	lastSubDirName := dirEntries[len(dirEntries)-1].Name()
 	index, err := strconv.ParseUint(lastSubDirName[7:8], 10, 64)
 	if err != nil {
@@ -409,6 +414,7 @@ func (sstable SSTable) Get(key string) (*models.Data, error) {
 			return nil, err
 		}
 	}
+	// paths : sstable\\sstableN\\sst_00001_1_part.db
 	dataFilePath := filepath.Join(subDirPath, subDirEntries[0].Name())
 	filterFilePath := filepath.Join(subDirPath, subDirEntries[1].Name())
 	indexFilePath := filepath.Join(subDirPath, subDirEntries[2].Name())
