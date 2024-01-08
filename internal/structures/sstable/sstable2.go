@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/DamjanVincic/key-value-engine/internal/models"
+	"github.com/edsrzf/mmap-go"
 
 	"github.com/DamjanVincic/key-value-engine/internal/structures/bloomfilter"
 )
@@ -146,6 +147,9 @@ func NewSimpleSSTable(memEntries []MemEntry) (*SimpleSSTable, error) {
 }
 
 func createFile(memEntries []MemEntry, file *os.File) error {
+	// all data for mapping file
+	var data []byte
+	dataSize := int64(0)
 	// Create one file for one SSTable, file contains data, index, summary, filter and merkle blocks and in header we store offsets of each block
 	// skip first HeaderSize bytes for header
 	offset := uint64(HeaderSize)
@@ -161,15 +165,19 @@ func createFile(memEntries []MemEntry, file *os.File) error {
 	dataBlockSize := uint64(0)
 	indexBlockSize := uint64(0)
 	summaryBlockSize := uint64(0)
+	metaBlockSize := uint64(0)
 
 	for _, memEntry := range memEntries {
-		sizeOfDR, err := writeDataRecord(file, memEntry)
-		if err != nil {
-			return err
-		}
+		//append data record to data
+		dRecord := *NewDataRecord(memEntry)
+		serializedRecord := dRecord.SerializeDataRecord()
+		sizeOfDR := uint64(len(serializedRecord))
+		data = append(data, serializedRecord...)
+		//append index record to index byte array
 		serializedIndexRecord := NewIndexRecord(memEntry, offset).SerializeIndexRecord()
 		indexRecords = append(indexRecords, serializedIndexRecord...)
 		indexBlockSize += uint64(len(serializedIndexRecord))
+
 		if counter%SummaryConst == 0 {
 			summaryRecords = append(summaryRecords, serializedIndexRecord...)
 			summaryBlockSize += uint64(len(serializedIndexRecord))
@@ -184,13 +192,16 @@ func createFile(memEntries []MemEntry, file *os.File) error {
 		bf.AddElement([]byte(memEntry.Key))
 		summaryMax = serializedIndexRecord
 	}
-	filterBlockSize, err := writeBF(bf, file)
-	if err != nil {
-		return err
-	}
-	if _, err := file.Write(indexRecords); err != nil {
-		return err
-	}
+	//append filter to data
+	serializedBF := bf.Serialize()
+	filterBlockSize := uint64(len(serializedBF))
+	data = append(data, serializedBF...)
+
+	//append index to data
+	data = append(data, indexRecords...)
+
+	//create summary header in which we store sizes of min and max key value and min and max key values
+	//put that informations in the beggining of summary block for faster reading later
 	summaryHeader := make([]byte, 16)
 	binary.BigEndian.PutUint64(summaryHeader[SummaryMinSizestart:SummaryMaxSizeStart], uint64(len(summaryMin)))
 	binary.BigEndian.PutUint64(summaryHeader[SummaryMaxSizeStart:SummaryMaxSizeStart+SummaryMaxSizeSize], uint64(len(summaryMax)))
@@ -198,9 +209,8 @@ func createFile(memEntries []MemEntry, file *os.File) error {
 	summaryHeader = append(summaryHeader, summaryMax...)
 	summaryHeader = append(summaryHeader, summaryRecords...)
 	summaryBlockSize += uint64(len(summaryHeader))
-	if _, err := file.Write(summaryHeader); err != nil {
-		return err
-	}
+	//append summary to data
+	data = append(data, summaryHeader...)
 
 	file.Seek(0, 0)
 	header := make([]byte, HeaderSize)
@@ -208,9 +218,37 @@ func createFile(memEntries []MemEntry, file *os.File) error {
 	binary.BigEndian.PutUint64(header[FilterBlockStart:IndexBlockStart], filterBlockSize)
 	binary.BigEndian.PutUint64(header[IndexBlockStart:SummaryBlockStart], indexBlockSize)
 	binary.BigEndian.PutUint64(header[SummaryBlockStart:MetaBlockStart], summaryBlockSize)
-	if _, err := file.Write(header); err != nil {
+
+	//size of all data that needs to be written to mmap
+	dataSize += int64(dataBlockSize) + int64(filterBlockSize) + int64(indexBlockSize) + int64(summaryBlockSize) + int64(metaBlockSize)
+	//append data of all parts of SSTable to header
+	data = append(header, data...)
+
+	fileInfo, err := file.Stat()
+	if err != nil {
 		return err
 	}
+
+	fileSize := uint64(fileInfo.Size())
+
+	err = file.Truncate(int64(fileSize + uint64(len(data))))
+	if err != nil {
+		return err
+	}
+
+	mmapFile, err := mmap.Map(file, mmap.RDWR, 0)
+	if err != nil {
+		return err
+	}
+
+	// Copy the bytes that can fit in the current file
+	copy(mmapFile[fileSize:], data)
+
+	err = mmapFile.Unmap()
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -242,24 +280,6 @@ func Read(filen string) {
 	fmt.Println(i)
 	fmt.Println(s)
 	file.Close()
-}
-func writeDataRecord(file *os.File, entry MemEntry) (uint64, error) {
-	dRecord := *NewDataRecord(entry)
-	serializedRecord := dRecord.SerializeDataRecord()
-
-	if _, err := file.Write(serializedRecord); err != nil {
-		return uint64(len(serializedRecord)), err
-	}
-	return uint64(len(serializedRecord)), nil
-
-}
-func writeBF(bf bloomfilter.BloomFilter, file *os.File) (uint64, error) {
-	serializedBF := bf.Serialize()
-	filterBlockSize := uint64(len(serializedBF))
-	if err := writeToFile(file, serializedBF); err != nil {
-		return filterBlockSize, err
-	}
-	return filterBlockSize, nil
 }
 
 func NewSSTable(memEntries []MemEntry, tableSize uint64) (*SSTable, error) {
