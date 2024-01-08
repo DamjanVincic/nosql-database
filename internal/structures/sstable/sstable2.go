@@ -134,7 +134,7 @@ func NewSimpleSSTable(memEntries []MemEntry) (*SimpleSSTable, error) {
 		return nil, err
 	}
 
-	err = createFile(memEntries, file)
+	err = ssstWriteFile(memEntries, file)
 	if err != nil {
 		return nil, err
 	}
@@ -146,7 +146,7 @@ func NewSimpleSSTable(memEntries []MemEntry) (*SimpleSSTable, error) {
 
 }
 
-func createFile(memEntries []MemEntry, file *os.File) error {
+func ssstWriteFile(memEntries []MemEntry, file *os.File) error {
 	// all data for mapping file
 	var data []byte
 	dataSize := int64(0)
@@ -211,6 +211,7 @@ func createFile(memEntries []MemEntry, file *os.File) error {
 	summaryBlockSize += uint64(len(summaryHeader))
 	//append summary to data
 	data = append(data, summaryHeader...)
+	data = append(data, summaryRecords...)
 
 	file.Seek(0, 0)
 	header := make([]byte, HeaderSize)
@@ -220,9 +221,9 @@ func createFile(memEntries []MemEntry, file *os.File) error {
 	binary.BigEndian.PutUint64(header[SummaryBlockStart:MetaBlockStart], summaryBlockSize)
 
 	//size of all data that needs to be written to mmap
-	dataSize += int64(dataBlockSize) + int64(filterBlockSize) + int64(indexBlockSize) + int64(summaryBlockSize) + int64(metaBlockSize)
+	dataSize = dataSize + int64(dataBlockSize) + int64(filterBlockSize) + int64(indexBlockSize) + int64(summaryBlockSize) + int64(metaBlockSize) + HeaderSize
 	//append data of all parts of SSTable to header
-	data = append(header, data...)
+	header = append(header, data...)
 
 	fileInfo, err := file.Stat()
 	if err != nil {
@@ -231,7 +232,7 @@ func createFile(memEntries []MemEntry, file *os.File) error {
 
 	fileSize := uint64(fileInfo.Size())
 
-	err = file.Truncate(int64(fileSize + uint64(len(data))))
+	err = file.Truncate(int64(fileSize + uint64(dataSize)))
 	if err != nil {
 		return err
 	}
@@ -242,7 +243,7 @@ func createFile(memEntries []MemEntry, file *os.File) error {
 	}
 
 	// Copy the bytes that can fit in the current file
-	copy(mmapFile[fileSize:], data)
+	copy(mmapFile[fileSize:], header)
 
 	err = mmapFile.Unmap()
 	if err != nil {
@@ -252,25 +253,47 @@ func createFile(memEntries []MemEntry, file *os.File) error {
 	return nil
 }
 
-func Read(filen string) {
-	file, err := os.OpenFile(filepath.Join(SimplePath, filen), os.O_CREATE|os.O_RDWR, 0644)
+func (ssst *SimpleSSTable) Get() (*models.Data, error) {
+	file, err := os.OpenFile(filepath.Join(SimplePath, ssst.Filename), os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
-		fmt.Println("ne moze se otvoriti")
+		return nil, err
 	}
-	header := make([]byte, 32)
-	file.Read(header)
+	fileStat, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	fileSize := fileStat.Size()
+	fmt.Println(fileSize)
+
+	mmapFile, err := mmap.Map(file, mmap.RDWR, 0)
+	if err != nil {
+		return nil, err
+	}
+	//get sizes of each part of SimpleSSTable
+	header := mmapFile[:HeaderSize]
 	datasize := uint64(binary.BigEndian.Uint64(header[:8]))
 	filtersize := uint64(binary.BigEndian.Uint64(header[8:16]))
 	indexsize := uint64(binary.BigEndian.Uint64(header[16:24]))
-	summarysize := uint64(binary.BigEndian.Uint64(header[24:]))
-	data := make([]byte, datasize)
-	filter := make([]byte, filtersize)
-	index := make([]byte, indexsize)
-	summary := make([]byte, summarysize)
-	file.Read(data)
-	file.Read(filter)
-	file.Read(index)
-	file.Read(summary)
+	// summarysize := uint64(binary.BigEndian.Uint64(header[24:]))
+
+	dataStart := HeaderSize
+	filterStart := dataStart + int(datasize)
+	indexStart := filterStart + int(filtersize)
+	summaryStart := indexStart + int(indexsize)
+	// metaStart := summaryStart + int(summarysize)
+
+	data := []byte{}
+	filter := []byte{}
+	index := []byte{}
+	summary := []byte{}
+	meta := []byte{}
+
+	data = append(data, mmapFile[dataStart:filterStart]...)
+	filter = append(filter, mmapFile[filterStart:indexStart]...)
+	index = append(filter, mmapFile[indexStart:summaryStart]...)
+	summary = append(filter, mmapFile[summaryStart:]...)
+	// meta = append(filter, mmapFile[metaStart:]...)
+
 	d, _ := DeserializeDataRecord(data)
 	fmt.Println(d)
 	f := bloomfilter.Deserialize(filter)
@@ -279,7 +302,16 @@ func Read(filen string) {
 	s, _ := DeserializeIndexRecord(summary[16:])
 	fmt.Println(i)
 	fmt.Println(s)
-	file.Close()
+	fmt.Println(meta)
+	err = mmapFile.Unmap()
+	if err != nil {
+		return nil, err
+	}
+	err = file.Close()
+	if err != nil {
+		return nil, err
+	}
+	return nil, nil
 }
 
 func NewSSTable(memEntries []MemEntry, tableSize uint64) (*SSTable, error) {
