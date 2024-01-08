@@ -113,7 +113,7 @@ func NewSSTable2(memEntries []MemEntry, tableSize uint64) (*SSTable, error) {
 	}, nil
 }
 
-func WriteToDataSegment(dataFile *os.File, data []byte) error {
+func WriteToDataFile(dataFile *os.File, data []byte) error {
 	flatData := make([]byte, 8)
 	flatData = append(flatData, data...)
 	totalBytes := int64(len(data))
@@ -142,7 +142,7 @@ func WriteToDataSegment(dataFile *os.File, data []byte) error {
 	}
 	return nil
 }
-func ReadFromFile(file *os.File, offsetStart, offsetEnd int) (*DataRecord, error) {
+func ReadDataFromFile(file *os.File, offsetStart, offsetEnd int) (*DataRecord, error) {
 	fileStat, err := file.Stat()
 	if err != nil {
 		return nil, err
@@ -169,13 +169,6 @@ func ReadFromFile(file *os.File, offsetStart, offsetEnd int) (*DataRecord, error
 		return nil, err
 	}
 	return dataRecord, nil
-}
-func writeToFile(dataFile *os.File, binaryData []byte) error {
-	_, err := dataFile.Write(binaryData)
-	if err != nil {
-		return fmt.Errorf("error writing to file: %v", err)
-	}
-	return nil
 }
 
 func WriteToIndexFile(indexFile *os.File, data []byte) error {
@@ -235,6 +228,43 @@ func ReadIndexFromFile(indexFile *os.File, offsetStart, offsetEnd uint64) ([]*In
 		mmapFile = mmapFile[offset:]
 	}
 	return result, nil
+}
+func WriteSummaryToFile(summaryFile *os.File, data, summaryMin, summaryMax []byte) error {
+	summaryMinSize := int64(len(summaryMin))
+	summaryMaxSize := int64(len(summaryMax))
+	totalBytes := int64(len(data))
+	totalBytes += summaryMinSize
+	totalBytes += summaryMaxSize
+	flatData := make([]byte, 8)
+	flatData = append(flatData, summaryMin...)
+	flatData = append(flatData, summaryMax...)
+	flatData = append(flatData, data...)
+
+	fileStat, err := summaryFile.Stat()
+	if err != nil {
+		return err
+	}
+	fileSize := fileStat.Size()
+	if err = summaryFile.Truncate(totalBytes + fileSize); err != nil {
+		return err
+	}
+	mmapFile, err := mmap.Map(summaryFile, mmap.RDWR, 0)
+	if err != nil {
+		return err
+	}
+	copy(mmapFile[fileSize:], flatData)
+	err = mmapFile.Unmap()
+	if err != nil {
+		return err
+	}
+	err = summaryFile.Close()
+	if err != nil {
+		return err
+	}
+	return nil
+}
+func ReadSummaryFromFile(file *os.File) {
+
 }
 
 // //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -296,5 +326,9 @@ func createFiles(memEntries []MemEntry, dataFile, indexFile, summaryFile, filter
 	binary.BigEndian.PutUint64(summaryHeader[SummaryMaxSizeStart:SummaryMaxSizeStart+SummaryMaxSizeSize], uint64(len(summaryMax)))
 	summaryHeader = append(summaryHeader, summaryMin...)
 	summaryHeader = append(summaryHeader, summaryMax...)
+
+	WriteToDataFile(dataFile, dataRecords)
+	WriteToIndexFile(indexFile, indexRecords)
+	WriteSummaryToFile(summaryFile, summaryRecords, summaryMin, summaryMax)
 
 }
