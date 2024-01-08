@@ -2,7 +2,6 @@ package merkle
 
 import (
 	"encoding/binary"
-	"fmt"
 	"math"
 	"os"
 
@@ -72,15 +71,12 @@ func CreateMerkleTree(allData map[string]*models.Data) *MerkleTree {
 	// if number of nodes is not 2**n add empty nodes
 	n := math.Log2(float64(len(nodes)))
 	degree := math.Ceil(n)
-	fmt.Println(len(nodes))
-	fmt.Println(degree)
 	if math.Mod(n, 1) != 0 {
 		targetSize := int(math.Pow(2, degree))
 		for i := len(nodes); i < targetSize; i++ {
 			nodes = append(nodes, createNewNode("", &models.Data{Value: []byte{}, Tombstone: true, Timestamp: 0}))
 		}
 	}
-	fmt.Println(len(nodes))
 
 	for len(nodes) > 1 {
 		var newLevel []*Node
@@ -196,7 +192,6 @@ func (tree *MerkleTree) ReadFromFile(filePath string) (*MerkleTree, error) {
 		data = append(data, mmapFile[offset:offset+8]...)
 	}
 
-	fmt.Println(data)
 	tree.Root = tree.Root.binaryTree(data, 0)
 	err = mmapFile.Unmap()
 	if err != nil {
