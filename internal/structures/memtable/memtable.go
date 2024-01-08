@@ -2,6 +2,7 @@ package memtable
 
 import (
 	"github.com/DamjanVincic/key-value-engine/internal/models"
+	"github.com/DamjanVincic/key-value-engine/internal/structures/hashmap"
 	"github.com/DamjanVincic/key-value-engine/internal/structures/skiplist"
 )
 
@@ -38,6 +39,8 @@ func (memtable *Memtable) makePartition() {
 	switch dataStructure {
 	case 1:
 		newPartition = skiplist.CreateSkipList()
+	case 3:
+		newPartition = hashmap.CreateHashMap()
 	}
 
 	//if there is no currentPartition (during initialization) only currentPartition is created

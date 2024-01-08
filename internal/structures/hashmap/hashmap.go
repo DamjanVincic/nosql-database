@@ -49,3 +49,7 @@ func (hashMap *HashMap) GetSorted() []*models.MemEntry {
 
 	return entries
 }
+
+func (hashMap *HashMap) Size() int {
+	return len(hashMap.data)
+}
