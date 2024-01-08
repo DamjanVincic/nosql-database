@@ -1,6 +1,7 @@
 package hashmap
 
 import (
+	"errors"
 	"github.com/DamjanVincic/key-value-engine/internal/models"
 	"sort"
 )
@@ -17,7 +18,7 @@ func CreateHashMap() *HashMap {
 func (hashMap *HashMap) Get(key string) (*models.Data, error) {
 	value, ok := hashMap.data[key]
 	if !ok {
-		return nil, nil
+		return nil, errors.New("could not find element with given key")
 	}
 	return value, nil
 }
