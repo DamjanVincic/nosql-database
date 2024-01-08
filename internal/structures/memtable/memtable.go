@@ -24,7 +24,7 @@ type Memtable struct {
 	currentPartition MemtableData   //read-write partition
 }
 
-func newMemtable() *Memtable {
+func NewMemtable() *Memtable {
 	memtable := Memtable{partitions: []MemtableData{}, currentPartition: nil}
 	memtable.makePartition()
 	return &memtable
@@ -47,7 +47,7 @@ func (memtable *Memtable) makePartition() {
 	}
 
 	//delete oldest partition if needed
-	if len(memtable.partitions)-1 >= maxPartitions {
+	if len(memtable.partitions)+1 >= maxPartitions {
 		memtable.partitions = memtable.partitions[1:]
 	}
 
@@ -67,8 +67,8 @@ func (memtable *Memtable) Put(key string, value []byte, timestamp uint64, tombst
 	}
 
 	if memtable.currentPartition.Size() >= maxEntries {
-		if len(memtable.partitions)-1 >= maxPartitions {
-			toFlush = memtable.partitions[maxPartitions-1].GetSorted()
+		if len(memtable.partitions)+1 >= maxPartitions {
+			toFlush = memtable.partitions[maxPartitions-2].GetSorted()
 		}
 		memtable.makePartition()
 	}
