@@ -1,6 +1,7 @@
 package merkle
 
 import (
+	"bytes"
 	"encoding/binary"
 	"math"
 
@@ -192,4 +193,26 @@ func binaryTree(data []byte, index int) *Node {
 		return node
 	}
 	return nil
+}
+
+func (merkleTree *MerkleTree) IsEqualTo(comparableTree *MerkleTree) bool {
+
+	//compare hash functions (must serialize them)
+	serializedHash := hash.Serialize([]hash.HashWithSeed{merkleTree.hashWithSeed})[0]
+	serializedComparableHash := hash.Serialize([]hash.HashWithSeed{comparableTree.hashWithSeed})[0]
+	if serializedHash != serializedComparableHash {
+		return false
+	}
+
+	// compare nodes (with BFS traversal on merkle tree get list of nodes)
+	nodes := MerkleBFS(merkleTree.Root)
+	comparableNodes := MerkleBFS(comparableTree.Root)
+	if len(nodes) != len(comparableNodes) {
+		return false
+	}
+	if !bytes.Equal(nodes, comparableNodes) {
+		return false
+	}
+
+	return true
 }
