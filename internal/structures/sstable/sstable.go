@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"unsafe"
 )
 
 func NewSSTable2(memEntries []MemEntry, tableSize uint64) (*SSTable, error) {
@@ -199,6 +200,8 @@ func WriteToIndexFile(indexFile *os.File, data []byte) error {
 	}
 	return nil
 }
+
+// it returns data offset
 func ReadIndexFromFile(indexFile *os.File, offsetStart, offsetEnd uint64) ([]*IndexRecord, error) {
 	var result []*IndexRecord
 	mmapFile, err := mmap.Map(indexFile, mmap.RDWR, 0)
@@ -263,8 +266,55 @@ func WriteSummaryToFile(summaryFile *os.File, data, summaryMin, summaryMax []byt
 	}
 	return nil
 }
-func ReadSummaryFromFile(file *os.File) {
 
+// it returns index offset
+func ReadSummaryFromFile(file *os.File, key string) (uint64, error) {
+	mmapFile, err := mmap.Map(file, mmap.RDWR, 0)
+	if err != nil {
+		return -1, err
+	}
+	mmapFileSize := uint64(len(mmapFile))
+	var summaryMaxSize int
+	var summaryMinSize int
+	copy((*[8]byte)(unsafe.Pointer(&summaryMinSize))[:], mmapFile[:8])
+	copy((*[8]byte)(unsafe.Pointer(&summaryMinSize))[:], mmapFile[8:16])
+	serializedSummaryMin := mmapFile[16 : 16+summaryMinSize]
+	serializedSummaryMax := mmapFile[16+summaryMinSize : 16+summaryMinSize+summaryMaxSize]
+	mmapFile = mmapFile[16+summaryMinSize+summaryMaxSize:]
+	summaryMin, err := DeserializeIndexRecord(serializedSummaryMin)
+	if err != nil {
+		return -1, err
+	}
+	summaryMax, err := DeserializeIndexRecord(serializedSummaryMax)
+	if err != nil {
+		return -1, err
+	}
+	// check if key is in range of summary indexes
+	if key < summaryMin.key || key > summaryMax.key {
+		return -1, errors.New("key not in range of summary index table")
+	}
+	var summaryRecords []*IndexRecord
+	offset := uint64(0)
+	for offset < mmapFileSize {
+		keySize := binary.BigEndian.Uint64(mmapFile[KeySizeStart:KeySizeSize])
+		key := string(mmapFile[KeyStart : KeyStart+int(keySize)])
+		keyUint64, err := strconv.ParseUint(key, 10, 64)
+		if err != nil {
+			return -1, errors.New("error converting")
+		}
+		indexOffset := binary.BigEndian.Uint64(mmapFile[KeyStart+int(keySize):])
+		offset = keySize + keyUint64 + indexOffset
+		indexRecord, err := DeserializeIndexRecord(mmapFile[:offset])
+		if err != nil {
+			return -1, errors.New("error deserializing index record")
+		}
+		summaryRecords = append(summaryRecords, indexRecord)
+		if len(summaryRecords) >= 2 && summaryRecords[len(summaryRecords)-1].key > key && summaryRecords[len(summaryRecords)-2].key < key {
+			return summaryRecords[len(summaryRecords)-1].offset, nil
+		}
+		mmapFile = mmapFile[offset:]
+	}
+	return -1, errors.New("key not found")
 }
 
 // //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
