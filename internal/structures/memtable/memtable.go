@@ -1,7 +1,6 @@
 package memtable
 
 import (
-	"fmt"
 	"github.com/DamjanVincic/key-value-engine/internal/models"
 	"github.com/DamjanVincic/key-value-engine/internal/structures/skiplist"
 )
@@ -67,33 +66,22 @@ func (memtable *Memtable) Put(key string, value []byte, timestamp uint64, tombst
 	return
 }
 
-func Test(choice int) {
-	var data MemtableData
+func (memtable *Memtable) Get(key string) *models.Data {
+	var data *models.Data
+	data = nil
+	var err error
+	err = nil
 
-	switch choice {
-	case 1:
-		data = skiplist.CreateSkipList()
-		//case 2:
-		//	data = hashmap.CreateHashMap()
+	data, err = memtable.currentPartition.Get(key)
+	if err == nil {
+		return data
 	}
 
-	err := data.Put("key1", []byte("value1"), false, 123)
-	if err != nil {
-		return
+	for i := len(memtable.partitions) - 1; i >= 0; i-- {
+		data, err = memtable.partitions[i].Get(key)
+		if err == nil {
+			return data
+		}
 	}
-	err = data.Put("key2", []byte("value2"), false, 124)
-	if err != nil {
-		return
-	}
-
-	value, err := data.Get("key1")
-	if err != nil {
-		fmt.Println(err)
-	}
-
-	// Instead of having 3 values, for b tree, hashmap and skip list, we just need to dereference one and everything else remains the same
-	// as if we only had one value
-	fmt.Println(fmt.Sprintf("Value: %s, Tombstone: %t, Timestamp: %d", value.Value, value.Tombstone, value.Timestamp))
-
-	fmt.Println(*value)
+	return nil
 }
