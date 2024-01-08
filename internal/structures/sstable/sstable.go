@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"unsafe"
 )
 
 func NewSSTable2(memEntries []MemEntry, tableSize uint64) (*SSTable, error) {
@@ -274,13 +273,13 @@ func ReadSummaryFromFile(file *os.File, key string) (uint64, error) {
 		return -1, err
 	}
 	mmapFileSize := uint64(len(mmapFile))
-	var summaryMaxSize int
-	var summaryMinSize int
-	copy((*[8]byte)(unsafe.Pointer(&summaryMinSize))[:], mmapFile[:8])
-	copy((*[8]byte)(unsafe.Pointer(&summaryMinSize))[:], mmapFile[8:16])
-	serializedSummaryMin := mmapFile[16 : 16+summaryMinSize]
-	serializedSummaryMax := mmapFile[16+summaryMinSize : 16+summaryMinSize+summaryMaxSize]
-	mmapFile = mmapFile[16+summaryMinSize+summaryMaxSize:]
+	summaryMinSize := binary.BigEndian.Uint64(mmapFile[SummaryMinSizestart:SummaryMaxSizeStart])
+	summaryMaxSize := binary.BigEndian.Uint64(mmapFile[SummaryMaxSizeStart : SummaryMaxSizeStart+SummaryMaxSizeSize])
+
+	keysStart := uint64(SummaryMaxSizeStart + SummaryMaxSizeSize)
+	serializedSummaryMin := mmapFile[keysStart : keysStart+summaryMinSize]
+	serializedSummaryMax := mmapFile[keysStart+summaryMinSize : keysStart+summaryMinSize+summaryMaxSize]
+	mmapFile = mmapFile[keysStart+summaryMinSize+summaryMaxSize:]
 	summaryMin, err := DeserializeIndexRecord(serializedSummaryMin)
 	if err != nil {
 		return -1, err
@@ -297,13 +296,9 @@ func ReadSummaryFromFile(file *os.File, key string) (uint64, error) {
 	offset := uint64(0)
 	for offset < mmapFileSize {
 		keySize := binary.BigEndian.Uint64(mmapFile[KeySizeStart:KeySizeSize])
-		key := string(mmapFile[KeyStart : KeyStart+int(keySize)])
-		keyUint64, err := strconv.ParseUint(key, 10, 64)
-		if err != nil {
-			return -1, errors.New("error converting")
-		}
+
 		indexOffset := binary.BigEndian.Uint64(mmapFile[KeyStart+int(keySize):])
-		offset = keySize + keyUint64 + indexOffset
+		offset = KeySizeSize + keySize + indexOffset
 		indexRecord, err := DeserializeIndexRecord(mmapFile[:offset])
 		if err != nil {
 			return -1, errors.New("error deserializing index record")
@@ -315,6 +310,9 @@ func ReadSummaryFromFile(file *os.File, key string) (uint64, error) {
 		mmapFile = mmapFile[offset:]
 	}
 	return -1, errors.New("key not found")
+}
+func WriteBloomFilter(filter bloomfilter.BloomFilter, filterFile *os.File) error {
+	return nil
 }
 
 // //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -333,14 +331,6 @@ func addToSummaryIndex(entry MemEntry, indexOffset uint64, result []byte) ([]byt
 	indexRecord := NewIndexRecord(entry, indexOffset)
 	serializedIndexRecord := indexRecord.SerializeIndexRecord()
 	return serializedIndexRecord, append(result, serializedIndexRecord...)
-}
-func saveBloomFilter(filter bloomfilter.BloomFilter, filterFile *os.File) error {
-	serializedFilter := filter.Serialize()
-	err := writeToFile(filterFile, serializedFilter)
-	if err != nil {
-		return err
-	}
-	return nil
 }
 
 // //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -369,7 +359,6 @@ func createFiles(memEntries []MemEntry, dataFile, indexFile, summaryFile, filter
 		countKeysBetween++
 		break
 	}
-	saveBloomFilter(filter, filterFile)
 
 	summaryHeader := make([]byte, 16)
 	binary.BigEndian.PutUint64(summaryHeader[SummaryMinSizestart:SummaryMaxSizeStart], uint64(len(summaryMin)))
@@ -380,5 +369,5 @@ func createFiles(memEntries []MemEntry, dataFile, indexFile, summaryFile, filter
 	WriteToDataFile(dataFile, dataRecords)
 	WriteToIndexFile(indexFile, indexRecords)
 	WriteSummaryToFile(summaryFile, summaryRecords, summaryMin, summaryMax)
-
+	WriteBloomFilter(filter, filterFile)
 }
