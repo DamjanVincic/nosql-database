@@ -112,37 +112,35 @@ func NewSSTable2(memEntries []MemEntry, tableSize uint64) (*SSTable, error) {
 		tocFilename:          tocFilename,
 	}, nil
 }
-func addToDataSegment(dataFile *os.File, entry MemEntry) (uint64, error) {
-	dataRecord := NewDataRecord(entry)
-	serializedRecord := dataRecord.SerializeDataRecord()
-	//*******************************************************
+
+func WriteToDataSegment(dataFile *os.File, data []byte) error {
 	flatData := make([]byte, 8)
-	flatData = append(flatData, serializedRecord...)
-	totalBytes := int64(len(serializedRecord))
+	flatData = append(flatData, data...)
+	totalBytes := int64(len(data))
 	//*******************************************************
 
 	fileStat, err := dataFile.Stat()
 	if err != nil {
-		return 0, err
+		return err
 	}
 	fileSize := fileStat.Size()
 	if err = dataFile.Truncate(fileSize + totalBytes); err != nil {
-		return 0, err
+		return err
 	}
 	mmapFile, err := mmap.Map(dataFile, mmap.RDWR, 0)
 	if err != nil {
-		return 0, err
+		return err
 	}
 	copy(mmapFile[fileSize:], flatData)
 	err = mmapFile.Unmap()
 	if err != nil {
-		return 0, err
+		return err
 	}
 	err = dataFile.Close()
 	if err != nil {
-		return 0, err
+		return err
 	}
-	return uint64(len(serializedRecord)), nil
+	return nil
 }
 func ReadFromFile(file *os.File, offsetStart, offsetEnd int) (*DataRecord, error) {
 	fileStat, err := file.Stat()
@@ -180,36 +178,33 @@ func writeToFile(dataFile *os.File, binaryData []byte) error {
 	return nil
 }
 
-func addToSparseIndex(indexFile *os.File, entry MemEntry, offset uint64) (uint64, error) {
-	indexRecord := NewIndexRecord(entry, offset)
-	serializedIndexRecord := indexRecord.SerializeIndexRecord()
-	//****************************************************************
-	totalBytes := int64(len(serializedIndexRecord))
+func WriteToIndexFile(indexFile *os.File, data []byte) error {
+	flatData := make([]byte, 8)
+	flatData = append(flatData, data...)
+	totalBytes := int64(len(data))
 	fileStat, err := indexFile.Stat()
 	if err != nil {
-		return uint64(len(serializedIndexRecord)), err
+		return err
 	}
 	fileSize := fileStat.Size()
-	flatData := make([]byte, 8)
-	flatData = append(flatData, serializedIndexRecord...)
 
 	if err = indexFile.Truncate(totalBytes + fileSize); err != nil {
-		return uint64(len(serializedIndexRecord)), err
+		return err
 	}
 	mmapFile, err := mmap.Map(indexFile, mmap.RDWR, 0)
 	if err != nil {
-		return uint64(len(serializedIndexRecord)), err
+		return err
 	}
 	copy(mmapFile[fileSize:], flatData)
 	err = mmapFile.Unmap()
 	if err != nil {
-		return uint64(len(serializedIndexRecord)), err
+		return err
 	}
 	err = indexFile.Close()
 	if err != nil {
-		return uint64(len(serializedIndexRecord)), err
+		return err
 	}
-	return uint64(len(serializedIndexRecord)), nil
+	return nil
 }
 func ReadIndexFromFile(indexFile *os.File, offsetStart, offsetEnd uint64) ([]*IndexRecord, error) {
 	var result []*IndexRecord
@@ -241,14 +236,23 @@ func ReadIndexFromFile(indexFile *os.File, offsetStart, offsetEnd uint64) ([]*In
 	}
 	return result, nil
 }
-func addToSummaryIndex(summaryFile *os.File, entry MemEntry, indexOffset uint64) (uint64, error) {
+
+// //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// get serialized data
+func addToDataSegment(entry MemEntry, result []byte) (uint64, []byte) {
+	dataRecord := NewDataRecord(entry)
+	serializedRecord := dataRecord.SerializeDataRecord()
+	return uint64(len(serializedRecord)), append(result, serializedRecord...)
+}
+func addToIndex(offset uint64, entry MemEntry, result []byte) (uint64, []byte) {
+	indexRecord := NewIndexRecord(entry, offset)
+	serializedIndexRecord := indexRecord.SerializeIndexRecord()
+	return uint64(len(serializedIndexRecord)), append(result, serializedIndexRecord...)
+}
+func addToSummaryIndex(entry MemEntry, indexOffset uint64, result []byte) ([]byte, []byte) {
 	indexRecord := NewIndexRecord(entry, indexOffset)
 	serializedIndexRecord := indexRecord.SerializeIndexRecord()
-
-	if err := writeToFile(summaryFile, serializedIndexRecord); err != nil {
-		return uint64(len(serializedIndexRecord)), err
-	}
-	return uint64(len(serializedIndexRecord)), nil
+	return serializedIndexRecord, append(result, serializedIndexRecord...)
 }
 func saveBloomFilter(filter bloomfilter.BloomFilter, filterFile *os.File) error {
 	serializedFilter := filter.Serialize()
@@ -258,21 +262,39 @@ func saveBloomFilter(filter bloomfilter.BloomFilter, filterFile *os.File) error 
 	}
 	return nil
 }
+
+// //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 func createFiles(memEntries []MemEntry, dataFile, indexFile, summaryFile, filterFile *os.File) {
-	// offset that points to begining of file
+	dataRecords := []byte{}
+	indexRecords := []byte{}
+	summaryRecords := []byte{}
+	var indexOffset uint64
+	var summaryMin []byte
+	var summaryMax []byte
+	var serializedIndexRecord []byte
 	offset := uint64(0)
 	countKeysBetween := 0
 	filter := bloomfilter.CreateBloomFilter(len(memEntries), 0.2)
 	for _, entry := range memEntries {
-		offset, _ = addToDataSegment(dataFile, entry)
-		// handle errors ?
-		indexOffset, _ := addToSparseIndex(indexFile, entry, offset)
+		offset, dataRecords = addToDataSegment(entry, dataRecords)
+		indexOffset, indexRecords = addToIndex(offset, entry, indexRecords)
 		if countKeysBetween == 0 || countKeysBetween%SummaryConst == 0 {
-			addToSummaryIndex(summaryFile, entry, indexOffset)
+			serializedIndexRecord, summaryRecords = addToSummaryIndex(entry, indexOffset, summaryRecords)
+			if summaryMin == nil {
+				summaryMin = serializedIndexRecord
+			}
 		}
 		filter.AddElement([]byte(entry.Key))
+		summaryMax = serializedIndexRecord
 		countKeysBetween++
 		break
 	}
 	saveBloomFilter(filter, filterFile)
+
+	summaryHeader := make([]byte, 16)
+	binary.BigEndian.PutUint64(summaryHeader[SummaryMinSizestart:SummaryMaxSizeStart], uint64(len(summaryMin)))
+	binary.BigEndian.PutUint64(summaryHeader[SummaryMaxSizeStart:SummaryMaxSizeStart+SummaryMaxSizeSize], uint64(len(summaryMax)))
+	summaryHeader = append(summaryHeader, summaryMin...)
+	summaryHeader = append(summaryHeader, summaryMax...)
+
 }
