@@ -2,7 +2,6 @@ package merkle
 
 import (
 	"encoding/binary"
-	"fmt"
 	"math"
 	"os"
 
@@ -194,12 +193,6 @@ func (tree *MerkleTree) ReadFromFile(filePath string) (*MerkleTree, error) {
 	if err != nil {
 		return nil, err
 	}
-	fileStat, err := file.Stat()
-	if err != nil {
-		return nil, err
-	}
-	fileSize := fileStat.Size()
-	fmt.Println(fileSize)
 
 	mmapFile, err := mmap.Map(file, mmap.RDWR, 0)
 	if err != nil {
