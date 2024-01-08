@@ -312,7 +312,43 @@ func ReadSummaryFromFile(file *os.File, key string) (uint64, error) {
 	return 0, errors.New("key not found")
 }
 func WriteBloomFilter(filter bloomfilter.BloomFilter, filterFile *os.File) error {
+	// First 4 bytes are the number of bytes in the byte array
+	// Next 4 bytes are the number of hash functions
+	data := filter.Serialize()
+	totalBytes := int64(len(data))
+	flatData := make([]byte, 8)
+	flatData = append(flatData, data...)
+	fileStat, err := filterFile.Stat()
+	if err != nil {
+		return err
+	}
+	fileSize := fileStat.Size()
+
+	if err = filterFile.Truncate(totalBytes + fileSize); err != nil {
+		return err
+	}
+	mmapFile, err := mmap.Map(filterFile, mmap.RDWR, 0)
+	if err != nil {
+		return err
+	}
+	copy(mmapFile[fileSize:], flatData)
+	err = mmapFile.Unmap()
+	if err != nil {
+		return err
+	}
+	err = filterFile.Close()
+	if err != nil {
+		return err
+	}
 	return nil
+}
+func ReadBloomFilterFromFile(key string, file *os.File) (bool, error) {
+	mmapFile, err := mmap.Map(file, mmap.RDWR, 0)
+	if err != nil {
+		return false, err
+	}
+	filter := bloomfilter.Deserialize(mmapFile)
+	return filter.ContainsElement([]byte(key))
 }
 
 // //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
