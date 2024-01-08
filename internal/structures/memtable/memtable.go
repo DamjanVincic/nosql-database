@@ -31,13 +31,12 @@ func newMemtable() *Memtable {
 	return &memtable
 }
 
-// appends new partition to partitions, and makes it currentPartition
+// creates new partition making it currentPartition, appends previous currentPartition to partitions, deletes oldest partition if needed
 func (memtable *Memtable) makePartition() {
 	var newPartition MemtableData
 	switch dataStructure {
 	case 1:
 		newPartition = skiplist.CreateSkipList()
-
 	}
 	if memtable.currentPartition == nil {
 		memtable.currentPartition = newPartition
@@ -53,6 +52,18 @@ func (memtable *Memtable) makePartition() {
 func (memtable *Memtable) Put(key string, value []byte, timestamp uint64, tombstone bool) (toFlush []*models.MemEntry, err error) {
 	toFlush = nil
 	err = nil
+
+	err = memtable.currentPartition.Put(key, value, tombstone, timestamp)
+	if err != nil {
+		return
+	}
+
+	if memtable.currentPartition.Size() >= maxEntries {
+		if len(memtable.partitions)-1 >= maxPartitions {
+			toFlush = memtable.partitions[maxPartitions-1].GetSorted()
+		}
+		memtable.makePartition()
+	}
 	return
 }
 
