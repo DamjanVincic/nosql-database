@@ -9,7 +9,7 @@ import (
 const (
 	maxPartitions = 3 //max number of MemtableData instances
 	maxEntries    = 3 //max number of entries in one MemtableData instance
-	dataStructure = 1 //implementation od MemtableData to be used (1 for skipList, 2 for BTree, 3 for hashMap)
+	dataStructure = 3 //implementation od MemtableData to be used (1 for skipList, 2 for BTree, 3 for hashMap)
 )
 
 type MemtableData interface {
@@ -71,7 +71,7 @@ func (memtable *Memtable) Put(key string, value []byte, timestamp uint64, tombst
 
 	if memtable.currentPartition.Size() >= maxEntries {
 		if len(memtable.partitions)+1 >= maxPartitions {
-			toFlush = memtable.partitions[maxPartitions-2].GetSorted()
+			toFlush = memtable.partitions[0].GetSorted()
 		}
 		memtable.makePartition()
 	}
