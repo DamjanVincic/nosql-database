@@ -59,6 +59,12 @@ const (
 	IndexBlockStart      = FilterBlockStart + FilterBlockSizeSize
 	SummaryBlockStart    = IndexBlockStart + IndexBlockSizeSize
 	MetaBlockStart       = SummaryBlockStart + SummaryBlockSizeSize
+
+	//summary header sizes
+	SummaryMinSizeSize  = 8
+	SummaryMaxSizeSize  = 8
+	SummaryMinSizestart = 0
+	SummaryMaxSizeStart = SummaryMinSizestart + SummaryMinSizeSize
 	// Path to store SSTable files
 	Path = "sstable"
 	// Path to store the SimpleSStable file
@@ -91,7 +97,7 @@ type SSTable struct {
 }
 
 type SimpleSSTable struct {
-	filename string
+	Filename string
 }
 
 func NewSimpleSSTable(memEntries []MemEntry) (*SimpleSSTable, error) {
@@ -134,7 +140,7 @@ func NewSimpleSSTable(memEntries []MemEntry) (*SimpleSSTable, error) {
 
 	file.Close()
 	return &SimpleSSTable{
-		filename: filename,
+		Filename: filename,
 	}, nil
 
 }
@@ -147,6 +153,9 @@ func createFile(memEntries []MemEntry, file *os.File) error {
 	var indexRecords []byte
 	var summaryRecords []byte
 
+	// summary structure must store min and max key value
+	var summaryMin []byte
+	var summaryMax []byte
 	bf := bloomfilter.CreateBloomFilter(len(memEntries), 0.2)
 	counter := 0
 	dataBlockSize := uint64(0)
@@ -164,6 +173,11 @@ func createFile(memEntries []MemEntry, file *os.File) error {
 		if counter%SummaryConst == 0 {
 			summaryRecords = append(summaryRecords, serializedIndexRecord...)
 			summaryBlockSize += uint64(len(serializedIndexRecord))
+
+			if summaryMin == nil {
+				summaryMin = serializedIndexRecord
+			}
+			summaryMax = serializedIndexRecord
 		}
 		counter++
 		offset += sizeOfDR
@@ -177,21 +191,59 @@ func createFile(memEntries []MemEntry, file *os.File) error {
 	if _, err := file.Write(indexRecords); err != nil {
 		return err
 	}
-	if _, err := file.Write(summaryRecords); err != nil {
+	summaryHeader := make([]byte, 16)
+	binary.BigEndian.PutUint64(summaryHeader[SummaryMinSizestart:SummaryMaxSizeStart], uint64(len(summaryMin)))
+	binary.BigEndian.PutUint64(summaryHeader[SummaryMaxSizeStart:SummaryMaxSizeStart+SummaryMaxSizeSize], uint64(len(summaryMax)))
+	summaryHeader = append(summaryHeader, summaryMin...)
+	summaryHeader = append(summaryHeader, summaryMax...)
+	summaryHeader = append(summaryHeader, summaryRecords...)
+	summaryBlockSize += uint64(len(summaryHeader))
+	if _, err := file.Write(summaryHeader); err != nil {
 		return err
 	}
 
 	file.Seek(0, 0)
 	header := make([]byte, HeaderSize)
 	binary.BigEndian.PutUint64(header[:DataBlockSizeSize], dataBlockSize)
-	binary.BigEndian.PutUint64(header[DataBlockStart:FilterBlockStart], filterBlockSize)
-	binary.BigEndian.PutUint64(header[FilterBlockStart:SummaryBlockStart], indexBlockSize)
+	binary.BigEndian.PutUint64(header[FilterBlockStart:IndexBlockStart], filterBlockSize)
+	binary.BigEndian.PutUint64(header[IndexBlockStart:SummaryBlockStart], indexBlockSize)
 	binary.BigEndian.PutUint64(header[SummaryBlockStart:MetaBlockStart], summaryBlockSize)
 	if _, err := file.Write(header); err != nil {
 		return err
 	}
 	return nil
 }
+
+// func Read(filen string) {
+// 	file, err := os.OpenFile(filepath.Join(SimplePath, filen), os.O_CREATE|os.O_RDWR, 0644)
+// 	if err != nil {
+// 		fmt.Println("ne moze se otvoriti")
+// 	}
+// 	header := make([]byte, 32)
+// 	file.Read(header)
+// 	datasize := uint64(binary.BigEndian.Uint64(header[:8]))
+// 	filtersize := uint64(binary.BigEndian.Uint64(header[8:16]))
+// 	indexsize := uint64(binary.BigEndian.Uint64(header[16:24]))
+// 	summarysize := uint64(binary.BigEndian.Uint64(header[24:]))
+// 	data := make([]byte, datasize)
+// 	filter := make([]byte, filtersize)
+// 	index := make([]byte, indexsize)
+// 	summary := make([]byte, summarysize)
+// 	file.Read(data)
+// 	file.Read(filter)
+// 	file.Read(index)
+// 	file.Read(summary)
+// 	d, _ := DeserializeDataRecord(data)
+// 	fmt.Println(d)
+// 	f := bloomfilter.Deserialize(filter)
+// 	fmt.Println(f)
+// 	i, _ := DeserializeIndexRecord(index)
+// 	s, _ := DeserializeIndexRecord(summary[16:])
+// 	fmt.Println(i)
+// 	fmt.Println(s)
+// 	file.Close()
+
+// }
 func writeDataRecord(file *os.File, entry MemEntry) (uint64, error) {
 	dRecord := *NewDataRecord(entry)
 	serializedRecord := dRecord.SerializeDataRecord()
