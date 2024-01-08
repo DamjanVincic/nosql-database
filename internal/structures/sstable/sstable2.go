@@ -177,12 +177,12 @@ func createFile(memEntries []MemEntry, file *os.File) error {
 			if summaryMin == nil {
 				summaryMin = serializedIndexRecord
 			}
-			summaryMax = serializedIndexRecord
 		}
 		counter++
 		offset += sizeOfDR
 		dataBlockSize += sizeOfDR
 		bf.AddElement([]byte(memEntry.Key))
+		summaryMax = serializedIndexRecord
 	}
 	filterBlockSize, err := writeBF(bf, file)
 	if err != nil {
@@ -214,36 +214,35 @@ func createFile(memEntries []MemEntry, file *os.File) error {
 	return nil
 }
 
-// func Read(filen string) {
-// 	file, err := os.OpenFile(filepath.Join(SimplePath, filen), os.O_CREATE|os.O_RDWR, 0644)
-// 	if err != nil {
-// 		fmt.Println("ne moze se otvoriti")
-// 	}
-// 	header := make([]byte, 32)
-// 	file.Read(header)
-// 	datasize := uint64(binary.BigEndian.Uint64(header[:8]))
-// 	filtersize := uint64(binary.BigEndian.Uint64(header[8:16]))
-// 	indexsize := uint64(binary.BigEndian.Uint64(header[16:24]))
-// 	summarysize := uint64(binary.BigEndian.Uint64(header[24:]))
-// 	data := make([]byte, datasize)
-// 	filter := make([]byte, filtersize)
-// 	index := make([]byte, indexsize)
-// 	summary := make([]byte, summarysize)
-// 	file.Read(data)
-// 	file.Read(filter)
-// 	file.Read(index)
-// 	file.Read(summary)
-// 	d, _ := DeserializeDataRecord(data)
-// 	fmt.Println(d)
-// 	f := bloomfilter.Deserialize(filter)
-// 	fmt.Println(f)
-// 	i, _ := DeserializeIndexRecord(index)
-// 	s, _ := DeserializeIndexRecord(summary[16:])
-// 	fmt.Println(i)
-// 	fmt.Println(s)
-// 	file.Close()
-
-// }
+func Read(filen string) {
+	file, err := os.OpenFile(filepath.Join(SimplePath, filen), os.O_CREATE|os.O_RDWR, 0644)
+	if err != nil {
+		fmt.Println("ne moze se otvoriti")
+	}
+	header := make([]byte, 32)
+	file.Read(header)
+	datasize := uint64(binary.BigEndian.Uint64(header[:8]))
+	filtersize := uint64(binary.BigEndian.Uint64(header[8:16]))
+	indexsize := uint64(binary.BigEndian.Uint64(header[16:24]))
+	summarysize := uint64(binary.BigEndian.Uint64(header[24:]))
+	data := make([]byte, datasize)
+	filter := make([]byte, filtersize)
+	index := make([]byte, indexsize)
+	summary := make([]byte, summarysize)
+	file.Read(data)
+	file.Read(filter)
+	file.Read(index)
+	file.Read(summary)
+	d, _ := DeserializeDataRecord(data)
+	fmt.Println(d)
+	f := bloomfilter.Deserialize(filter)
+	fmt.Println(f)
+	i, _ := DeserializeIndexRecord(index)
+	s, _ := DeserializeIndexRecord(summary[16:])
+	fmt.Println(i)
+	fmt.Println(s)
+	file.Close()
+}
 func writeDataRecord(file *os.File, entry MemEntry) (uint64, error) {
 	dRecord := *NewDataRecord(entry)
 	serializedRecord := dRecord.SerializeDataRecord()
