@@ -1,6 +1,9 @@
 package hashmap
 
-import "github.com/DamjanVincic/key-value-engine/internal/models"
+import (
+	"github.com/DamjanVincic/key-value-engine/internal/models"
+	"sort"
+)
 
 type HashMap struct {
 	data map[string]*models.Data
@@ -29,4 +32,20 @@ func (hashMap *HashMap) Put(key string, value []byte, tombstone bool, timestamp 
 func (hashMap *HashMap) Delete(key string) error {
 	delete(hashMap.data, key)
 	return nil
+}
+
+// GetSorted returns all values sorted
+func (hashMap *HashMap) GetSorted() []*models.MemEntry {
+	keys := make([]string, 0)
+	for key := range hashMap.data {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	entries := make([]*models.MemEntry, 0)
+	for key := range keys {
+		entries = append(entries, &models.MemEntry{keys[key], hashMap.data[keys[key]]})
+	}
+
+	return entries
 }
