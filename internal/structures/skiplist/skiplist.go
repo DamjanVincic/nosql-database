@@ -171,3 +171,13 @@ func (skipList *SkipList) Delete(key string) error {
 	skipList.size--
 	return ok
 }
+
+func (skipList *SkipList) GetSorted() []*models.Entry {
+	entries := make([]*models.Entry, skipList.size)
+	current := skipList.heads[0]
+	for current.next.key != positiveInfinity {
+		current = current.next
+		entries = append(entries, &models.Entry{Key: current.key, Value: current.value})
+	}
+	return entries
+}
