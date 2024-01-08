@@ -1,6 +1,8 @@
 package sstable
 
 import (
+	"encoding/binary"
+	"errors"
 	"fmt"
 	"github.com/DamjanVincic/key-value-engine/internal/structures/bloomfilter"
 	"github.com/edsrzf/mmap-go"
@@ -181,11 +183,63 @@ func writeToFile(dataFile *os.File, binaryData []byte) error {
 func addToSparseIndex(indexFile *os.File, entry MemEntry, offset uint64) (uint64, error) {
 	indexRecord := NewIndexRecord(entry, offset)
 	serializedIndexRecord := indexRecord.SerializeIndexRecord()
+	//****************************************************************
+	totalBytes := int64(len(serializedIndexRecord))
+	fileStat, err := indexFile.Stat()
+	if err != nil {
+		return uint64(len(serializedIndexRecord)), err
+	}
+	fileSize := fileStat.Size()
+	flatData := make([]byte, 8)
+	flatData = append(flatData, serializedIndexRecord...)
 
-	if err := writeToFile(indexFile, serializedIndexRecord); err != nil {
+	if err = indexFile.Truncate(totalBytes + fileSize); err != nil {
+		return uint64(len(serializedIndexRecord)), err
+	}
+	mmapFile, err := mmap.Map(indexFile, mmap.RDWR, 0)
+	if err != nil {
+		return uint64(len(serializedIndexRecord)), err
+	}
+	copy(mmapFile[fileSize:], flatData)
+	err = mmapFile.Unmap()
+	if err != nil {
+		return uint64(len(serializedIndexRecord)), err
+	}
+	err = indexFile.Close()
+	if err != nil {
 		return uint64(len(serializedIndexRecord)), err
 	}
 	return uint64(len(serializedIndexRecord)), nil
+}
+func ReadIndexFromFile(indexFile *os.File, offsetStart, offsetEnd uint64) ([]*IndexRecord, error) {
+	var result []*IndexRecord
+	mmapFile, err := mmap.Map(indexFile, mmap.RDWR, 0)
+	if err != nil {
+		return nil, err
+	}
+	// 8 for size of key size
+	// key size for key
+	// 8 for offset
+	mmapFileSize := uint64(len(mmapFile))
+	mmapFile = mmapFile[offsetStart:]
+	offset := uint64(0)
+	for offset < mmapFileSize {
+		keySize := binary.BigEndian.Uint64(mmapFile[KeySizeStart:KeySizeSize])
+		key := string(mmapFile[KeyStart : KeyStart+int(keySize)])
+		keyUint64, err := strconv.ParseUint(key, 10, 64)
+		if err != nil {
+			return nil, errors.New("error converting")
+		}
+		indexOffset := binary.BigEndian.Uint64(mmapFile[KeyStart+int(keySize):])
+		offset = keySize + keyUint64 + indexOffset
+		indexRecord, err := DeserializeIndexRecord(mmapFile[:offset])
+		if err != nil {
+			return nil, errors.New("error deserializing index record")
+		}
+		result = append(result, indexRecord)
+		mmapFile = mmapFile[offset:]
+	}
+	return result, nil
 }
 func addToSummaryIndex(summaryFile *os.File, entry MemEntry, indexOffset uint64) (uint64, error) {
 	indexRecord := NewIndexRecord(entry, indexOffset)
