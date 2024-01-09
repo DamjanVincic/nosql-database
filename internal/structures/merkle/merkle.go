@@ -18,7 +18,7 @@ const (
 
 type MerkleTree struct {
 	Root         *Node
-	hashWithSeed hash.HashWithSeed
+	HashWithSeed hash.HashWithSeed
 }
 
 type Node struct {
@@ -61,7 +61,7 @@ get binary data and hash function and return new node with no children and hashe
 */
 func (merkleTree *MerkleTree) createNewNode(key string, value *models.Data) (*Node, error) {
 	newData := createDataForNode(key, value)
-	values, err := merkleTree.hashWithSeed.Hash(newData)
+	values, err := merkleTree.HashWithSeed.Hash(newData)
 	if err != nil {
 		return nil, err
 	}
@@ -75,10 +75,14 @@ since merkle tree is build from bottom up we need all data as leafs
 if number of leafs is not 2**n we need to add empty nodes
 there hash wont change anything
 */
-func CreateMerkleTree(allData map[string]*models.Data) (*MerkleTree, error) {
+func CreateMerkleTree(allData map[string]*models.Data, hashFunc *hash.HashWithSeed) (*MerkleTree, error) {
 	var nodes []*Node
 	var merkleTree MerkleTree
-	merkleTree.hashWithSeed = hash.CreateHashFunctions(1)[0]
+	if hashFunc == nil {
+		hashFunc = &hash.CreateHashFunctions(1)[0]
+	}
+	merkleTree.HashWithSeed = *hashFunc
+
 	// creating all the end nodes
 	for key, data := range allData {
 		node, err := merkleTree.createNewNode(key, data)
@@ -95,7 +99,7 @@ func CreateMerkleTree(allData map[string]*models.Data) (*MerkleTree, error) {
 		targetSize := int(math.Pow(2, degree)) // ex. n is 2.3 then degree is 3 and we need 8 nodes since 2**3
 		for i := len(nodes); i < targetSize; i++ {
 			// add number of empty nodes that is needed
-			node, err := merkleTree.createNewNode("", &models.Data{Value: []byte{}, Tombstone: true, Timestamp: 0})
+			node, err := merkleTree.createNewNode("", &models.Data{Value: []byte{}, Tombstone: false, Timestamp: 0})
 			if err != nil {
 				return nil, err
 			}
@@ -108,7 +112,7 @@ func CreateMerkleTree(allData map[string]*models.Data) (*MerkleTree, error) {
 
 		for i := 0; i < len(nodes); i += 2 {
 			// add two array together and hash
-			values, err := merkleTree.hashWithSeed.Hash(append(nodes[i].data, nodes[i+1].data...))
+			values, err := merkleTree.HashWithSeed.Hash(append(nodes[i].data, nodes[i+1].data...))
 			if err != nil {
 				return nil, err
 			}
@@ -132,7 +136,7 @@ func CreateMerkleTree(allData map[string]*models.Data) (*MerkleTree, error) {
 func (tree *MerkleTree) Serialize() []byte {
 	//add size of hashWithSeed to byte array
 	bytes := make([]byte, HashWithSeedSizeSize)
-	serializedHash := hash.Serialize([]hash.HashWithSeed{tree.hashWithSeed})
+	serializedHash := hash.Serialize([]hash.HashWithSeed{tree.HashWithSeed})
 	hashFuncSize := uint64(len(serializedHash))
 	binary.BigEndian.PutUint64(bytes[:HashWithSeedSizeSize], hashFuncSize)
 	//append hashWithSeed
@@ -175,7 +179,7 @@ func DeserializeMerkle(data []byte) (*MerkleTree, error) {
 	root := binaryTree(nodes, 0)
 	return &MerkleTree{
 		Root:         root,
-		hashWithSeed: hashWithSeed,
+		HashWithSeed: hashWithSeed,
 	}, nil
 }
 
@@ -198,19 +202,17 @@ func binaryTree(data []byte, index int) *Node {
 func (merkleTree *MerkleTree) IsEqualTo(comparableTree *MerkleTree) bool {
 
 	//compare hash functions (must serialize them)
-	serializedHash := hash.Serialize([]hash.HashWithSeed{merkleTree.hashWithSeed})[0]
-	serializedComparableHash := hash.Serialize([]hash.HashWithSeed{comparableTree.hashWithSeed})[0]
-	if serializedHash != serializedComparableHash {
+	serializedHash := hash.Serialize([]hash.HashWithSeed{merkleTree.HashWithSeed})
+	serializedComparableHash := hash.Serialize([]hash.HashWithSeed{comparableTree.HashWithSeed})
+	if !bytes.Equal(serializedHash, serializedComparableHash) {
 		return false
 	}
 
-	// compare nodes (with BFS traversal on merkle tree get list of nodes)
-	nodes := MerkleBFS(merkleTree.Root)
-	comparableNodes := MerkleBFS(comparableTree.Root)
-	if len(nodes) != len(comparableNodes) {
-		return false
-	}
-	if !bytes.Equal(nodes, comparableNodes) {
+	// compare roots
+	root := merkleTree.Root.data
+	comparableRoot := comparableTree.Root.data
+
+	if !bytes.Equal(root, comparableRoot) {
 		return false
 	}
 

@@ -7,12 +7,12 @@ import (
 )
 
 type HashWithSeed struct {
-	seed []byte
+	Seed []byte
 }
 
 func (h HashWithSeed) Hash(data []byte) (uint64, error) {
 	fn := fnv.New64()
-	_, err := fn.Write(append(data, h.seed...))
+	_, err := fn.Write(append(data, h.Seed...))
 	if err != nil {
 		return 0, err
 	}
@@ -26,7 +26,7 @@ func CreateHashFunctions(k uint32) []HashWithSeed {
 	for i := uint32(0); i < k; i++ {
 		seed := make([]byte, 4)
 		binary.BigEndian.PutUint32(seed, currentTime+i)
-		hfn := HashWithSeed{seed: seed}
+		hfn := HashWithSeed{Seed: seed}
 		functions[i] = hfn
 	}
 	return functions
@@ -36,7 +36,7 @@ func Serialize(functions []HashWithSeed) []byte {
 	// Append binary representation of each function's 32 bit seed
 	bytes := make([]byte, 0)
 	for _, fn := range functions {
-		bytes = append(bytes, fn.seed...)
+		bytes = append(bytes, fn.Seed...)
 	}
 	return bytes
 }
@@ -45,7 +45,7 @@ func Deserialize(bytes []byte) []HashWithSeed {
 	// Go through all bytes and create a new hash function for each 4 bytes (32 bit seed)
 	functions := make([]HashWithSeed, 0)
 	for i := 0; i < len(bytes); i += 4 {
-		functions = append(functions, HashWithSeed{seed: bytes[i : i+4]})
+		functions = append(functions, HashWithSeed{Seed: bytes[i : i+4]})
 	}
 	return functions
 }
