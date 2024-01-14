@@ -13,7 +13,7 @@ import (
 	"github.com/edsrzf/mmap-go"
 )
 
-func NewSSTable2(memEntries []MemEntry) (*SSTable, error) {
+func NewSSTable2(memEntries []*MemEntry) (*SSTable, error) {
 	// Create the directory if it doesn't exist
 	dirEntries, err := os.ReadDir(Path)
 	if os.IsNotExist(err) {
@@ -70,7 +70,7 @@ func NewSSTable2(memEntries []MemEntry) (*SSTable, error) {
 	summaryFilename = fmt.Sprintf("%s%05d_%d%s.db", Prefix, index, lsmIndex, SummarySufix)
 	filterFilename = fmt.Sprintf("%s%05d_%d%s.db", Prefix, index, lsmIndex, FilterSufix)
 	metadataFilename = fmt.Sprintf("%s%05d_%d%s.db", Prefix, index, lsmIndex, MetaSufix)
-	tocFilename = fmt.Sprintf("%s%05d_%d%s.db", Prefix, index, lsmIndex, TocSufix)
+	tocFilename = fmt.Sprintf("%s%05d_%d%s.txt", Prefix, index, lsmIndex, TocSufix)
 
 	dataFile, err := os.OpenFile(filepath.Join(subdirPath, dataFilename), os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
@@ -96,15 +96,37 @@ func NewSSTable2(memEntries []MemEntry) (*SSTable, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	createFiles(memEntries, dataFilename, indexFilename, summaryFilename, filterFile)
-
-	dataFile.Close()
-	indexFile.Close()
-	summaryFile.Close()
-	filterFile.Close()
-	metadataFile.Close()
-	tocFile.Close()
+	filenames := make([]*string, 5)
+	filenames[0] = &dataFilename
+	filenames[1] = &indexFilename
+	filenames[2] = &summaryFilename
+	filenames[3] = &filterFilename
+	filenames[4] = &metadataFilename
+	createFiles(memEntries, dataFile, indexFile, summaryFile, filterFile, metadataFile, tocFile, filenames)
+	err = dataFile.Close()
+	if err != nil {
+		return nil, err
+	}
+	err = indexFile.Close()
+	if err != nil {
+		return nil, err
+	}
+	err = summaryFile.Close()
+	if err != nil {
+		return nil, err
+	}
+	err = filterFile.Close()
+	if err != nil {
+		return nil, err
+	}
+	err = metadataFile.Close()
+	if err != nil {
+		return nil, err
+	}
+	err = tocFile.Close()
+	if err != nil {
+		return nil, err
+	}
 
 	return &SSTable{
 		summaryConst:         SummaryConst,
@@ -117,39 +139,29 @@ func NewSSTable2(memEntries []MemEntry) (*SSTable, error) {
 	}, nil
 }
 
-func WriteToDataFile(file string, data []byte) error {
-	dataFile, err := os.OpenFile(file, os.O_RDWR, 0644)
-	if err != nil {
-		return err
-	}
-	flatData := make([]byte, 8)
-	flatData = append(flatData, data...)
+func WriteToFile(file *os.File, data []byte) error {
 	totalBytes := int64(len(data))
-	//*******************************************************
-
-	fileStat, err := dataFile.Stat()
+	fileStat, err := file.Stat()
 	if err != nil {
 		return err
 	}
 	fileSize := fileStat.Size()
-	if err = dataFile.Truncate(fileSize + totalBytes); err != nil {
+
+	if err = file.Truncate(int64(fileSize + totalBytes)); err != nil {
 		return err
 	}
-	mmapFile, err := mmap.Map(dataFile, mmap.RDWR, 0)
+	mmapFile, err := mmap.Map(file, mmap.RDWR, 0)
 	if err != nil {
 		return err
 	}
-	copy(mmapFile[fileSize:], flatData)
+	copy(mmapFile[fileSize:], data)
 	err = mmapFile.Unmap()
-	if err != nil {
-		return err
-	}
-	err = dataFile.Close()
 	if err != nil {
 		return err
 	}
 	return nil
 }
+
 func ReadDataFromFile(file *os.File, offsetStart, offsetEnd uint64) (*DataRecord, error) {
 	fileStat, err := file.Stat()
 	if err != nil {
@@ -328,38 +340,6 @@ func ReadSummaryFromFile(file *os.File, key string) (uint64, error) {
 	}
 	return 0, errors.New("key not found")
 }
-func WriteBloomFilter(filter bloomfilter.BloomFilter, filterFile *os.File) error {
-	// First 4 bytes are the number of bytes in the byte array
-	// Next 4 bytes are the number of hash functions
-
-	data := filter.Serialize()
-	totalBytes := int64(len(data))
-	//var flatData []byte
-	//flatData = append(flatData, data...)
-	fileStat, err := filterFile.Stat()
-	if err != nil {
-		return err
-	}
-	fileSize := fileStat.Size()
-
-	if err = filterFile.Truncate(int64(fileSize + totalBytes)); err != nil {
-		return err
-	}
-	mmapFile, err := mmap.Map(filterFile, mmap.RDWR, 0)
-	if err != nil {
-		return err
-	}
-	copy(mmapFile[fileSize:], data)
-	err = mmapFile.Unmap()
-	if err != nil {
-		return err
-	}
-	err = filterFile.Close()
-	if err != nil {
-		return err
-	}
-	return nil
-}
 func ReadBloomFilterFromFile(key string, file *os.File) (bool, error) {
 	mmapFile, err := mmap.Map(file, mmap.RDONLY, 0)
 	if err != nil {
@@ -375,17 +355,17 @@ func ReadBloomFilterFromFile(key string, file *os.File) (bool, error) {
 
 // //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // get serialized data
-func addToDataSegment(entry MemEntry, result []byte) (uint64, []byte) {
+func addToDataSegment(entry *MemEntry, result []byte) (uint64, []byte) {
 	dataRecord := NewDataRecord(entry)
 	serializedRecord := dataRecord.SerializeDataRecord()
 	return uint64(len(serializedRecord)), append(result, serializedRecord...)
 }
-func addToIndex(offset uint64, entry MemEntry, result []byte) (uint64, []byte) {
+func addToIndex(offset uint64, entry *MemEntry, result []byte) (uint64, []byte) {
 	indexRecord := NewIndexRecord(entry, offset)
 	serializedIndexRecord := indexRecord.SerializeIndexRecord()
 	return uint64(len(serializedIndexRecord)), append(result, serializedIndexRecord...)
 }
-func addToSummaryIndex(entry MemEntry, indexOffset uint64, result []byte) ([]byte, []byte) {
+func addToSummaryIndex(entry *MemEntry, indexOffset uint64, result []byte) ([]byte, []byte) {
 	indexRecord := NewIndexRecord(entry, indexOffset)
 	serializedIndexRecord := indexRecord.SerializeIndexRecord()
 	return serializedIndexRecord, append(result, serializedIndexRecord...)
@@ -452,21 +432,28 @@ func (sstable SSTable) Get(key string) (*models.Data, error) {
 }
 
 // //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-func createFiles(memEntries []MemEntry, dataFile, indexFile, summaryFile string, filterFile *os.File) {
-	dataRecords := []byte{}
-	indexRecords := []byte{}
-	summaryRecords := []byte{}
+func createFiles(memEntries []*MemEntry, dataFile, indexFile, summaryFile, filterFile, metadataFile, tocFile *os.File, fileNames []*string) error {
+	dataRecords := make([]byte, 0)
+	indexRecords := make([]byte, 0)
+	summaryRecords := make([]byte, 0)
+	summaryHeader := make([]byte, SummaryMinSizeSize+SummaryMaxSizeSize)
+
 	var indexOffset uint64
 	var summaryMin []byte
 	var summaryMax []byte
 	var serializedIndexRecord []byte
+
 	offset := uint64(0)
 	countKeysBetween := 0
 	filter := bloomfilter.CreateBloomFilter(len(memEntries), 0.2)
+	merkle, err := CreateMerkleTree(memEntries)
+	if err != nil {
+		return err
+	}
 	for _, entry := range memEntries {
 		offset, dataRecords = addToDataSegment(entry, dataRecords)
 		indexOffset, indexRecords = addToIndex(offset, entry, indexRecords)
-		if countKeysBetween == 0 || countKeysBetween%SummaryConst == 0 {
+		if countKeysBetween%SummaryConst == 0 {
 			serializedIndexRecord, summaryRecords = addToSummaryIndex(entry, indexOffset, summaryRecords)
 			if summaryMin == nil {
 				summaryMin = serializedIndexRecord
@@ -477,15 +464,54 @@ func createFiles(memEntries []MemEntry, dataFile, indexFile, summaryFile string,
 		countKeysBetween++
 		break
 	}
+	filterData := filter.Serialize()
+	merkleData := merkle.Serialize()
 
-	summaryHeader := make([]byte, 16)
 	binary.BigEndian.PutUint64(summaryHeader[SummaryMinSizestart:SummaryMaxSizeStart], uint64(len(summaryMin)))
 	binary.BigEndian.PutUint64(summaryHeader[SummaryMaxSizeStart:SummaryMaxSizeStart+SummaryMaxSizeSize], uint64(len(summaryMax)))
 	summaryHeader = append(summaryHeader, summaryMin...)
 	summaryHeader = append(summaryHeader, summaryMax...)
+	summaryRecords = append(summaryHeader, summaryRecords...)
 
-	WriteToDataFile(dataFile, dataRecords)
-	WriteToIndexFile(indexFile, indexRecords)
-	WriteSummaryToFile(summaryFile, summaryRecords, summaryMin, summaryMax)
-	WriteBloomFilter(filter, filterFile)
+	tocData := serializeTocData(fileNames)
+
+	err = WriteToFile(dataFile, dataRecords)
+	if err != nil {
+		return err
+	}
+	err = WriteToFile(indexFile, indexRecords)
+	if err != nil {
+		return err
+	}
+	err = WriteToFile(summaryFile, summaryRecords)
+	if err != nil {
+		return err
+	}
+	err = WriteToFile(filterFile, filterData)
+	if err != nil {
+		return err
+	}
+	err = WriteToFile(metadataFile, merkleData)
+	if err != nil {
+		return err
+	}
+	err = WriteToFile(tocFile, tocData)
+	if err != nil {
+		return err
+	}
+	return nil
+
+}
+
+func serializeTocData(fileNames []*string) []byte {
+	filenamesSize := make([]byte, 40)
+	filenames := make([]byte, 0)
+	i := 0
+	for fileName := range fileNames {
+		filenames = append(filenames, byte(fileName))
+		binary.BigEndian.PutUint64(filenamesSize[FileNamesSizeSize*i:FileNamesSizeSize*i+FileNamesSizeSize], uint64(len(filenames)))
+		i++
+	}
+	filenames = append(filenamesSize, filenames...)
+	return filenames
 }

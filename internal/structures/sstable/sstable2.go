@@ -78,6 +78,8 @@ const (
 	FilterSufix  = "_filter"
 	MetaSufix    = "_meta"
 	TocSufix     = "_toc"
+	//for toc file header (contains lengths of filenames sizes)
+	FileNamesSizeSize = 8
 	// File naming constants for simpleSSTable
 	SimplePrefix = "ssst_"
 )
@@ -101,7 +103,7 @@ type SimpleSSTable struct {
 	Filename string
 }
 
-func NewSimpleSSTable(memEntries []MemEntry) (*SimpleSSTable, error) {
+func NewSimpleSSTable(memEntries []*MemEntry) (*SimpleSSTable, error) {
 	// Create the directory if it doesn't exist
 	dirEntries, err := os.ReadDir(SimplePath)
 	if os.IsNotExist(err) {
@@ -146,7 +148,7 @@ func NewSimpleSSTable(memEntries []MemEntry) (*SimpleSSTable, error) {
 
 }
 
-func ssstWriteFile(memEntries []MemEntry, file *os.File) error {
+func ssstWriteFile(memEntries []*MemEntry, file *os.File) error {
 	// all data for mapping file
 	var data []byte
 	dataSize := int64(0)
@@ -156,7 +158,6 @@ func ssstWriteFile(memEntries []MemEntry, file *os.File) error {
 	file.Seek(int64(offset), 0)
 	var indexRecords []byte
 	var summaryRecords []byte
-	merkleData := map[string]*models.Data{}
 
 	// summary structure must store min and max key value
 	var summaryMin []byte
@@ -195,7 +196,6 @@ func ssstWriteFile(memEntries []MemEntry, file *os.File) error {
 		dataBlockSize += sizeOfDR
 		bf.AddElement([]byte(memEntry.Key))
 		summaryMax = serializedIndexRecord
-		merkleData[memEntry.Key] = memEntry.Value
 	}
 	//append filter to data
 	serializedBF := bf.Serialize()
@@ -219,7 +219,7 @@ func ssstWriteFile(memEntries []MemEntry, file *os.File) error {
 	data = append(data, summaryRecords...)
 
 	//create and append merkle
-	merkle := CreateMerkleTree(merkleData)
+	merkle, _ := CreateMerkleTree(memEntries)
 	serializedMerkle := merkle.Serialize()
 	data = append(data, serializedMerkle...)
 	metaBlockSize += uint64(len(serializedMerkle))

@@ -10,7 +10,7 @@ type IndexRecord struct {
 	offset  uint64
 }
 
-func NewIndexRecord(memEntry MemEntry, offset uint64) *IndexRecord {
+func NewIndexRecord(memEntry *MemEntry, offset uint64) *IndexRecord {
 	return &IndexRecord{
 		keySize: uint64(len([]byte(memEntry.Key))),
 		key:     memEntry.Key,

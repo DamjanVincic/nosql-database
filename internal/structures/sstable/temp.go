@@ -1,23 +1,24 @@
 package sstable
 
 import (
+	"bytes"
 	"encoding/binary"
 	"math"
-	"os"
 
 	"github.com/DamjanVincic/key-value-engine/internal/models"
 	"github.com/DamjanVincic/key-value-engine/internal/structures/hash"
-	"github.com/edsrzf/mmap-go"
 )
 
 const (
 	// number of bytes used for writting the size of hashWithSeed in file
 	HashWithSeedSizeSize = 8
+	// number of bytes stored in Node data after hashing
+	HashedNodesSize = 8
 )
 
 type MerkleTree struct {
 	Root         *Node
-	hashWithSeed []hash.HashWithSeed
+	HashWithSeed hash.HashWithSeed
 }
 
 type Node struct {
@@ -58,27 +59,33 @@ func createDataForNode(key string, data *models.Data) []byte {
 /*
 get binary data and hash function and return new node with no children and hashed values
 */
-func createNewNode(key string, value *models.Data) *Node {
+func (merkleTree *MerkleTree) createNewNode(key string, value *models.Data) (*Node, error) {
 	newData := createDataForNode(key, value)
-	hashFunc := hash.CreateHashFunctions(1)[0]
-	values, _ := hashFunc.Hash(newData)
+	values, err := merkleTree.HashWithSeed.Hash(newData)
+	if err != nil {
+		return nil, err
+	}
 	valuesBinary := make([]byte, 8)
 	binary.BigEndian.PutUint64(valuesBinary, values)
-	return &Node{left: nil, right: nil, data: valuesBinary}
+	return &Node{left: nil, right: nil, data: valuesBinary}, nil
 }
 
 /*
-since merkle tree if build from bottom up we need all data as leafs
+since merkle tree is build from bottom up we need all data as leafs
 if number of leafs is not 2**n we need to add empty nodes
 there hash wont change anything
 */
-func CreateMerkleTree(allData map[string]*models.Data) *MerkleTree {
+func CreateMerkleTree(allData []*MemEntry) (*MerkleTree, error) {
 	var nodes []*Node
 	var merkleTree MerkleTree
+	merkleTree.HashWithSeed = hash.CreateHashFunctions(1)[0]
 
 	// creating all the end nodes
-	for key, data := range allData {
-		node := createNewNode(key, data)
+	for _, memEntry := range allData {
+		node, err := merkleTree.createNewNode(memEntry.Key, memEntry.Value)
+		if err != nil {
+			return nil, err
+		}
 		nodes = append(nodes, node)
 	}
 
@@ -89,18 +96,23 @@ func CreateMerkleTree(allData map[string]*models.Data) *MerkleTree {
 		targetSize := int(math.Pow(2, degree)) // ex. n is 2.3 then degree is 3 and we need 8 nodes since 2**3
 		for i := len(nodes); i < targetSize; i++ {
 			// add number of empty nodes that is needed
-			nodes = append(nodes, createNewNode("", &models.Data{Value: []byte{}, Tombstone: true, Timestamp: 0}))
+			node, err := merkleTree.createNewNode("", &models.Data{Value: []byte{}, Tombstone: false, Timestamp: 0})
+			if err != nil {
+				return nil, err
+			}
+			nodes = append(nodes, node)
 		}
 	}
 
 	for len(nodes) > 1 {
 		var newLevel []*Node
 
-		merkleTree.hashWithSeed = hash.CreateHashFunctions(1)
 		for i := 0; i < len(nodes); i += 2 {
-			hashFunc := merkleTree.hashWithSeed[0]
 			// add two array together and hash
-			values, _ := hashFunc.Hash(append(nodes[i].data, nodes[i+1].data...))
+			values, err := merkleTree.HashWithSeed.Hash(append(nodes[i].data, nodes[i+1].data...))
+			if err != nil {
+				return nil, err
+			}
 			valuesBinary := make([]byte, 8)
 			binary.BigEndian.PutUint64(valuesBinary, values)
 			// create new node with nodes at index i and i + 1, parent-left and right child
@@ -116,64 +128,26 @@ func CreateMerkleTree(allData map[string]*models.Data) *MerkleTree {
 	}
 
 	merkleTree.Root = nodes[len(nodes)-1]
-	return &merkleTree
+	return &merkleTree, nil
 }
-func (tree *MerkleTree) WriteInFile(data []byte, filePath string) error {
-	// necessary for mapping the file on disc, we have to take care of memory space
-	// initialize to 8 because the hashWithSeed size is variable
-	totalBytes := int64(8)
-	// all data that needs to be written to disc
-	// append serialized hash function
-	serializedHash := hash.Serialize(tree.hashWithSeed)
+func (tree *MerkleTree) Serialize() []byte {
+	//add size of hashWithSeed to byte array
+	bytes := make([]byte, HashWithSeedSizeSize)
+	serializedHash := hash.Serialize([]hash.HashWithSeed{tree.HashWithSeed})
 	hashFuncSize := uint64(len(serializedHash))
-	totalBytes += int64(hashFuncSize)
-	// save size of hash function with seeds
-	flatData := make([]byte, 8)
-	binary.BigEndian.PutUint64(flatData[:8], hashFuncSize)
-	// append hashWithSeed
-	flatData = append(flatData, serializedHash...)
-	// append merkleTree data
-	flatData = append(flatData, data...)
-	totalBytes += int64(len(data))
-
-	// open file
-	file, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE, 0644)
-	if err != nil {
-		return err
-	}
-
-	fileStat, err := file.Stat()
-	if err != nil {
-		return err
-	}
-	fileSize := fileStat.Size()
-
-	// ensure that the file has enough space to accommodate the new data
-	if err = file.Truncate(totalBytes + fileSize); err != nil {
-		return err
-	}
-	// mapping the file
-	mmapFile, err := mmap.Map(file, mmap.RDWR, 0)
-	if err != nil {
-		return err
-	}
-	copy(mmapFile[fileSize:], flatData)
-	err = mmapFile.Unmap()
-	if err != nil {
-		return err
-	}
-	err = file.Close()
-	if err != nil {
-		return err
-	}
-	return nil
+	binary.BigEndian.PutUint64(bytes[:HashWithSeedSizeSize], hashFuncSize)
+	//append hashWithSeed
+	bytes = append(bytes, serializedHash...)
+	bytes = append(bytes, MerkleBFS(tree.Root)...)
+	return bytes
 }
 
+// BFS traversal on a binary tree; creates list of nodes
 func MerkleBFS(root *Node) []byte {
 	if root == nil {
 		return []byte{}
 	}
-	result := []byte{}
+	result := make([]byte, 0)
 	nodes := []*Node{root}
 	for len(nodes) > 0 {
 		current := nodes[0] // get next in line
@@ -188,49 +162,56 @@ func MerkleBFS(root *Node) []byte {
 	}
 	return result
 }
-func (tree *MerkleTree) ReadFromFile(filePath string) (*MerkleTree, error) {
-	file, err := os.OpenFile(filePath, os.O_RDWR, 0644)
-	if err != nil {
-		return nil, err
-	}
 
-	mmapFile, err := mmap.Map(file, mmap.RDWR, 0)
-	if err != nil {
-		return nil, err
+func DeserializeMerkle(data []byte) (*MerkleTree, error) {
+	//deserialize hash func
+	hashWithSeedSize := binary.BigEndian.Uint64(data[:HashWithSeedSizeSize])
+	hashWithSeed := hash.Deserialize(data[HashWithSeedSizeSize : HashWithSeedSizeSize+hashWithSeedSize])[0]
+	//deserialize nodes
+	var nodes []byte
+	for offset := HashWithSeedSizeSize + hashWithSeedSize; offset < uint64(len(data)); offset += HashedNodesSize {
+		nodes = append(nodes, data[offset:offset+HashedNodesSize]...)
 	}
-
-	// read hashWithSeed len
-	hashWithSeedSize := binary.BigEndian.Uint64(mmapFile[:HashWithSeedSizeSize])
-	//read and deserialize hashWithSeed
-	tree.hashWithSeed = hash.Deserialize(mmapFile[HashWithSeedSizeSize : HashWithSeedSizeSize+hashWithSeedSize])
-
-	// read merkleTree data, every node contains hashed array of 8 bytes
-	data := make([]byte, 0)
-	for offset := uint64(HashWithSeedSizeSize + hashWithSeedSize); offset < uint64(len(mmapFile)); offset += 8 {
-		data = append(data, mmapFile[offset:offset+8]...)
-	}
-
-	tree.Root = tree.Root.binaryTree(data, 0)
-	err = mmapFile.Unmap()
-	if err != nil {
-		return nil, err
-	}
-	err = file.Close()
-	if err != nil {
-		return nil, err
-	}
-	return tree, nil
+	//constructs merkle from list of nodes and returns root node
+	root := binaryTree(nodes, 0)
+	return &MerkleTree{
+		Root:         root,
+		HashWithSeed: hashWithSeed,
+	}, nil
 }
-func (node *Node) binaryTree(data []byte, index int) *Node {
-	if index < len(data) {
+
+// recursive function used to construct a binary tree from a given byte slice data and an initial index index
+// returns Root Node
+func binaryTree(data []byte, index int) *Node {
+	if index*HashedNodesSize+HashedNodesSize <= len(data) {
 		node := &Node{
-			data:  data,
+			data:  data[index*HashedNodesSize : index*HashedNodesSize+HashedNodesSize],
 			left:  nil,
 			right: nil,
 		}
-		node.left = node.binaryTree(data, 2*index+1)
-		node.right = node.binaryTree(data, 2*index+2)
+		node.left = binaryTree(data, 2*index+1)
+		node.right = binaryTree(data, 2*index+2)
 		return node
 	}
 	return nil
+}
+
+func (merkleTree *MerkleTree) IsEqualTo(comparableTree *MerkleTree) bool {
+
+	//compare hash functions (must serialize them)
+	serializedHash := hash.Serialize([]hash.HashWithSeed{merkleTree.HashWithSeed})
+	serializedComparableHash := hash.Serialize([]hash.HashWithSeed{comparableTree.HashWithSeed})
+	if !bytes.Equal(serializedHash, serializedComparableHash) {
+		return false
+	}
+
+	// compare roots
+	root := merkleTree.Root.data
+	comparableRoot := comparableTree.Root.data
+
+	if !bytes.Equal(root, comparableRoot) {
+		return false
+	}
+
+	return true
 }

@@ -13,7 +13,7 @@ type DataRecord struct {
 	value     []byte
 }
 
-func NewDataRecord(memEntry MemEntry) *DataRecord {
+func NewDataRecord(memEntry *MemEntry) *DataRecord {
 
 	// Bytes for checksum (9 bytes for Timestamp, Tombstone)
 	bytes := make([]byte, 9)
