@@ -82,6 +82,7 @@ const (
 	FileNamesSizeSize = 8
 	// File naming constants for simpleSSTable
 	SimplePrefix = "ssst_"
+	SimpleSufix  = "_sss"
 )
 
 type MemEntry struct {
@@ -105,9 +106,9 @@ type SimpleSSTable struct {
 
 func NewSimpleSSTable(memEntries []*MemEntry) (*SimpleSSTable, error) {
 	// Create the directory if it doesn't exist
-	dirEntries, err := os.ReadDir(SimplePath)
+	dirEntries, err := os.ReadDir(Path)
 	if os.IsNotExist(err) {
-		err := os.Mkdir(SimplePath, os.ModePerm)
+		err := os.Mkdir(Path, os.ModePerm)
 		if err != nil {
 			return nil, err
 		}
@@ -115,23 +116,40 @@ func NewSimpleSSTable(memEntries []*MemEntry) (*SimpleSSTable, error) {
 	var filename string
 	var index uint8
 	lsmIndex := uint8(1)
-
+	var subdirPath string
+	var subdirName string
 	// If there are no files in the directory, create the first one
 	if len(dirEntries) == 0 {
+		// subdirName : sstableN (N - index)
 		index = 1
-		// Filename format: ssst_00001_lsmindex.log
+		subdirName = fmt.Sprintf("sstable%d", index)
+		subdirPath = filepath.Join(Path, subdirName)
+		err := os.Mkdir(subdirPath, os.ModePerm)
+		if err != nil {
+			return nil, err
+		}
 	} else {
 		// Get the last file
-		filename = dirEntries[len(dirEntries)-1].Name()
-		n, err := strconv.ParseUint(filename[5:10], 10, 32)
+		subdirName = dirEntries[len(dirEntries)-1].Name()
+		fmt.Println(subdirName)
+		n, err := strconv.ParseUint(subdirName[7:], 10, 8)
 		index = uint8(n)
 		if err != nil {
 			return nil, err
 		}
+		fmt.Println(index)
 		index++
+		subdirName = fmt.Sprintf("sstable%d", index)
+		subdirPath = filepath.Join(Path, subdirName)
+		dirEntries, err := os.ReadDir(subdirPath)
+		fmt.Println(dirEntries)
+		err = os.Mkdir(subdirPath, os.ModePerm)
+		if err != nil {
+			return nil, err
+		}
 	}
-	filename = fmt.Sprintf("%s%05d_%d.db", SimplePrefix, index, lsmIndex)
-	file, err := os.OpenFile(filepath.Join(SimplePath, filename), os.O_CREATE|os.O_RDWR, 0644)
+	filename = fmt.Sprintf("%s%05d_%d%s.db", Prefix, index, lsmIndex, SimpleSufix)
+	file, err := os.OpenFile(filepath.Join(subdirPath, filename), os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		return nil, err
 	}
