@@ -383,51 +383,80 @@ func (sstable SSTable) Get(key string) (*models.Data, error) {
 	//sstable\sstableN
 	lastSubDirName := dirEntries[len(dirEntries)-1].Name()
 	index, err := strconv.ParseUint(lastSubDirName[7:8], 10, 64)
+	lastSubDirNameWithoutIndex := lastSubDirName[0:7]
 	if err != nil {
 		return nil, err
 	}
-	subDirPath := filepath.Join(Path, lastSubDirName)
-	subDirEntries, err := os.ReadDir(subDirPath)
-	if os.IsNotExist(err) {
-		err := os.Mkdir(subDirPath, os.ModePerm)
-		if err != nil {
-			return nil, err
-		}
-	}
-	// paths : sstable\\sstableN\\sst_00001_1_part.db
-	dataFilePath := filepath.Join(subDirPath, subDirEntries[0].Name())
-	filterFilePath := filepath.Join(subDirPath, subDirEntries[1].Name())
-	indexFilePath := filepath.Join(subDirPath, subDirEntries[2].Name())
-	metaFilePath := filepath.Join(subDirPath, subDirEntries[3].Name())
-	summaryFilePath := filepath.Join(subDirPath, subDirEntries[4].Name())
-	tocFilePath := filepath.Join(subDirPath, subDirEntries[5].Name())
-
-	dataFile, err := os.OpenFile(dataFilePath, os.O_RDWR, 0644)
-	filterFile, err := os.OpenFile(filterFilePath, os.O_RDWR, 0644)
-	indexFile, err := os.OpenFile(indexFilePath, os.O_RDWR, 0644)
-	metaFile, err := os.OpenFile(metaFilePath, os.O_RDWR, 0644)
-	summaryFile, err := os.OpenFile(summaryFilePath, os.O_RDWR, 0644)
-	tocFile, err := os.OpenFile(tocFilePath, os.O_RDWR, 0644)
-	fmt.Println(metaFile, tocFile)
-	found, err := ReadBloomFilterFromFile(key, filterFile)
-	if !found || err != nil {
-		return nil, err
-	}
-	indexOffset, err := ReadSummaryFromFile(summaryFile, key)
-	if err != nil {
-		return nil, err
-	}
-	indexRecords, err := ReadIndexFromFile(indexFile, indexOffset)
-	for i := 0; i < len(indexRecords); i++ {
-		if indexRecords[i].key == key {
-			dataRecord, err := ReadDataFromFile(dataFile, indexRecords[i].offset, indexRecords[i+1].offset)
+	for {
+		subDirName := lastSubDirNameWithoutIndex + fmt.Sprintf("%d", index)
+		subDirPath := filepath.Join(Path, subDirName)
+		subDirEntries, err := os.ReadDir(subDirPath)
+		if os.IsNotExist(err) {
+			err := os.Mkdir(subDirPath, os.ModePerm)
 			if err != nil {
 				return nil, err
 			}
-			return &models.Data{Value: dataRecord.value, Tombstone: dataRecord.tombstone, Timestamp: dataRecord.timestamp}, nil
 		}
+		// paths : sstable\\sstableN\\sst_00001_1_part.db
+		dataFilePath := filepath.Join(subDirPath, subDirEntries[0].Name())
+		filterFilePath := filepath.Join(subDirPath, subDirEntries[1].Name())
+		indexFilePath := filepath.Join(subDirPath, subDirEntries[2].Name())
+		metaFilePath := filepath.Join(subDirPath, subDirEntries[3].Name())
+		summaryFilePath := filepath.Join(subDirPath, subDirEntries[4].Name())
+		tocFilePath := filepath.Join(subDirPath, subDirEntries[5].Name())
+
+		dataFile, err := os.OpenFile(dataFilePath, os.O_RDWR, 0644)
+		filterFile, err := os.OpenFile(filterFilePath, os.O_RDWR, 0644)
+		indexFile, err := os.OpenFile(indexFilePath, os.O_RDWR, 0644)
+		metaFile, err := os.OpenFile(metaFilePath, os.O_RDWR, 0644)
+		summaryFile, err := os.OpenFile(summaryFilePath, os.O_RDWR, 0644)
+		tocFile, err := os.OpenFile(tocFilePath, os.O_RDWR, 0644)
+		fmt.Println(metaFile, tocFile)
+		found, err := ReadBloomFilterFromFile(key, filterFile)
+		if !found {
+			index--
+			err = dataFile.Close()
+			if err != nil {
+				return nil, err
+			}
+			err = filterFile.Close()
+			if err != nil {
+				return nil, err
+			}
+			err = indexFile.Close()
+			if err != nil {
+				return nil, err
+			}
+			err = metaFile.Close()
+			if err != nil {
+				return nil, err
+			}
+			err = tocFile.Close()
+			if err != nil {
+				return nil, err
+			}
+			if index == 0 {
+				return nil, nil
+			}
+			continue
+		}
+		indexOffset, err := ReadSummaryFromFile(summaryFile, key)
+		if err != nil {
+			return nil, err
+		}
+		indexRecords, err := ReadIndexFromFile(indexFile, indexOffset)
+		for i := 0; i < len(indexRecords); i++ {
+			if indexRecords[i].key == key {
+				dataRecord, err := ReadDataFromFile(dataFile, indexRecords[i].offset, indexRecords[i+1].offset)
+				if err != nil {
+					return nil, err
+				}
+				return &models.Data{Value: dataRecord.value, Tombstone: dataRecord.tombstone, Timestamp: dataRecord.timestamp}, nil
+			}
+		}
+		break
+
 	}
-	index--
 	return nil, nil
 }
 
@@ -500,7 +529,6 @@ func createFiles(memEntries []*MemEntry, dataFile, indexFile, summaryFile, filte
 		return err
 	}
 	return nil
-
 }
 
 func serializeTocData(fileNames []*string) []byte {
