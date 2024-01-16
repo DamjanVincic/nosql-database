@@ -162,29 +162,19 @@ func WriteToFile(file *os.File, data []byte) error {
 	return nil
 }
 
-func ReadDataFromFile(file *os.File, offsetStart, offsetEnd uint64) (*DataRecord, error) {
-	fileStat, err := file.Stat()
-	if err != nil {
-		return nil, err
-	}
-	fileSize := fileStat.Size()
-	fmt.Println(fileSize)
-
-	mmapFile, err := mmap.Map(file, mmap.RDWR, 0)
-	if err != nil {
-		return nil, err
-	}
-
+func ReadDataFromFile(mmapFile mmap.MMap, offsetStart, offsetEnd uint64) (*DataRecord, error) {
+	/*
+		mmapFile, err := mmap.Map(file, mmap.RDWR, 0)
+		if err != nil {
+			return nil, err
+		}
+	*/
 	serializedDataRecord := mmapFile[offsetStart:offsetEnd]
 	dataRecord, err := DeserializeDataRecord(serializedDataRecord)
 	if err != nil {
 		return nil, err
 	}
 	err = mmapFile.Unmap()
-	if err != nil {
-		return nil, err
-	}
-	err = file.Close()
 	if err != nil {
 		return nil, err
 	}
@@ -365,6 +355,8 @@ func ReadBloomFilterFromFile(key string, mmapFile mmap.MMap) (bool, error) {
 	}
 	return found, err
 }
+func ReadMerkle(mmapFile mmap.MMap) {}
+func WriteMerkle()                  {}
 
 // //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // get serialized data
@@ -386,6 +378,11 @@ func addToSummaryIndex(entry *MemEntry, indexOffset uint64, result []byte) ([]by
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 func Get(key string) (*models.Data, error) {
+	var mmapFileData mmap.MMap
+	var mmapFileFilter mmap.MMap
+	var mmapFileSummary mmap.MMap
+	var mmapFileIndex mmap.MMap
+	var mmapFileMeta mmap.MMap
 	fmt.Println("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 	dirEntries, err := os.ReadDir(Path)
 	// if there is no dir to read from return nil
@@ -413,45 +410,136 @@ func Get(key string) (*models.Data, error) {
 				return nil, err
 			}
 		}
-		// paths : sstable\\sstableN\\sst_00001_1_part.db
-		dataFilePath := filepath.Join(subDirPath, subDirEntries[0].Name())
-		filterFilePath := filepath.Join(subDirPath, subDirEntries[1].Name())
-		indexFilePath := filepath.Join(subDirPath, subDirEntries[2].Name())
-		metaFilePath := filepath.Join(subDirPath, subDirEntries[3].Name())
-		summaryFilePath := filepath.Join(subDirPath, subDirEntries[4].Name())
-		tocFilePath := filepath.Join(subDirPath, subDirEntries[5].Name())
+		if len(subDirEntries) == 1 {
+			// we get data from single file sstable
+			simpleFilePath := filepath.Join(subDirPath, subDirEntries[0].Name())
+			// open simple sstable file
+			simpleFile, err := os.OpenFile(simpleFilePath, os.O_RDWR, 0644)
+			if err != nil {
+				return nil, err
+			}
+			mmapFileSimple, err := mmap.Map(simpleFile, mmap.RDWR, 0)
+			if err != nil {
+				return nil, err
+			}
+			//get sizes of each part of SimpleSSTable
+			header := mmapFileSimple[:HeaderSize]
+			datasize := uint64(binary.BigEndian.Uint64(header[:8]))
+			filtersize := uint64(binary.BigEndian.Uint64(header[8:16]))
+			indexsize := uint64(binary.BigEndian.Uint64(header[16:24]))
+			summarysize := uint64(binary.BigEndian.Uint64(header[24:]))
 
-		dataFile, err := os.OpenFile(dataFilePath, os.O_RDWR, 0644)
+			dataStart := HeaderSize
+			filterStart := dataStart + int(datasize)
+			indexStart := filterStart + int(filtersize)
+			summaryStart := indexStart + int(indexsize)
+			metaStart := summaryStart + int(summarysize)
 
-		// get filter to read
-		filterFile, err := os.OpenFile(filterFilePath, os.O_RDWR, 0644)
-		mmapFileFilter, err := mmap.Map(filterFile, mmap.RDONLY, 0)
-		if err != nil {
-			return nil, err
-		}
+			// same as hole mmap file in multi file sstable
+			mmapFileDataPart := mmapFileSimple[dataStart:filterStart]
+			mmapFileData = make([]byte, len(mmapFileDataPart))
+			copy(mmapFileData, mmapFileDataPart)
 
-		// get index file to read
-		indexFile, err := os.OpenFile(indexFilePath, os.O_RDWR, 0644)
-		mmapFileIndex, err := mmap.Map(indexFile, mmap.RDWR, 0)
-		if err != nil {
-			return nil, err
-		}
+			mmapFileFilterPart := mmapFileSimple[filterStart:indexStart]
+			mmapFileFilter = make([]byte, len(mmapFileFilterPart))
+			copy(mmapFileFilter, mmapFileFilterPart)
 
-		metaFile, err := os.OpenFile(metaFilePath, os.O_RDWR, 0644)
+			mmapFileIndexPart := mmapFileSimple[indexStart:summaryStart]
+			mmapFileIndex = make([]byte, len(mmapFileIndexPart))
+			copy(mmapFileIndex, mmapFileIndexPart)
 
-		summaryFile, err := os.OpenFile(summaryFilePath, os.O_RDWR, 0644)
-		// get summary
-		mmapFileSummary, err := mmap.Map(summaryFile, mmap.RDWR, 0)
-		if err != nil {
-			return nil, err
-		}
-		tocFile, err := os.OpenFile(tocFilePath, os.O_RDWR, 0644)
-		fmt.Println(metaFile, tocFile)
-		// start process for getting the element
-		// first we need to check if its in bloom filter
-		found, err := ReadBloomFilterFromFile(key, mmapFileFilter)
-		if !found {
-			index--
+			mmapFileSummaryPart := mmapFileSimple[summaryStart:metaStart]
+			mmapFileSummary = make([]byte, len(mmapFileSummaryPart))
+			copy(mmapFileSummary, mmapFileSummaryPart)
+
+			mmapFileMetaPart := mmapFileSimple[metaStart:]
+			mmapFileMeta = make([]byte, len(mmapFileMetaPart))
+			copy(mmapFileMeta, mmapFileMetaPart)
+
+			// close the file
+			err = mmapFileSimple.Unmap()
+			if err != nil {
+				return nil, err
+			}
+			err = simpleFile.Close()
+			if err != nil {
+				return nil, err
+			}
+			return nil, nil
+		} else {
+			// paths : sstable\\sstableN\\sst_00001_1_part.db
+			dataFilePath := filepath.Join(subDirPath, subDirEntries[0].Name())
+			filterFilePath := filepath.Join(subDirPath, subDirEntries[1].Name())
+			indexFilePath := filepath.Join(subDirPath, subDirEntries[2].Name())
+			metaFilePath := filepath.Join(subDirPath, subDirEntries[3].Name())
+			summaryFilePath := filepath.Join(subDirPath, subDirEntries[4].Name())
+			tocFilePath := filepath.Join(subDirPath, subDirEntries[5].Name())
+
+			// get data file to read
+			dataFile, err := os.OpenFile(dataFilePath, os.O_RDWR, 0644)
+			mmapFileDataPart, err := mmap.Map(dataFile, mmap.RDWR, 0)
+			if err != nil {
+				return nil, err
+			}
+			mmapFileData = make([]byte, len(mmapFileDataPart))
+			copy(mmapFileData, mmapFileDataPart)
+
+			// get filter to read
+			filterFile, err := os.OpenFile(filterFilePath, os.O_RDWR, 0644)
+			mmapFileFilterPart, err := mmap.Map(filterFile, mmap.RDONLY, 0)
+			if err != nil {
+				return nil, err
+			}
+			mmapFileFilter = make([]byte, len(mmapFileFilterPart))
+			copy(mmapFileFilter, mmapFileFilterPart)
+
+			// get index file to read
+			indexFile, err := os.OpenFile(indexFilePath, os.O_RDWR, 0644)
+			mmapFileIndexPart, err := mmap.Map(indexFile, mmap.RDWR, 0)
+			if err != nil {
+				return nil, err
+			}
+			mmapFileIndexPart = make([]byte, len(mmapFileIndexPart))
+			copy(mmapFileIndex, mmapFileIndexPart)
+			metaFile, err := os.OpenFile(metaFilePath, os.O_RDWR, 0644)
+
+			mmapFileMetaPart, err := mmap.Map(metaFile, mmap.RDWR, 0)
+			if err != nil {
+				return nil, err
+			}
+			mmapFileMeta = make([]byte, len(mmapFileMetaPart))
+			copy(mmapFileMeta, mmapFileMetaPart)
+
+			summaryFile, err := os.OpenFile(summaryFilePath, os.O_RDWR, 0644)
+			// get summary
+			mmapFileSummaryPart, err := mmap.Map(summaryFile, mmap.RDWR, 0)
+			if err != nil {
+				return nil, err
+			}
+			mmapFileSummary = make([]byte, len(mmapFileSummaryPart))
+			copy(mmapFileSummary, mmapFileSummaryPart)
+			tocFile, err := os.OpenFile(tocFilePath, os.O_RDWR, 0644)
+
+			err = mmapFileDataPart.Unmap()
+			if err != nil {
+				return nil, err
+			}
+			err = mmapFileFilterPart.Unmap()
+			if err != nil {
+				return nil, err
+			}
+			err = mmapFileSummaryPart.Unmap()
+			if err != nil {
+				return nil, err
+			}
+			err = mmapFileIndexPart.Unmap()
+			if err != nil {
+				return nil, err
+			}
+			err = mmapFileMetaPart.Unmap()
+			if err != nil {
+				return nil, err
+			}
 			err = dataFile.Close()
 			if err != nil {
 				return nil, err
@@ -472,6 +560,12 @@ func Get(key string) (*models.Data, error) {
 			if err != nil {
 				return nil, err
 			}
+		}
+		// start process for getting the element
+		// first we need to check if its in bloom filter
+		found, err := ReadBloomFilterFromFile(key, mmapFileFilter)
+		if !found {
+			index--
 			if index == 0 {
 				return nil, nil
 			}
@@ -484,7 +578,7 @@ func Get(key string) (*models.Data, error) {
 		indexRecords, err := ReadIndexFromFile(mmapFileIndex, indexOffset)
 		for i := 0; i < len(indexRecords); i++ {
 			if indexRecords[i].key == key {
-				dataRecord, err := ReadDataFromFile(dataFile, indexRecords[i].offset, indexRecords[i+1].offset)
+				dataRecord, err := ReadDataFromFile(mmapFileData, indexRecords[i].offset, indexRecords[i+1].offset)
 				if err != nil {
 					return nil, err
 				}
