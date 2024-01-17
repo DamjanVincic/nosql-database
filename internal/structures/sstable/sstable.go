@@ -300,7 +300,11 @@ func readFromToc(tocfile string) ([]string, error) {
 	return []string{dataFile, indexFile, summaryFile, metadataFile}, nil
 }
 
-func WriteToFile(file *os.File, data []byte) error {
+func WriteToFile(filename string, data []byte) error {
+	file, err := os.OpenFile(filename, os.O_RDWR, 0664)
+	if err != nil {
+		return err
+	}
 	totalBytes := int64(len(data))
 	fileStat, err := file.Stat()
 	if err != nil {
@@ -317,6 +321,10 @@ func WriteToFile(file *os.File, data []byte) error {
 	}
 	copy(mmapFile[fileSize:], data)
 	err = mmapFile.Unmap()
+	if err != nil {
+		return err
+	}
+	err = file.Close()
 	if err != nil {
 		return err
 	}
@@ -491,6 +499,41 @@ func ReadSummaryFromFile(mmapFile mmap.MMap, key string) (uint64, error) {
 	}
 	return 0, errors.New("key not found")
 }
+func WriteBloomFilter(filter bloomfilter.BloomFilter, filterFilename string) error {
+	// First 4 bytes are the number of bytes in the byte array
+	// Next 4 bytes are the number of hash functions
+	filterFile, err := os.OpenFile(filterFilename, os.O_RDWR, 0644)
+	if err != nil {
+		return err
+	}
+	data := filter.Serialize()
+	totalBytes := int64(len(data))
+	//var flatData []byte
+	//flatData = append(flatData, data...)
+	fileStat, err := filterFile.Stat()
+	if err != nil {
+		return err
+	}
+	fileSize := fileStat.Size()
+
+	if err = filterFile.Truncate(int64(fileSize + totalBytes)); err != nil {
+		return err
+	}
+	mmapFile, err := mmap.Map(filterFile, mmap.RDWR, 0)
+	if err != nil {
+		return err
+	}
+	copy(mmapFile[fileSize:], data)
+	err = mmapFile.Unmap()
+	if err != nil {
+		return err
+	}
+	err = filterFile.Close()
+	if err != nil {
+		return err
+	}
+	return nil
+}
 
 // mmapFile in case of multi file sstable with be the hole file
 // in the case of single file sstable it will only be part that is bloom filter
@@ -512,8 +555,8 @@ func ReadBloomFilterFromFile(key string, mmapFile mmap.MMap) (bool, error) {
 	}
 	return found, err
 }
-func ReadMerkle(mmapFile mmap.MMap) {}
-func WriteMerkle()                  {}
+func ReadMerkle(mmapFile mmap.MMap)                        {}
+func WriteToMerkleFile(data []byte, filename string) error { return nil }
 
 // //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // get serialized data
@@ -755,7 +798,6 @@ func Get(key string) (*models.Data, error) {
 	return nil, nil
 }
 
-// //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // file name will be toc file for multi file sstable
 // and file for single file sstable
 func createFiles(memEntries []*MemEntry, file *os.File, singleFile bool) error {
@@ -847,30 +889,27 @@ func createFiles(memEntries []*MemEntry, file *os.File, singleFile bool) error {
 		data = append(data, merkleData...)
 	}
 
-	tocData := serializeTocData(fileNames)
-
-	// upis u fajl i izmedju cuvaj sve velicine i to sto treba
-	err = WriteToFile(dataFile, dataRecords)
+	files, err := readFromToc(file.Name())
 	if err != nil {
 		return err
 	}
-	err = WriteToFile(indexFile, indexRecords)
+	err = WriteToFile(files[0], dataRecords)
 	if err != nil {
 		return err
 	}
-	err = WriteToFile(summaryFile, summaryRecords)
+	err = WriteToIndexFile(files[1], indexRecords)
 	if err != nil {
 		return err
 	}
-	err = WriteToFile(filterFile, filterData)
+	err = WriteSummaryToFile(files[2], summaryRecords, summaryMin, summaryMax)
 	if err != nil {
 		return err
 	}
-	err = WriteToFile(metadataFile, merkleData)
+	err = WriteBloomFilter(filter, files[3])
 	if err != nil {
 		return err
 	}
-	err = WriteToFile(tocFile, tocData)
+	err = WriteToMerkleFile(merkleData, files[4])
 	if err != nil {
 		return err
 	}
