@@ -13,7 +13,70 @@ import (
 	"github.com/edsrzf/mmap-go"
 )
 
-func NewSSTable2(memEntries []*MemEntry) (*SSTable, error) {
+const (
+	CrcSize       = 4
+	TimestampSize = 8
+	TombstoneSize = 1
+	KeySizeSize   = 8
+	OffsetSize    = 8
+	//for dataRecord
+	CrcStart         = 0
+	TimestampStart   = CrcStart + CrcSize
+	TombstoneStart   = TimestampStart + TimestampSize
+	ValueStart       = TombstoneStart + TombstoneSize
+	RecordHeaderSize = CrcSize + TimestampSize + TombstoneSize
+	SummaryConst     = 5 //from config file
+	//for indexRecord
+	KeySizeStart = 0
+	KeyStart     = KeySizeStart + KeySizeSize
+	//sizes of each block in file for SimpleSSTable and size of header which we will use for reading and positioning in file
+	//reason why we store offsets in uint64 (8 bytes) is because max value od unit32 is 0.0.00429497 TB
+	DataBlockSizeSize    = 8
+	IndexBlockSizeSize   = 8
+	FilterBlockSizeSize  = 8
+	SummaryBlockSizeSize = 8
+	HeaderSize           = DataBlockSizeSize + IndexBlockSizeSize + FilterBlockSizeSize + SummaryBlockSizeSize
+	DataBlockStart       = 0
+	FilterBlockStart     = DataBlockStart + DataBlockSizeSize
+	IndexBlockStart      = FilterBlockStart + FilterBlockSizeSize
+	SummaryBlockStart    = IndexBlockStart + IndexBlockSizeSize
+	MetaBlockStart       = SummaryBlockStart + SummaryBlockSizeSize
+
+	//summary header sizes
+	SummaryMinSizeSize  = 8
+	SummaryMaxSizeSize  = 8
+	SummaryMinSizestart = 0
+	SummaryMaxSizeStart = SummaryMinSizestart + SummaryMinSizeSize
+	// Path to store SSTable files
+	Path = "sstable"
+	// Path to store the SimpleSStable file
+	SimplePath = "simplesstable"
+	// File naming constants for SSTable
+	Prefix       = "sst_"
+	DataSufix    = "_data"
+	IndexSufix   = "_index"
+	SummarySufix = "_summary"
+	FilterSufix  = "_filter"
+	MetaSufix    = "_meta"
+	TocSufix     = "_toc"
+	//for toc file header (contains lengths of filenames sizes)
+	FileNamesSizeSize = 8
+	// File naming constants for simpleSSTable
+	SimplePrefix = "ssst_"
+	SimpleSufix  = "_sss"
+)
+
+type MemEntry struct {
+	Key   string
+	Value *models.Data
+}
+
+type SSTable struct {
+	summaryConst uint16
+	filename     string
+}
+
+func NewSSTable(memEntries []*MemEntry, singleFile bool) (*SSTable, error) {
 	// Create the directory if it doesn't exist
 	dirEntries, err := os.ReadDir(Path)
 	if os.IsNotExist(err) {
@@ -28,7 +91,7 @@ func NewSSTable2(memEntries []*MemEntry) (*SSTable, error) {
 	var filterFilename string
 	var metadataFilename string
 	var tocFilename string
-
+	var filename string
 	lsmIndex := uint8(1)
 	var index uint8
 	var subdirPath string
@@ -64,79 +127,156 @@ func NewSSTable2(memEntries []*MemEntry) (*SSTable, error) {
 			return nil, err
 		}
 	}
-	// Filename format: sst_00001_lsmi_PART.db
-	dataFilename = fmt.Sprintf("%s%05d_%d%s.db", Prefix, index, lsmIndex, DataSufix)
-	indexFilename = fmt.Sprintf("%s%05d_%d%s.db", Prefix, index, lsmIndex, IndexSufix)
-	summaryFilename = fmt.Sprintf("%s%05d_%d%s.db", Prefix, index, lsmIndex, SummarySufix)
-	filterFilename = fmt.Sprintf("%s%05d_%d%s.db", Prefix, index, lsmIndex, FilterSufix)
-	metadataFilename = fmt.Sprintf("%s%05d_%d%s.db", Prefix, index, lsmIndex, MetaSufix)
-	tocFilename = fmt.Sprintf("%s%05d_%d%s.txt", Prefix, index, lsmIndex, TocSufix)
+	// creates files and save the data
+	if singleFile {
+		// creating file where everything will be held
+		filename := fmt.Sprintf("%s%05d_%d%s.db", Prefix, index, lsmIndex, SimpleSufix)
+		createFiles(memEntries, filename)
+		return &SSTable{
+			summaryConst: SummaryConst,
+			filename:     filename,
+		}, nil
 
-	dataFile, err := os.OpenFile(filepath.Join(subdirPath, dataFilename), os.O_CREATE|os.O_RDWR, 0644)
-	if err != nil {
-		return nil, err
-	}
-	indexFile, err := os.OpenFile(filepath.Join(subdirPath, indexFilename), os.O_CREATE|os.O_RDWR, 0644)
-	if err != nil {
-		return nil, err
-	}
-	summaryFile, err := os.OpenFile(filepath.Join(subdirPath, summaryFilename), os.O_CREATE|os.O_RDWR, 0644)
-	if err != nil {
-		return nil, err
-	}
-	filterFile, err := os.OpenFile(filepath.Join(subdirPath, filterFilename), os.O_CREATE|os.O_RDWR, 0644)
-	if err != nil {
-		return nil, err
-	}
-	metadataFile, err := os.OpenFile(filepath.Join(subdirPath, metadataFilename), os.O_CREATE|os.O_RDWR, 0644)
-	if err != nil {
-		return nil, err
-	}
-	tocFile, err := os.OpenFile(filepath.Join(subdirPath, tocFilename), os.O_CREATE|os.O_RDWR, 0644)
-	if err != nil {
-		return nil, err
-	}
-	filenames := make([]*string, 5)
-	filenames[0] = &dataFilename
-	filenames[1] = &indexFilename
-	filenames[2] = &summaryFilename
-	filenames[3] = &filterFilename
-	filenames[4] = &metadataFilename
-	createFiles(memEntries, dataFile, indexFile, summaryFile, filterFile, metadataFile, tocFile, filenames)
-	err = dataFile.Close()
-	if err != nil {
-		return nil, err
-	}
-	err = indexFile.Close()
-	if err != nil {
-		return nil, err
-	}
-	err = summaryFile.Close()
-	if err != nil {
-		return nil, err
-	}
-	err = filterFile.Close()
-	if err != nil {
-		return nil, err
-	}
-	err = metadataFile.Close()
-	if err != nil {
-		return nil, err
-	}
-	err = tocFile.Close()
-	if err != nil {
-		return nil, err
-	}
+	} else {
+		// Filename format: sst_00001_lsmi_PART.db
+		// create names of new files
+		dataFilename = fmt.Sprintf("%s%05d_%d%s.db", Prefix, index, lsmIndex, DataSufix)
+		indexFilename = fmt.Sprintf("%s%05d_%d%s.db", Prefix, index, lsmIndex, IndexSufix)
+		summaryFilename = fmt.Sprintf("%s%05d_%d%s.db", Prefix, index, lsmIndex, SummarySufix)
+		filterFilename = fmt.Sprintf("%s%05d_%d%s.db", Prefix, index, lsmIndex, FilterSufix)
+		metadataFilename = fmt.Sprintf("%s%05d_%d%s.db", Prefix, index, lsmIndex, MetaSufix)
+		tocFilename = fmt.Sprintf("%s%05d_%d%s.txt", Prefix, index, lsmIndex, TocSufix)
 
-	return &SSTable{
-		summaryConst:         SummaryConst,
-		dataFilename:         dataFilename,
-		indexFilename:        indexFilename,
-		summaryIndexFilename: summaryFilename,
-		filterFilename:       filterFilename,
-		metadataFilename:     metadataFilename,
-		tocFilename:          tocFilename,
-	}, nil
+		//create files
+		dataFile, err := os.OpenFile(filepath.Join(subdirPath, dataFilename), os.O_CREATE|os.O_RDWR, 0644)
+		if err != nil {
+			return nil, err
+		}
+		indexFile, err := os.OpenFile(filepath.Join(subdirPath, indexFilename), os.O_CREATE|os.O_RDWR, 0644)
+		if err != nil {
+			return nil, err
+		}
+		summaryFile, err := os.OpenFile(filepath.Join(subdirPath, summaryFilename), os.O_CREATE|os.O_RDWR, 0644)
+		if err != nil {
+			return nil, err
+		}
+		filterFile, err := os.OpenFile(filepath.Join(subdirPath, filterFilename), os.O_CREATE|os.O_RDWR, 0644)
+		if err != nil {
+			return nil, err
+		}
+		metadataFile, err := os.OpenFile(filepath.Join(subdirPath, metadataFilename), os.O_CREATE|os.O_RDWR, 0644)
+		if err != nil {
+			return nil, err
+		}
+		tocFile, err := os.OpenFile(filepath.Join(subdirPath, tocFilename), os.O_CREATE|os.O_RDWR, 0644)
+		if err != nil {
+			return nil, err
+		}
+		// write to toc to access later
+		writeToTocFile(dataFilename, indexFilename, summaryFilename, filterFilename, metadataFilename, tocFilename)
+
+		createFiles(memEntries, filename)
+		err = dataFile.Close()
+		if err != nil {
+			return nil, err
+		}
+		err = indexFile.Close()
+		if err != nil {
+			return nil, err
+		}
+		err = summaryFile.Close()
+		if err != nil {
+			return nil, err
+		}
+		err = filterFile.Close()
+		if err != nil {
+			return nil, err
+		}
+		err = metadataFile.Close()
+		if err != nil {
+			return nil, err
+		}
+		err = tocFile.Close()
+		if err != nil {
+			return nil, err
+		}
+
+		return &SSTable{
+			summaryConst: SummaryConst,
+			filename:     tocFilename,
+		}, nil
+	}
+}
+func writeToTocFile(dataFilename, indexFilename, summaryFilename, filterFilename, metadataFilename, tocFilename string) error {
+	tocFile, err := os.OpenFile(tocFilename, os.O_RDWR, 0644)
+	if err != nil {
+		return err
+	}
+	totalBytes := int64(8 * 5) // for sizes of strings
+	totalBytes += int64(len(dataFilename) + len(indexFilename) + len(summaryFilename) + len(metadataFilename))
+	data := []byte(strconv.FormatUint(uint64(len(dataFilename)), 10))
+	data = append(data, []byte(dataFilename)...)
+	data = append(data, []byte(strconv.FormatUint(uint64(len(indexFilename)), 10))...)
+	data = append(data, []byte(indexFilename)...)
+	data = append(data, []byte(strconv.FormatUint(uint64(len(summaryFilename)), 10))...)
+	data = append(data, []byte(summaryFilename)...)
+	data = append(data, []byte(strconv.FormatUint(uint64(len(filterFilename)), 10))...)
+	data = append(data, []byte(filterFilename)...)
+	data = append(data, []byte(strconv.FormatUint(uint64(len(metadataFilename)), 10))...)
+	data = append(data, []byte(metadataFilename)...)
+	fileStat, err := tocFile.Stat()
+	if err != nil {
+		return err
+	}
+	fileSize := fileStat.Size()
+
+	if err = tocFile.Truncate(int64(fileSize + totalBytes)); err != nil {
+		return err
+	}
+	mmapFile, err := mmap.Map(tocFile, mmap.RDWR, 0)
+	if err != nil {
+		return err
+	}
+	copy(mmapFile[fileSize:], data)
+	err = mmapFile.Unmap()
+	if err != nil {
+		return err
+	}
+	return nil
+}
+func readFromToc(tocfile string) ([]string, error) {
+	tocFile, err := os.OpenFile(tocfile, os.O_RDWR, 0664)
+	if err != nil {
+		return nil, err
+	}
+	defer tocFile.Close()
+
+	mmapFile, err := mmap.Map(tocFile, mmap.RDWR, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer mmapFile.Unmap()
+
+	// Read data section
+	dataSize := binary.BigEndian.Uint64(mmapFile[:8])
+	dataFile := string(mmapFile[8 : 8+dataSize])
+	mmapFile = mmapFile[8+dataSize:]
+
+	// Read index section
+	indexSize := binary.BigEndian.Uint64(mmapFile[:8])
+	indexFile := string(mmapFile[8 : 8+indexSize])
+	mmapFile = mmapFile[8+indexSize:]
+
+	// Read summary section
+	summarySize := binary.BigEndian.Uint64(mmapFile[:8])
+	summaryFile := string(mmapFile[8 : 8+summarySize])
+	mmapFile = mmapFile[8+summarySize:]
+
+	// Read metadata section
+	metadataSize := binary.BigEndian.Uint64(mmapFile[:8])
+	metadataFile := string(mmapFile[8 : 8+metadataSize])
+
+	return []string{dataFile, indexFile, summaryFile, metadataFile}, nil
 }
 
 func WriteToFile(file *os.File, data []byte) error {
@@ -171,10 +311,6 @@ func ReadDataFromFile(mmapFile mmap.MMap, offsetStart, offsetEnd uint64) (*DataR
 	*/
 	serializedDataRecord := mmapFile[offsetStart:offsetEnd]
 	dataRecord, err := DeserializeDataRecord(serializedDataRecord)
-	if err != nil {
-		return nil, err
-	}
-	err = mmapFile.Unmap()
 	if err != nil {
 		return nil, err
 	}
@@ -361,7 +497,7 @@ func WriteMerkle()                  {}
 // //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // get serialized data
 func addToDataSegment(entry *MemEntry, result []byte) (uint64, []byte) {
-	dataRecord := NewDataRecord(entry)
+	dataRecord := *NewDataRecord(entry)
 	serializedRecord := dataRecord.SerializeDataRecord()
 	return uint64(len(serializedRecord)), append(result, serializedRecord...)
 }
@@ -592,7 +728,14 @@ func Get(key string) (*models.Data, error) {
 }
 
 // //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-func createFiles(memEntries []*MemEntry, dataFile, indexFile, summaryFile, filterFile, metadataFile, tocFile *os.File, fileNames []*string) error {
+// file name will be toc file for multi file sstable
+// and file for single file sstable
+func createFiles(memEntries []*MemEntry, filename string) error {
+	singleFile := true
+	if filename[len(filename)-3:] == "txt" {
+		singleFile = false
+	}
+
 	dataRecords := make([]byte, 0)
 	indexRecords := make([]byte, 0)
 	summaryRecords := make([]byte, 0)
@@ -602,8 +745,12 @@ func createFiles(memEntries []*MemEntry, dataFile, indexFile, summaryFile, filte
 	var summaryMin []byte
 	var summaryMax []byte
 	var serializedIndexRecord []byte
-
+	dataBlockSize := uint64(0)
+	indexBlockSize := uint64(0)
+	summaryBlockSize := uint64(0)
+	metaBlockSize := uint64(0)
 	offset := uint64(0)
+	indexOffset := uint64(0) // index block size from ssstable
 	countKeysBetween := 0
 	filter := bloomfilter.CreateBloomFilter(len(memEntries), 0.2)
 	merkle, err := CreateMerkleTree(memEntries)
@@ -611,10 +758,13 @@ func createFiles(memEntries []*MemEntry, dataFile, indexFile, summaryFile, filte
 		return err
 	}
 	for _, entry := range memEntries {
-		offset, dataRecords = addToDataSegment(entry, dataRecords)
+		sizeOfDRD, dataRecords := addToDataSegment(entry, dataRecords)
 		indexOffset, indexRecords = addToIndex(offset, entry, indexRecords)
+		// keep track of size of the block for single file sstable
+		indexBlockSize += indexOffset
 		if countKeysBetween%SummaryConst == 0 {
 			serializedIndexRecord, summaryRecords = addToSummaryIndex(entry, indexOffset, summaryRecords)
+			summaryBlockSize += uint64(len(serializedIndexRecord))
 			if summaryMin == nil {
 				summaryMin = serializedIndexRecord
 			}
@@ -622,7 +772,7 @@ func createFiles(memEntries []*MemEntry, dataFile, indexFile, summaryFile, filte
 		filter.AddElement([]byte(entry.Key))
 		summaryMax = serializedIndexRecord
 		countKeysBetween++
-		break
+		offset += sizeOfDRD
 	}
 	filterData := filter.Serialize()
 	merkleData := merkle.Serialize()
@@ -635,6 +785,7 @@ func createFiles(memEntries []*MemEntry, dataFile, indexFile, summaryFile, filte
 
 	tocData := serializeTocData(fileNames)
 
+	// upis u fajl i izmedju cuvaj sve velicine i to sto treba
 	err = WriteToFile(dataFile, dataRecords)
 	if err != nil {
 		return err

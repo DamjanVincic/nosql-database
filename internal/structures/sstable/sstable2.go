@@ -3,168 +3,13 @@ package sstable
 import (
 	"encoding/binary"
 	"fmt"
-	"os"
-	"path/filepath"
-	"strconv"
-
 	"github.com/DamjanVincic/key-value-engine/internal/models"
 	"github.com/edsrzf/mmap-go"
+	"os"
+	"path/filepath"
 
 	"github.com/DamjanVincic/key-value-engine/internal/structures/bloomfilter"
 )
-
-/*
-+---------------+-----------------+---------------+--...--+
-|    CRC (4B)   | Timestamp (8B) | Tombstone(1B) |  Value |
-+---------------+-----------------+---------------+--...--+
-CRC = 32bit hash computed over the payload using CRC
-Tombstone = If this record was deleted and has a value
-Value = Value data
-Timestamp = Timestamp of the operation in seconds
-
-In order to optimize memory, we will not store the Key, KeySize and ValueSize found in Index.
-
-The user can choose the way tables are written to disk, whether all structures are written in the same or separate files.
-If user chooses the option to save structures to the same file, the program works with the SimpleSSTable structure and its functions,otherwise with SSTable.
-
-Write path : DOPISATI
-Read path : DOPISATI
-
-sta cemo za summary proredjenost??
-*/
-const (
-	CrcSize       = 4
-	TimestampSize = 8
-	TombstoneSize = 1
-	KeySizeSize   = 8
-	OffsetSize    = 8
-	//for dataRecord
-	CrcStart         = 0
-	TimestampStart   = CrcStart + CrcSize
-	TombstoneStart   = TimestampStart + TimestampSize
-	ValueStart       = TombstoneStart + TombstoneSize
-	RecordHeaderSize = CrcSize + TimestampSize + TombstoneSize
-	SummaryConst     = 5 //from config file
-	//for indexRecord
-	KeySizeStart = 0
-	KeyStart     = KeySizeStart + KeySizeSize
-	//sizes of each block in file for SimpleSSTable and size of header which we will use for reading and positioning in file
-	//reason why we store offsets in uint64 (8 bytes) is because max value od unit32 is 0.0.00429497 TB
-	DataBlockSizeSize    = 8
-	IndexBlockSizeSize   = 8
-	FilterBlockSizeSize  = 8
-	SummaryBlockSizeSize = 8
-	HeaderSize           = DataBlockSizeSize + IndexBlockSizeSize + FilterBlockSizeSize + SummaryBlockSizeSize
-	DataBlockStart       = 0
-	FilterBlockStart     = DataBlockStart + DataBlockSizeSize
-	IndexBlockStart      = FilterBlockStart + FilterBlockSizeSize
-	SummaryBlockStart    = IndexBlockStart + IndexBlockSizeSize
-	MetaBlockStart       = SummaryBlockStart + SummaryBlockSizeSize
-
-	//summary header sizes
-	SummaryMinSizeSize  = 8
-	SummaryMaxSizeSize  = 8
-	SummaryMinSizestart = 0
-	SummaryMaxSizeStart = SummaryMinSizestart + SummaryMinSizeSize
-	// Path to store SSTable files
-	Path = "sstable"
-	// Path to store the SimpleSStable file
-	SimplePath = "simplesstable"
-	// File naming constants for SSTable
-	Prefix       = "sst_"
-	DataSufix    = "_data"
-	IndexSufix   = "_index"
-	SummarySufix = "_summary"
-	FilterSufix  = "_filter"
-	MetaSufix    = "_meta"
-	TocSufix     = "_toc"
-	//for toc file header (contains lengths of filenames sizes)
-	FileNamesSizeSize = 8
-	// File naming constants for simpleSSTable
-	SimplePrefix = "ssst_"
-	SimpleSufix  = "_sss"
-)
-
-type MemEntry struct {
-	Key   string
-	Value *models.Data
-}
-
-type SSTable struct {
-	summaryConst         uint16
-	dataFilename         string
-	indexFilename        string
-	summaryIndexFilename string
-	filterFilename       string
-	metadataFilename     string
-	tocFilename          string
-}
-
-type SimpleSSTable struct {
-	Filename string
-}
-
-func NewSimpleSSTable(memEntries []*MemEntry) (*SimpleSSTable, error) {
-	// Create the directory if it doesn't exist
-	dirEntries, err := os.ReadDir(Path)
-	if os.IsNotExist(err) {
-		err := os.Mkdir(Path, os.ModePerm)
-		if err != nil {
-			return nil, err
-		}
-	}
-	var filename string
-	var index uint8
-	lsmIndex := uint8(1)
-	var subdirPath string
-	var subdirName string
-	// If there are no files in the directory, create the first one
-	if len(dirEntries) == 0 {
-		// subdirName : sstableN (N - index)
-		index = 1
-		subdirName = fmt.Sprintf("sstable%d", index)
-		subdirPath = filepath.Join(Path, subdirName)
-		err := os.Mkdir(subdirPath, os.ModePerm)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		// Get the last file
-		subdirName = dirEntries[len(dirEntries)-1].Name()
-		fmt.Println(subdirName)
-		n, err := strconv.ParseUint(subdirName[7:], 10, 8)
-		index = uint8(n)
-		if err != nil {
-			return nil, err
-		}
-		fmt.Println(index)
-		index++
-		subdirName = fmt.Sprintf("sstable%d", index)
-		subdirPath = filepath.Join(Path, subdirName)
-		dirEntries, err := os.ReadDir(subdirPath)
-		fmt.Println(dirEntries)
-		err = os.Mkdir(subdirPath, os.ModePerm)
-		if err != nil {
-			return nil, err
-		}
-	}
-	filename = fmt.Sprintf("%s%05d_%d%s.db", Prefix, index, lsmIndex, SimpleSufix)
-	file, err := os.OpenFile(filepath.Join(subdirPath, filename), os.O_CREATE|os.O_RDWR, 0644)
-	if err != nil {
-		return nil, err
-	}
-
-	err = ssstWriteFile(memEntries, file)
-	if err != nil {
-		return nil, err
-	}
-
-	file.Close()
-	return &SimpleSSTable{
-		Filename: filename,
-	}, nil
-
-}
 
 func ssstWriteFile(memEntries []*MemEntry, file *os.File) error {
 	// all data for mapping file
@@ -172,6 +17,7 @@ func ssstWriteFile(memEntries []*MemEntry, file *os.File) error {
 	dataSize := int64(0)
 	// Create one file for one SSTable, file contains data, index, summary, filter and merkle blocks and in header we store offsets of each block
 	// skip first HeaderSize bytes for header
+	// here we save 4 uint42 number which say size of each block
 	offset := uint64(HeaderSize)
 	file.Seek(int64(offset), 0)
 	var indexRecords []byte
@@ -196,6 +42,7 @@ func ssstWriteFile(memEntries []*MemEntry, file *os.File) error {
 		serializedRecord := dRecord.SerializeDataRecord()
 		sizeOfDR := uint64(len(serializedRecord))
 		data = append(data, serializedRecord...)
+
 		//append index record to index byte array
 		serializedIndexRecord := NewIndexRecord(memEntry, offset).SerializeIndexRecord()
 		indexRecords = append(indexRecords, serializedIndexRecord...)
