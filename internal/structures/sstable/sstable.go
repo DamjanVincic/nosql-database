@@ -91,7 +91,7 @@ func NewSSTable(memEntries []*MemEntry, singleFile bool) (*SSTable, error) {
 	var filterFilename string
 	var metadataFilename string
 	var tocFilename string
-	var filename string
+	//var filename string
 	lsmIndex := uint8(1)
 	var index uint8
 	var subdirPath string
@@ -131,7 +131,17 @@ func NewSSTable(memEntries []*MemEntry, singleFile bool) (*SSTable, error) {
 	if singleFile {
 		// creating file where everything will be held
 		filename := fmt.Sprintf("%s%05d_%d%s.db", Prefix, index, lsmIndex, SimpleSufix)
-		createFiles(memEntries, filename)
+		file, err := os.OpenFile(filepath.Join(subdirPath, filename), os.O_CREATE|os.O_RDWR, 0644)
+		if err != nil {
+			return nil, err
+		}
+		createFiles(memEntries, file, true)
+
+		err = file.Close()
+		if err != nil {
+			return nil, err
+		}
+
 		return &SSTable{
 			summaryConst: SummaryConst,
 			filename:     filename,
@@ -172,10 +182,7 @@ func NewSSTable(memEntries []*MemEntry, singleFile bool) (*SSTable, error) {
 		if err != nil {
 			return nil, err
 		}
-		// write to toc to access later
-		writeToTocFile(dataFilename, indexFilename, summaryFilename, filterFilename, metadataFilename, tocFilename)
 
-		createFiles(memEntries, filename)
 		err = dataFile.Close()
 		if err != nil {
 			return nil, err
@@ -196,6 +203,12 @@ func NewSSTable(memEntries []*MemEntry, singleFile bool) (*SSTable, error) {
 		if err != nil {
 			return nil, err
 		}
+
+		// write to toc to access later
+		writeToTocFile(dataFilename, indexFilename, summaryFilename, filterFilename, metadataFilename, tocFilename)
+
+		createFiles(memEntries, tocFile, false)
+
 		err = tocFile.Close()
 		if err != nil {
 			return nil, err
@@ -730,33 +743,41 @@ func Get(key string) (*models.Data, error) {
 // //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // file name will be toc file for multi file sstable
 // and file for single file sstable
-func createFiles(memEntries []*MemEntry, filename string) error {
-	singleFile := true
-	if filename[len(filename)-3:] == "txt" {
-		singleFile = false
-	}
-
-	dataRecords := make([]byte, 0)
-	indexRecords := make([]byte, 0)
-	summaryRecords := make([]byte, 0)
+func createFiles(memEntries []*MemEntry, file *os.File, singleFile bool) error {
+	var data []byte
+	dataSize := int64(0)
+	var dataRecords []byte
+	var indexRecords []byte
+	var summaryRecords []byte
 	summaryHeader := make([]byte, SummaryMinSizeSize+SummaryMaxSizeSize)
 
 	var indexOffset uint64
 	var summaryMin []byte
 	var summaryMax []byte
 	var serializedIndexRecord []byte
+
+	// for single file header
 	dataBlockSize := uint64(0)
 	indexBlockSize := uint64(0)
 	summaryBlockSize := uint64(0)
 	metaBlockSize := uint64(0)
+	filterBlockSize := uint64(0)
+
+	// set offset to 0 if its multi file
+	// set it right after header if its single file, after header are data records
 	offset := uint64(0)
 	indexOffset := uint64(0) // index block size from ssstable
+	if singleFile {
+		offset = uint64(HeaderSize)
+	}
+	// counter for index summary, for every n index records add one to summary
 	countKeysBetween := 0
 	filter := bloomfilter.CreateBloomFilter(len(memEntries), 0.2)
 	merkle, err := CreateMerkleTree(memEntries)
 	if err != nil {
 		return err
 	}
+	// proccess of adding entries
 	for _, entry := range memEntries {
 		sizeOfDRD, dataRecords := addToDataSegment(entry, dataRecords)
 		indexOffset, indexRecords = addToIndex(offset, entry, indexRecords)
@@ -775,13 +796,34 @@ func createFiles(memEntries []*MemEntry, filename string) error {
 		offset += sizeOfDRD
 	}
 	filterData := filter.Serialize()
+	filterBlockSize = uint64(len(filterData))
 	merkleData := merkle.Serialize()
 
 	binary.BigEndian.PutUint64(summaryHeader[SummaryMinSizestart:SummaryMaxSizeStart], uint64(len(summaryMin)))
 	binary.BigEndian.PutUint64(summaryHeader[SummaryMaxSizeStart:SummaryMaxSizeStart+SummaryMaxSizeSize], uint64(len(summaryMax)))
 	summaryHeader = append(summaryHeader, summaryMin...)
 	summaryHeader = append(summaryHeader, summaryMax...)
-	summaryRecords = append(summaryHeader, summaryRecords...)
+	summaryHeader = append(summaryHeader, summaryRecords...)
+	summaryBlockSize += uint64(len(summaryHeader))
+
+	if singleFile {
+		header := make([]byte, HeaderSize)
+		binary.BigEndian.PutUint64(header[:DataBlockSizeSize], dataBlockSize)
+		binary.BigEndian.PutUint64(header[FilterBlockStart:IndexBlockStart], filterBlockSize)
+		binary.BigEndian.PutUint64(header[IndexBlockStart:SummaryBlockStart], indexBlockSize)
+		binary.BigEndian.PutUint64(header[SummaryBlockStart:MetaBlockStart], summaryBlockSize)
+		binary.BigEndian.PutUint64(header[MetaBlockStart:], metaBlockSize)
+
+		//size of all data that needs to be written to mmap
+		dataSize = dataSize + int64(dataBlockSize) + int64(filterBlockSize) + int64(indexBlockSize) + int64(summaryBlockSize) + int64(metaBlockSize) + HeaderSize
+		data = append(data, header...)
+		data = append(data, dataRecords...)
+		data = append(data, filterData...)
+		data = append(data, indexRecords...)
+		data = append(data, summaryHeader...)
+		data = append(data, summaryRecords...)
+		data = append(data, merkleData...)
+	}
 
 	tocData := serializeTocData(fileNames)
 

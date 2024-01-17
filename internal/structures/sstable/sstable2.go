@@ -95,6 +95,7 @@ func ssstWriteFile(memEntries []*MemEntry, file *os.File) error {
 	binary.BigEndian.PutUint64(header[FilterBlockStart:IndexBlockStart], filterBlockSize)
 	binary.BigEndian.PutUint64(header[IndexBlockStart:SummaryBlockStart], indexBlockSize)
 	binary.BigEndian.PutUint64(header[SummaryBlockStart:MetaBlockStart], summaryBlockSize)
+	binary.BigEndian.PutUint64(header[MetaBlockStart:], metaBlockSize)
 
 	//size of all data that needs to be written to mmap
 	dataSize = dataSize + int64(dataBlockSize) + int64(filterBlockSize) + int64(indexBlockSize) + int64(summaryBlockSize) + int64(metaBlockSize) + HeaderSize
