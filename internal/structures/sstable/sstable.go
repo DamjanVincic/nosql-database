@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 
 	"github.com/DamjanVincic/key-value-engine/internal/models"
@@ -109,6 +110,13 @@ func NewSSTable(memEntries []*MemEntry, singleFile bool) (*SSTable, error) {
 		}
 	} else {
 		// Get the last file
+		// sort the entries in numerical order, because they are returned in lexicographical
+		sort.Slice(dirEntries, func(i, j int) bool {
+			numI, _ := strconv.Atoi(dirEntries[i].Name()[7:])
+			numJ, _ := strconv.Atoi(dirEntries[j].Name()[7:])
+			return numI < numJ
+		})
+
 		subdirName = dirEntries[len(dirEntries)-1].Name()
 		fmt.Println(subdirName)
 		n, err := strconv.ParseUint(subdirName[7:], 10, 8)
@@ -243,7 +251,7 @@ func writeToTocFile(dataFilename, indexFilename, summaryFilename, filterFilename
 	}
 	fileSize := fileStat.Size()
 
-	if err = tocFile.Truncate(int64(fileSize + totalBytes)); err != nil {
+	if err = tocFile.Truncate(fileSize + totalBytes); err != nil {
 		return err
 	}
 	mmapFile, err := mmap.Map(tocFile, mmap.RDWR, 0)
@@ -300,7 +308,7 @@ func WriteToFile(file *os.File, data []byte) error {
 	}
 	fileSize := fileStat.Size()
 
-	if err = file.Truncate(int64(fileSize + totalBytes)); err != nil {
+	if err = file.Truncate(fileSize + totalBytes); err != nil {
 		return err
 	}
 	mmapFile, err := mmap.Map(file, mmap.RDWR, 0)
@@ -519,11 +527,12 @@ func addToIndex(offset uint64, entry *MemEntry, result []byte) (uint64, []byte) 
 	serializedIndexRecord := indexRecord.SerializeIndexRecord()
 	return uint64(len(serializedIndexRecord)), append(result, serializedIndexRecord...)
 }
-func addToSummaryIndex(entry *MemEntry, indexOffset uint64, result []byte) ([]byte, []byte) {
-	indexRecord := NewIndexRecord(entry, indexOffset)
-	serializedIndexRecord := indexRecord.SerializeIndexRecord()
-	return serializedIndexRecord, append(result, serializedIndexRecord...)
-}
+
+// func addToSummaryIndex(entry *MemEntry, indexOffset uint64, result []byte) ([]byte, []byte) {
+// 	indexRecord := NewIndexRecord(entry, indexOffset)
+// 	serializedIndexRecord := indexRecord.SerializeIndexRecord()
+// 	return serializedIndexRecord, append(result, serializedIndexRecord...)
+// }
 
 // /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 func Get(key string) (*models.Data, error) {
@@ -543,6 +552,12 @@ func Get(key string) (*models.Data, error) {
 	}
 	//open last added subdir in sstable dir
 	//sstable\sstableN
+	//sort in numerical order, it is returned in lexicographical
+	sort.Slice(dirEntries, func(i, j int) bool {
+		numI, _ := strconv.Atoi(dirEntries[i].Name()[7:])
+		numJ, _ := strconv.Atoi(dirEntries[j].Name()[7:])
+		return numI < numJ
+	})
 	lastSubDirName := dirEntries[len(dirEntries)-1].Name()
 	index, err := strconv.ParseUint(lastSubDirName[7:8], 10, 64)
 	lastSubDirNameWithoutIndex := lastSubDirName[0:7]
@@ -751,7 +766,6 @@ func createFiles(memEntries []*MemEntry, file *os.File, singleFile bool) error {
 	var summaryRecords []byte
 	summaryHeader := make([]byte, SummaryMinSizeSize+SummaryMaxSizeSize)
 
-	var indexOffset uint64
 	var summaryMin []byte
 	var summaryMax []byte
 	var serializedIndexRecord []byte
@@ -763,12 +777,18 @@ func createFiles(memEntries []*MemEntry, file *os.File, singleFile bool) error {
 	metaBlockSize := uint64(0)
 	filterBlockSize := uint64(0)
 
+	sizeOfDR := uint64(0)
+	sizeOfIR := uint64(0)
+	sizeOfSR := uint64(0)
+
 	// set offset to 0 if its multi file
 	// set it right after header if its single file, after header are data records
 	offset := uint64(0)
 	indexOffset := uint64(0) // index block size from ssstable
 	if singleFile {
 		offset = uint64(HeaderSize)
+		indexOffset = uint64(HeaderSize) // index block size from ssstable
+
 	}
 	// counter for index summary, for every n index records add one to summary
 	countKeysBetween := 0
@@ -779,13 +799,14 @@ func createFiles(memEntries []*MemEntry, file *os.File, singleFile bool) error {
 	}
 	// proccess of adding entries
 	for _, entry := range memEntries {
-		sizeOfDRD, dataRecords := addToDataSegment(entry, dataRecords)
-		indexOffset, indexRecords = addToIndex(offset, entry, indexRecords)
+		sizeOfDR, dataRecords = addToDataSegment(entry, dataRecords)
+		sizeOfIR, indexRecords = addToIndex(offset, entry, indexRecords)
 		// keep track of size of the block for single file sstable
-		indexBlockSize += indexOffset
+		dataBlockSize += sizeOfDR
+		indexBlockSize += sizeOfIR
 		if countKeysBetween%SummaryConst == 0 {
-			serializedIndexRecord, summaryRecords = addToSummaryIndex(entry, indexOffset, summaryRecords)
-			summaryBlockSize += uint64(len(serializedIndexRecord))
+			sizeOfSR, summaryRecords = addToIndex(indexOffset, entry, summaryRecords)
+			summaryBlockSize += sizeOfSR
 			if summaryMin == nil {
 				summaryMin = serializedIndexRecord
 			}
@@ -793,7 +814,8 @@ func createFiles(memEntries []*MemEntry, file *os.File, singleFile bool) error {
 		filter.AddElement([]byte(entry.Key))
 		summaryMax = serializedIndexRecord
 		countKeysBetween++
-		offset += sizeOfDRD
+		offset += sizeOfDR
+		indexOffset += sizeOfIR
 	}
 	filterData := filter.Serialize()
 	filterBlockSize = uint64(len(filterData))
