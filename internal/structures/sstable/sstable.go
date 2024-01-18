@@ -314,7 +314,7 @@ func readFromToc(tocfile string) ([]string, error) {
 	filterFile := string(mmapFile[8 : 8+filterSize])
 	mmapFile = mmapFile[8+summarySize:]
 	// Read metadata section
-	metadataFile := string(mmapFile[8:])
+	metadataFile := string(mmapFile[7:])
 
 	return []string{dataFile, indexFile, summaryFile, filterFile, metadataFile}, nil
 }
@@ -574,8 +574,50 @@ func ReadBloomFilterFromFile(key string, mmapFile mmap.MMap) (bool, error) {
 	}
 	return found, err
 }
-func ReadMerkle(mmapFile mmap.MMap)                        {}
-func WriteToMerkleFile(data []byte, filename string) error { return nil }
+func ReadMerkle(mmapFile mmap.MMap) (*MerkleTree, error) {
+	merkle, err := DeserializeMerkle(mmapFile)
+	if err != nil {
+		return nil, err
+	}
+	err = mmapFile.Unmap()
+	if err != nil {
+		return nil, err
+	}
+	if err != nil {
+		return nil, err
+	}
+	return merkle, err
+}
+func WriteToMerkleFile(merkle *MerkleTree, filename string) error {
+	metadataFile, err := os.OpenFile(filename, os.O_RDWR, 0644)
+	if err != nil {
+		return err
+	}
+	data := merkle.Serialize()
+	totalBytes := int64(len(data))
+	fileStat, err := metadataFile.Stat()
+	if err != nil {
+		return err
+	}
+	fileSize := fileStat.Size()
+	if err = metadataFile.Truncate(totalBytes + fileSize); err != nil {
+		return err
+	}
+	mmapFile, err := mmap.Map(metadataFile, mmap.RDWR, 0)
+	if err != nil {
+		return err
+	}
+	copy(mmapFile[fileSize:], data)
+	err = mmapFile.Unmap()
+	if err != nil {
+		return err
+	}
+	err = metadataFile.Close()
+	if err != nil {
+		return err
+	}
+	return nil
+}
 
 // //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // get serialized data
@@ -621,7 +663,7 @@ func Get(key string) (*models.Data, error) {
 		return numI < numJ
 	})
 	lastSubDirName := dirEntries[len(dirEntries)-1].Name()
-	index, err := strconv.ParseUint(lastSubDirName[7:8], 10, 64)
+	index, err := strconv.ParseUint(lastSubDirName[7:], 10, 64)
 	lastSubDirNameWithoutIndex := lastSubDirName[0:7]
 	if err != nil {
 		return nil, err
@@ -691,7 +733,6 @@ func Get(key string) (*models.Data, error) {
 			if err != nil {
 				return nil, err
 			}
-			return nil, nil
 		} else {
 			// paths : sstable\\sstableN\\sst_00001_1_part.db
 			dataFilePath := filepath.Join(subDirPath, subDirEntries[0].Name())
@@ -721,14 +762,31 @@ func Get(key string) (*models.Data, error) {
 
 			// get index file to read
 			indexFile, err := os.OpenFile(indexFilePath, os.O_RDWR, 0644)
+			if err != nil {
+				return nil, err
+			}
 			mmapFileIndexPart, err := mmap.Map(indexFile, mmap.RDWR, 0)
 			if err != nil {
 				return nil, err
 			}
 			mmapFileIndexPart = make([]byte, len(mmapFileIndexPart))
 			copy(mmapFileIndex, mmapFileIndexPart)
-			metaFile, err := os.OpenFile(metaFilePath, os.O_RDWR, 0644)
 
+			summaryFile, err := os.OpenFile(summaryFilePath, os.O_RDWR, 0644)
+			if err != nil {
+				return nil, err
+			}
+			mmapFileSummaryPart, err := mmap.Map(summaryFile, mmap.RDWR, 0)
+			if err != nil {
+				return nil, err
+			}
+			mmapFileSummary = make([]byte, len(mmapFileSummaryPart))
+			copy(mmapFileSummary, mmapFileSummaryPart)
+
+			metaFile, err := os.OpenFile(metaFilePath, os.O_RDWR, 0644)
+			if err != nil {
+				return nil, err
+			}
 			mmapFileMetaPart, err := mmap.Map(metaFile, mmap.RDWR, 0)
 			if err != nil {
 				return nil, err
@@ -736,14 +794,6 @@ func Get(key string) (*models.Data, error) {
 			mmapFileMeta = make([]byte, len(mmapFileMetaPart))
 			copy(mmapFileMeta, mmapFileMetaPart)
 
-			summaryFile, err := os.OpenFile(summaryFilePath, os.O_RDWR, 0644)
-			// get summary
-			mmapFileSummaryPart, err := mmap.Map(summaryFile, mmap.RDWR, 0)
-			if err != nil {
-				return nil, err
-			}
-			mmapFileSummary = make([]byte, len(mmapFileSummaryPart))
-			copy(mmapFileSummary, mmapFileSummaryPart)
 			tocFile, err := os.OpenFile(tocFilePath, os.O_RDWR, 0644)
 
 			err = mmapFileDataPart.Unmap()
@@ -789,7 +839,8 @@ func Get(key string) (*models.Data, error) {
 		}
 		// start process for getting the element
 		// first we need to check if its in bloom filter
-		found, err := ReadBloomFilterFromFile(key, mmapFileFilter)
+		// found, err := ReadBloomFilterFromFile(key, mmapFileFilter)
+		found := true
 		if !found {
 			index--
 			if index == 0 {
@@ -955,7 +1006,7 @@ func createFiles(memEntries []*MemEntry, file *os.File, singleFile bool) error {
 		return err
 	}
 	filePath = filepath.Join(Path, fmt.Sprintf("%s%d", Path, number), files[4])
-	err = WriteToMerkleFile(merkleData, filePath)
+	err = WriteToMerkleFile(merkle, filePath)
 	if err != nil {
 		return err
 	}
