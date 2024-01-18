@@ -440,9 +440,11 @@ func WriteSummaryToFile(file string, data, summaryMin, summaryMax []byte) error 
 	summaryMinSize := int64(len(summaryMin))
 	summaryMaxSize := int64(len(summaryMax))
 	totalBytes := int64(len(data))
-	totalBytes += summaryMinSize
-	totalBytes += summaryMaxSize
-	flatData := make([]byte, 8)
+	totalBytes += 16 // for size vars
+	totalBytes += int64(len(summaryMax) + len(summaryMin))
+	flatData := make([]byte, 16)
+	binary.BigEndian.PutUint64(flatData[8:], uint64(summaryMaxSize))
+	binary.BigEndian.PutUint64(flatData[:8], uint64(summaryMinSize))
 	flatData = append(flatData, summaryMin...)
 	flatData = append(flatData, summaryMax...)
 	flatData = append(flatData, data...)
@@ -769,7 +771,7 @@ func Get(key string) (*models.Data, error) {
 			if err != nil {
 				return nil, err
 			}
-			mmapFileIndexPart = make([]byte, len(mmapFileIndexPart))
+			mmapFileIndex = make([]byte, len(mmapFileIndexPart))
 			copy(mmapFileIndex, mmapFileIndexPart)
 
 			summaryFile, err := os.OpenFile(summaryFilePath, os.O_RDWR, 0644)
