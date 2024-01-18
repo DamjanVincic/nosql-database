@@ -937,10 +937,11 @@ func createFiles(memEntries []*MemEntry, file *os.File, singleFile bool) error {
 
 	binary.BigEndian.PutUint64(summaryHeader[SummaryMinSizestart:SummaryMaxSizeStart], uint64(len(summaryMin)))
 	binary.BigEndian.PutUint64(summaryHeader[SummaryMaxSizeStart:SummaryMaxSizeStart+SummaryMaxSizeSize], uint64(len(summaryMax)))
+	summaryHeaderSize := SummaryMinSizeSize + SummaryMaxSizeSize + uint64(len(summaryMin)) + uint64(len(summaryMax))
 	summaryHeader = append(summaryHeader, summaryMin...)
 	summaryHeader = append(summaryHeader, summaryMax...)
 	summaryHeader = append(summaryHeader, summaryRecords...)
-	summaryBlockSize += uint64(len(summaryHeader))
+	summaryBlockSize += uint64(summaryHeaderSize)
 
 	if singleFile {
 		header := make([]byte, HeaderSize)
@@ -956,7 +957,6 @@ func createFiles(memEntries []*MemEntry, file *os.File, singleFile bool) error {
 		data = append(data, filterData...)
 		data = append(data, indexRecords...)
 		data = append(data, summaryHeader...)
-		data = append(data, summaryRecords...)
 		data = append(data, merkleData...)
 
 		fileInfo, err := file.Stat()
