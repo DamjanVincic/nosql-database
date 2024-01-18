@@ -213,7 +213,7 @@ func NewSSTable(memEntries []*MemEntry, singleFile bool) (*SSTable, error) {
 		}
 
 		// write to toc to access later
-		writeToTocFile(dataFilename, indexFilename, summaryFilename, filterFilename, metadataFilename, tocFilename)
+		writeToTocFile(dataFilename, indexFilename, summaryFilename, filterFilename, metadataFilename, filepath.Join(subdirPath, tocFilename))
 
 		createFiles(memEntries, tocFile, false)
 
@@ -233,18 +233,34 @@ func writeToTocFile(dataFilename, indexFilename, summaryFilename, filterFilename
 	if err != nil {
 		return err
 	}
+	defer tocFile.Close()
+
 	totalBytes := int64(8 * 5) // for sizes of strings
-	totalBytes += int64(len(dataFilename) + len(indexFilename) + len(summaryFilename) + len(metadataFilename))
-	data := []byte(strconv.FormatUint(uint64(len(dataFilename)), 10))
-	data = append(data, []byte(dataFilename)...)
-	data = append(data, []byte(strconv.FormatUint(uint64(len(indexFilename)), 10))...)
+
+	dataLength := make([]byte, 8)
+	indexLength := make([]byte, 8)
+	summaryLength := make([]byte, 8)
+	filterLength := make([]byte, 8)
+	metadataLength := make([]byte, 8)
+
+	binary.BigEndian.PutUint64(dataLength, uint64(len(dataFilename)))
+	binary.BigEndian.PutUint64(indexLength, uint64(len(indexFilename)))
+	binary.BigEndian.PutUint64(summaryLength, uint64(len(summaryFilename)))
+	binary.BigEndian.PutUint64(filterLength, uint64(len(filterFilename)))
+	binary.BigEndian.PutUint64(metadataLength, uint64(len(metadataFilename)))
+
+	totalBytes += int64(len(dataFilename) + len(indexFilename) + len(summaryFilename) + len(filterFilename) + len(metadataFilename))
+
+	data := append(dataLength, []byte(dataFilename)...)
+	data = append(data, indexLength...)
 	data = append(data, []byte(indexFilename)...)
-	data = append(data, []byte(strconv.FormatUint(uint64(len(summaryFilename)), 10))...)
+	data = append(data, summaryLength...)
 	data = append(data, []byte(summaryFilename)...)
-	data = append(data, []byte(strconv.FormatUint(uint64(len(filterFilename)), 10))...)
+	data = append(data, filterLength...)
 	data = append(data, []byte(filterFilename)...)
-	data = append(data, []byte(strconv.FormatUint(uint64(len(metadataFilename)), 10))...)
+	data = append(data, metadataLength...)
 	data = append(data, []byte(metadataFilename)...)
+
 	fileStat, err := tocFile.Stat()
 	if err != nil {
 		return err
@@ -254,15 +270,18 @@ func writeToTocFile(dataFilename, indexFilename, summaryFilename, filterFilename
 	if err = tocFile.Truncate(fileSize + totalBytes); err != nil {
 		return err
 	}
+
 	mmapFile, err := mmap.Map(tocFile, mmap.RDWR, 0)
 	if err != nil {
 		return err
 	}
 	copy(mmapFile[fileSize:], data)
+
 	err = mmapFile.Unmap()
 	if err != nil {
 		return err
 	}
+
 	return nil
 }
 func readFromToc(tocfile string) ([]string, error) {
