@@ -51,7 +51,6 @@ const (
 	// Path to store SSTable files
 	Path = "sstable"
 	// Path to store the SimpleSStable file
-	SimplePath = "simplesstable"
 	// File naming constants for SSTable
 	Prefix       = "sst_"
 	DataSufix    = "_data"
@@ -63,8 +62,7 @@ const (
 	//for toc file header (contains lengths of filenames sizes)
 	FileNamesSizeSize = 8
 	// File naming constants for simpleSSTable
-	SimplePrefix = "ssst_"
-	SimpleSufix  = "_sss"
+	SimpleSufix = "_sss"
 )
 
 type MemEntry struct {
@@ -312,11 +310,13 @@ func readFromToc(tocfile string) ([]string, error) {
 	summaryFile := string(mmapFile[8 : 8+summarySize])
 	mmapFile = mmapFile[8+summarySize:]
 
+	filterSize := binary.BigEndian.Uint64(mmapFile[:8])
+	filterFile := string(mmapFile[8 : 8+filterSize])
+	mmapFile = mmapFile[8+summarySize:]
 	// Read metadata section
-	metadataSize := binary.BigEndian.Uint64(mmapFile[:8])
-	metadataFile := string(mmapFile[8 : 8+metadataSize])
+	metadataFile := string(mmapFile[8:])
 
-	return []string{dataFile, indexFile, summaryFile, metadataFile}, nil
+	return []string{dataFile, indexFile, summaryFile, filterFile, metadataFile}, nil
 }
 
 func WriteToFile(filename string, data []byte) error {
@@ -895,7 +895,6 @@ func createFiles(memEntries []*MemEntry, file *os.File, singleFile bool) error {
 		binary.BigEndian.PutUint64(header[FilterBlockStart:IndexBlockStart], filterBlockSize)
 		binary.BigEndian.PutUint64(header[IndexBlockStart:SummaryBlockStart], indexBlockSize)
 		binary.BigEndian.PutUint64(header[SummaryBlockStart:MetaBlockStart], summaryBlockSize)
-		binary.BigEndian.PutUint64(header[MetaBlockStart:], metaBlockSize)
 
 		//size of all data that needs to be written to mmap
 		dataSize = dataSize + int64(dataBlockSize) + int64(filterBlockSize) + int64(indexBlockSize) + int64(summaryBlockSize) + int64(metaBlockSize) + HeaderSize
@@ -906,44 +905,59 @@ func createFiles(memEntries []*MemEntry, file *os.File, singleFile bool) error {
 		data = append(data, summaryHeader...)
 		data = append(data, summaryRecords...)
 		data = append(data, merkleData...)
+
+		fileInfo, err := file.Stat()
+		if err != nil {
+			return err
+		}
+		fileSize := uint64(fileInfo.Size())
+		err = file.Truncate(int64(fileSize + uint64(dataSize)))
+		if err != nil {
+			return err
+		}
+		mmapFile, err := mmap.Map(file, mmap.RDWR, 0)
+		if err != nil {
+			return err
+		}
+		copy(mmapFile[fileSize:], header)
+		err = mmapFile.Unmap()
+		if err != nil {
+			return err
+		}
 	}
 
 	files, err := readFromToc(file.Name())
 	if err != nil {
 		return err
 	}
-	err = WriteToFile(files[0], dataRecords)
+	number, err := strconv.Atoi(files[0][4:9])
 	if err != nil {
 		return err
 	}
-	err = WriteToIndexFile(files[1], indexRecords)
+	filePath := filepath.Join(Path, fmt.Sprintf("%s%d", Path, number), files[0])
+	err = WriteToFile(filePath, dataRecords)
 	if err != nil {
 		return err
 	}
-	err = WriteSummaryToFile(files[2], summaryRecords, summaryMin, summaryMax)
+	filePath = filepath.Join(Path, fmt.Sprintf("%s%d", Path, number), files[1])
+	err = WriteToIndexFile(filePath, indexRecords)
 	if err != nil {
 		return err
 	}
-	err = WriteBloomFilter(filter, files[3])
+	filePath = filepath.Join(Path, fmt.Sprintf("%s%d", Path, number), files[2])
+	err = WriteSummaryToFile(filePath, summaryRecords, summaryMin, summaryMax)
 	if err != nil {
 		return err
 	}
-	err = WriteToMerkleFile(merkleData, files[4])
+	filePath = filepath.Join(Path, fmt.Sprintf("%s%d", Path, number), files[3])
+	err = WriteBloomFilter(filter, filePath)
+	if err != nil {
+		return err
+	}
+	filePath = filepath.Join(Path, fmt.Sprintf("%s%d", Path, number), files[4])
+	err = WriteToMerkleFile(merkleData, filePath)
 	if err != nil {
 		return err
 	}
 	return nil
-}
-
-func serializeTocData(fileNames []*string) []byte {
-	filenamesSize := make([]byte, 40)
-	filenames := make([]byte, 0)
-	i := 0
-	for fileName := range fileNames {
-		filenames = append(filenames, byte(fileName))
-		binary.BigEndian.PutUint64(filenamesSize[FileNamesSizeSize*i:FileNamesSizeSize*i+FileNamesSizeSize], uint64(len(filenames)))
-		i++
-	}
-	filenames = append(filenamesSize, filenames...)
-	return filenames
 }
