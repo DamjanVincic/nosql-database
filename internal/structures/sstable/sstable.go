@@ -376,7 +376,7 @@ func WriteToIndexFile(file string, data []byte) error {
 	if err != nil {
 		return err
 	}
-	flatData := make([]byte, 8)
+	flatData := make([]byte, 0)
 	flatData = append(flatData, data...)
 	totalBytes := int64(len(data))
 	fileStat, err := indexFile.Stat()
@@ -435,14 +435,14 @@ func WriteSummaryToFile(file string, data, summaryMin, summaryMax []byte) error 
 	if err != nil {
 		return err
 	}
-	summaryMinSize := int64(len(summaryMin))
-	summaryMaxSize := int64(len(summaryMax))
+	summaryMinSize := uint64(len(summaryMin))
+	summaryMaxSize := uint64(len(summaryMax))
 	totalBytes := int64(len(data))
 	totalBytes += 16 // for size vars
 	totalBytes += int64(len(summaryMax) + len(summaryMin))
 	flatData := make([]byte, 16)
-	binary.BigEndian.PutUint64(flatData[8:], uint64(summaryMaxSize))
-	binary.BigEndian.PutUint64(flatData[:8], uint64(summaryMinSize))
+	binary.BigEndian.PutUint64(flatData[8:], summaryMaxSize)
+	binary.BigEndian.PutUint64(flatData[:8], summaryMinSize)
 	flatData = append(flatData, summaryMin...)
 	flatData = append(flatData, summaryMax...)
 	flatData = append(flatData, data...)
@@ -561,10 +561,6 @@ func ReadBloomFilterFromFile(key string, mmapFile mmap.MMap) (bool, error) {
 		}
 	*/
 	filter := bloomfilter.Deserialize(mmapFile)
-	err := mmapFile.Unmap()
-	if err != nil {
-		return false, err
-	}
 	found, err := filter.ContainsElement([]byte(key))
 	if err != nil {
 		return false, err
@@ -835,8 +831,11 @@ func Get(key string) (*models.Data, error) {
 		}
 		// start process for getting the element
 		// first we need to check if its in bloom filter
-		// found, err := ReadBloomFilterFromFile(key, mmapFileFilter)
-		found := true
+		found, err := ReadBloomFilterFromFile(key, mmapFileFilter)
+		if err != nil {
+			return nil, err
+		}
+		// found := true
 		if !found {
 			index--
 			if index == 0 {
