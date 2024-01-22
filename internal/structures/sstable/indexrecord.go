@@ -30,7 +30,7 @@ func (indexRecord *IndexRecord) SerializeIndexRecord() []byte {
 	copy(bytes[KeyStart:], []byte(indexRecord.key))
 
 	// Serialize Offset (8 bytes, BigEndian)
-	binary.BigEndian.PutUint64(bytes[KeyStart+len([]byte(indexRecord.key)):], indexRecord.offset)
+	binary.BigEndian.PutUint64(bytes[KeyStart+indexRecord.keySize:], indexRecord.offset)
 
 	return bytes
 }

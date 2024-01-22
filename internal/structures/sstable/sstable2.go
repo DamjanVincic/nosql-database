@@ -1,5 +1,57 @@
 package sstable
 
+/*
+const (
+	CrcSize       = 4
+	TimestampSize = 8
+	TombstoneSize = 1
+	KeySizeSize   = 8
+	OffsetSize    = 8
+	//for dataRecord
+	CrcStart         = 0
+	TimestampStart   = CrcStart + CrcSize
+	TombstoneStart   = TimestampStart + TimestampSize
+	ValueStart       = TombstoneStart + TombstoneSize
+	RecordHeaderSize = CrcSize + TimestampSize + TombstoneSize
+	SummaryConst     = 5 //from config file
+	//for indexRecord
+	KeySizeStart = 0
+	KeyStart     = KeySizeStart + KeySizeSize
+	//sizes of each block in file for SimpleSSTable and size of header which we will use for reading and positioning in file
+	//reason why we store offsets in uint64 (8 bytes) is because max value od unit32 is 0.0.00429497 TB
+	DataBlockSizeSize    = 8
+	IndexBlockSizeSize   = 8
+	FilterBlockSizeSize  = 8
+	SummaryBlockSizeSize = 8
+	HeaderSize           = DataBlockSizeSize + IndexBlockSizeSize + FilterBlockSizeSize + SummaryBlockSizeSize
+	DataBlockStart       = 0
+	FilterBlockStart     = DataBlockStart + DataBlockSizeSize
+	IndexBlockStart      = FilterBlockStart + FilterBlockSizeSize
+	SummaryBlockStart    = IndexBlockStart + IndexBlockSizeSize
+	MetaBlockStart       = SummaryBlockStart + SummaryBlockSizeSize
+
+	//summary header sizes
+	SummaryMinSizeSize  = 8
+	SummaryMaxSizeSize  = 8
+	SummaryMinSizestart = 0
+	SummaryMaxSizeStart = SummaryMinSizestart + SummaryMinSizeSize
+	// Path to store SSTable files
+	Path = "sstable"
+	// Path to store the SimpleSStable file
+	// File naming constants for SSTable
+	Prefix       = "sst_"
+	DataSufix    = "_data"
+	IndexSufix   = "_index"
+	SummarySufix = "_summary"
+	FilterSufix  = "_filter"
+	MetaSufix    = "_meta"
+	TocSufix     = "_toc"
+	//for toc file header (contains lengths of filenames sizes)
+	FileNamesSizeSize = 8
+	// File naming constants for simpleSSTable
+	SimpleSufix = "_sss"
+)
+
 import (
 	"encoding/binary"
 	"fmt"
@@ -190,3 +242,4 @@ func (ssst *SimpleSSTable) Get() (*models.Data, error) {
 	}
 	return nil, nil
 }
+*/

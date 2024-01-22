@@ -17,6 +17,7 @@ import (
 const (
 	CrcSize       = 4
 	TimestampSize = 8
+
 	TombstoneSize = 1
 	KeySizeSize   = 8
 	OffsetSize    = 8
@@ -357,7 +358,12 @@ func ReadDataFromFile(mmapFile mmap.MMap, offsetStart, offsetEnd uint64) (*DataR
 			return nil, err
 		}
 	*/
-	serializedDataRecord := mmapFile[offsetStart:offsetEnd]
+	var serializedDataRecord []byte
+	if offsetStart == offsetEnd {
+		serializedDataRecord = mmapFile[offsetStart:]
+	} else {
+		serializedDataRecord = mmapFile[offsetStart:offsetEnd]
+	}
 	dataRecord, err := DeserializeDataRecord(serializedDataRecord)
 	if err != nil {
 		return nil, err
@@ -401,33 +407,25 @@ func WriteToIndexFile(file string, data []byte) error {
 // it returns data offset
 func ReadIndexFromFile(mmapFile mmap.MMap, offsetStart uint64) ([]*IndexRecord, error) {
 	var result []*IndexRecord
-	/*
-		mmapFile, err := mmap.Map(indexFile, mmap.RDWR, 0)
-		if err != nil {
-			return nil, err
-		}
-	*/
 	// 8 for size of key size
 	// key size for key
 	// 8 for offset
-	mmapFileSize := uint64(len(mmapFile))
 	mmapFile = mmapFile[offsetStart:]
 	offset := uint64(0)
-	for offset < mmapFileSize {
+	for i := 0; i <= SummaryConst; i++ {
 		keySize := binary.BigEndian.Uint64(mmapFile[KeySizeStart:KeySizeSize])
-		key := string(mmapFile[KeyStart : KeyStart+int(keySize)])
-		keyUint64, err := strconv.ParseUint(key, 10, 64)
-		if err != nil {
-			return nil, errors.New("error converting")
-		}
-		indexOffset := binary.BigEndian.Uint64(mmapFile[KeyStart+int(keySize):])
-		offset = keySize + keyUint64 + indexOffset
+		//indexOffset := binary.BigEndian.Uint64(mmapFile[KeyStart+int(keySize):])
+		offset = keySize + KeySizeSize + 8
 		indexRecord, err := DeserializeIndexRecord(mmapFile[:offset])
 		if err != nil {
 			return nil, errors.New("error deserializing index record")
 		}
 		result = append(result, indexRecord)
 		mmapFile = mmapFile[offset:]
+		if len(mmapFile) == 0 {
+			result = append(result, indexRecord)
+			return result, nil
+		}
 	}
 
 	return result, nil
@@ -475,12 +473,6 @@ func WriteSummaryToFile(file string, data, summaryMin, summaryMax []byte) error 
 
 // it returns index offset
 func ReadSummaryFromFile(mmapFile mmap.MMap, key string) (uint64, error) {
-	/*
-		mmapFile, err := mmap.Map(file, mmap.RDWR, 0)
-		if err != nil {
-			return 0, err
-		}
-	*/
 	mmapFileSize := uint64(len(mmapFile))
 	summaryMinSize := binary.BigEndian.Uint64(mmapFile[SummaryMinSizestart:SummaryMaxSizeStart])
 	summaryMaxSize := binary.BigEndian.Uint64(mmapFile[SummaryMaxSizeStart : SummaryMaxSizeStart+SummaryMaxSizeSize])
@@ -506,17 +498,20 @@ func ReadSummaryFromFile(mmapFile mmap.MMap, key string) (uint64, error) {
 	for offset < mmapFileSize {
 		keySize := binary.BigEndian.Uint64(mmapFile[KeySizeStart:KeySizeSize])
 
-		indexOffset := binary.BigEndian.Uint64(mmapFile[KeyStart+int(keySize):])
-		offset = KeySizeSize + keySize + indexOffset
+		// indexOffset := binary.BigEndian.Uint64(mmapFile[KeyStart+int(keySize):])
+		offset = KeySizeSize + keySize + 8
 		indexRecord, err := DeserializeIndexRecord(mmapFile[:offset])
 		if err != nil {
 			return 0, errors.New("error deserializing index record")
 		}
 		summaryRecords = append(summaryRecords, indexRecord)
-		if len(summaryRecords) >= 2 && summaryRecords[len(summaryRecords)-1].key > key && summaryRecords[len(summaryRecords)-2].key < key {
-			return summaryRecords[len(summaryRecords)-1].offset, nil
+		if len(summaryRecords) >= 2 && summaryRecords[len(summaryRecords)-1].key > key && summaryRecords[len(summaryRecords)-2].key <= key {
+			return summaryRecords[len(summaryRecords)-2].offset, nil
 		}
 		mmapFile = mmapFile[offset:]
+		if len(mmapFile) == 0 {
+			return indexRecord.offset, nil
+		}
 	}
 	return 0, errors.New("key not found")
 }
@@ -628,10 +623,10 @@ func addToDataSegment(entry *MemEntry, result []byte) (uint64, []byte) {
 	serializedRecord := dataRecord.SerializeDataRecord()
 	return uint64(len(serializedRecord)), append(result, serializedRecord...)
 }
-func addToIndex(offset uint64, entry *MemEntry, result []byte) (uint64, []byte) {
+func addToIndex(offset uint64, entry *MemEntry, result []byte) ([]byte, []byte) {
 	indexRecord := NewIndexRecord(entry, offset)
 	serializedIndexRecord := indexRecord.SerializeIndexRecord()
-	return uint64(len(serializedIndexRecord)), append(result, serializedIndexRecord...)
+	return serializedIndexRecord, append(result, serializedIndexRecord...)
 }
 
 // func addToSummaryIndex(entry *MemEntry, indexOffset uint64, result []byte) ([]byte, []byte) {
@@ -647,7 +642,6 @@ func Get(key string) (*models.Data, error) {
 	var mmapFileSummary mmap.MMap
 	var mmapFileIndex mmap.MMap
 	var mmapFileMeta mmap.MMap
-	fmt.Println("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 	dirEntries, err := os.ReadDir(Path)
 	// if there is no dir to read from return nil
 	if os.IsNotExist(err) {
@@ -874,7 +868,7 @@ func Get(key string) (*models.Data, error) {
 // and file for single file sstable
 func createFiles(memEntries []*MemEntry, file *os.File, singleFile bool) error {
 	var data []byte
-	dataSize := int64(0)
+	dataSize := uint64(0)
 	var dataRecords []byte
 	var indexRecords []byte
 	var summaryRecords []byte
@@ -899,11 +893,13 @@ func createFiles(memEntries []*MemEntry, file *os.File, singleFile bool) error {
 	// set it right after header if its single file, after header are data records
 	offset := uint64(0)
 	indexOffset := uint64(0) // index block size from ssstable
-	if singleFile {
-		offset = uint64(HeaderSize)
-		indexOffset = uint64(HeaderSize) // index block size from ssstable
+	/*
+		if singleFile {
+			offset = uint64(HeaderSize)
+			indexOffset = uint64(HeaderSize) // index block size from ssstable
+		}
 
-	}
+	*/
 	// counter for index summary, for every n index records add one to summary
 	countKeysBetween := 0
 	filter := bloomfilter.CreateBloomFilter(len(memEntries), 0.2)
@@ -914,12 +910,14 @@ func createFiles(memEntries []*MemEntry, file *os.File, singleFile bool) error {
 	// proccess of adding entries
 	for _, entry := range memEntries {
 		sizeOfDR, dataRecords = addToDataSegment(entry, dataRecords)
-		sizeOfIR, indexRecords = addToIndex(offset, entry, indexRecords)
+		serializedIndexRecord, indexRecords = addToIndex(offset, entry, indexRecords)
+		sizeOfIR = uint64(len(serializedIndexRecord))
 		// keep track of size of the block for single file sstable
 		dataBlockSize += sizeOfDR
 		indexBlockSize += sizeOfIR
 		if countKeysBetween%SummaryConst == 0 {
-			sizeOfSR, summaryRecords = addToIndex(indexOffset, entry, summaryRecords)
+			serializedIndexRecord, summaryRecords = addToIndex(indexOffset, entry, summaryRecords)
+			sizeOfSR = uint64(len(serializedIndexRecord))
 			summaryBlockSize += sizeOfSR
 			if summaryMin == nil {
 				summaryMin = serializedIndexRecord
@@ -934,6 +932,7 @@ func createFiles(memEntries []*MemEntry, file *os.File, singleFile bool) error {
 	filterData := filter.Serialize()
 	filterBlockSize = uint64(len(filterData))
 	merkleData := merkle.Serialize()
+	metaBlockSize += uint64(len(merkleData))
 
 	binary.BigEndian.PutUint64(summaryHeader[SummaryMinSizestart:SummaryMaxSizeStart], uint64(len(summaryMin)))
 	binary.BigEndian.PutUint64(summaryHeader[SummaryMaxSizeStart:SummaryMaxSizeStart+SummaryMaxSizeSize], uint64(len(summaryMax)))
@@ -951,7 +950,7 @@ func createFiles(memEntries []*MemEntry, file *os.File, singleFile bool) error {
 		binary.BigEndian.PutUint64(header[SummaryBlockStart:MetaBlockStart], summaryBlockSize)
 
 		//size of all data that needs to be written to mmap
-		dataSize = dataSize + int64(dataBlockSize) + int64(filterBlockSize) + int64(indexBlockSize) + int64(summaryBlockSize) + int64(metaBlockSize) + HeaderSize
+		dataSize = dataSize + dataBlockSize + filterBlockSize + indexBlockSize + summaryBlockSize + metaBlockSize + HeaderSize
 		data = append(data, header...)
 		data = append(data, dataRecords...)
 		data = append(data, filterData...)
@@ -972,11 +971,12 @@ func createFiles(memEntries []*MemEntry, file *os.File, singleFile bool) error {
 		if err != nil {
 			return err
 		}
-		copy(mmapFile[fileSize:], header)
+		copy(mmapFile[fileSize:], data)
 		err = mmapFile.Unmap()
 		if err != nil {
 			return err
 		}
+		return nil
 	}
 
 	files, err := readFromToc(file.Name())
