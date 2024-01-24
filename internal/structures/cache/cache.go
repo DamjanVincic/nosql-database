@@ -22,6 +22,7 @@ func (cache *Cache) Put(entry *models.MemEntry) {
 	elem, ok := cache.cacheMap[entry.Key]
 	if !ok {
 		cache.cacheList.PushFront(entry)
+		cache.cacheMap[entry.Key] = cache.cacheList.Front()
 		if cache.cacheList.Len() > capacity {
 			elem = cache.cacheList.Back()
 			delete(cache.cacheMap, elem.Value.(*models.MemEntry).Key)
