@@ -10,31 +10,36 @@ const (
 )
 
 type Cache struct {
-	cacheList *list.List
-	cacheMap  map[string]*list.Element
+	cacheList *list.List               //doubly linked list containing cached MemEntries
+	cacheMap  map[string]*list.Element //hashMap used for accessing elements in cacheList by key
 }
 
 func NewCache() *Cache {
 	return &Cache{cacheList: list.New(), cacheMap: make(map[string]*list.Element)}
 }
 
+// adds MemEntry to cache and makes it most recently used
 func (cache *Cache) Put(entry *models.MemEntry) {
-	elem, ok := cache.cacheMap[entry.Key]
-	if !ok {
-		cache.cacheList.PushFront(entry)
-		cache.cacheMap[entry.Key] = cache.cacheList.Front()
-		if cache.cacheList.Len() > capacity {
+	elem, ok := cache.cacheMap[entry.Key] //find element in cacheList
+	if !ok {                              //if entry isn't already in cache, it needs to be added
+		if cache.cacheList.Len() >= capacity { //if cache is full, least recently used entry is deleted
 			elem = cache.cacheList.Back()
 			delete(cache.cacheMap, elem.Value.(*models.MemEntry).Key)
 			cache.cacheList.Remove(elem)
 		}
+
+		cache.cacheList.PushFront(entry)
+		cache.cacheMap[entry.Key] = cache.cacheList.Front()
+
 	} else {
-		cache.cacheList.MoveToFront(elem)
+		cache.cacheList.MoveToFront(elem) //make new entry most recently used
+		elem.Value = entry                //update value
 	}
 }
 
+// returns entry form cache and makes it most recently used
 func (cache *Cache) Get(key string) *models.MemEntry {
-	elem, ok := cache.cacheMap[key]
+	elem, ok := cache.cacheMap[key] //find element in cacheList
 	if !ok {
 		return nil
 	}
@@ -44,7 +49,7 @@ func (cache *Cache) Get(key string) *models.MemEntry {
 }
 
 func (cache *Cache) Delete(key string) {
-	elem, ok := cache.cacheMap[key]
+	elem, ok := cache.cacheMap[key] //find element in cacheList
 	if !ok {
 		return
 	}
