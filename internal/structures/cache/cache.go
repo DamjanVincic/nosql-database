@@ -6,7 +6,7 @@ import (
 )
 
 const (
-	capacity = 5
+	capacity = 3
 )
 
 type Cache struct {
@@ -40,4 +40,13 @@ func (cache *Cache) Get(key string) *models.MemEntry {
 	cache.cacheList.MoveToFront(elem)
 	value := elem.Value.(*models.MemEntry)
 	return value
+}
+
+func (cache *Cache) Delete(key string) {
+	elem, ok := cache.cacheMap[key]
+	if !ok {
+		return
+	}
+	delete(cache.cacheMap, elem.Value.(*models.MemEntry).Key)
+	cache.cacheList.Remove(elem)
 }
