@@ -4,14 +4,13 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/DamjanVincic/key-value-engine/internal/models"
+	"github.com/DamjanVincic/key-value-engine/internal/structures/bloomfilter"
+	"github.com/edsrzf/mmap-go"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
-
-	"github.com/DamjanVincic/key-value-engine/internal/models"
-	"github.com/DamjanVincic/key-value-engine/internal/structures/bloomfilter"
-	"github.com/edsrzf/mmap-go"
 )
 
 const (
@@ -101,7 +100,7 @@ func NewSSTable(memEntries []*MemEntry, singleFile bool) (*SSTable, error) {
 	if len(dirEntries) == 0 {
 		// subdirName : sstableN (N - index)
 		index = 1
-		subdirName = fmt.Sprintf("%dsstable%d", 1, index)
+		subdirName = fmt.Sprintf("%d_sstable_%d", 1, index)
 		subdirPath = filepath.Join(Path, subdirName)
 		err := os.Mkdir(subdirPath, os.ModePerm)
 		if err != nil {
@@ -111,21 +110,21 @@ func NewSSTable(memEntries []*MemEntry, singleFile bool) (*SSTable, error) {
 		// Get the last file
 		// sort the entries in numerical order, because they are returned in lexicographical
 		sort.Slice(dirEntries, func(i, j int) bool {
-			numI, _ := strconv.Atoi(dirEntries[i].Name()[7:])
-			numJ, _ := strconv.Atoi(dirEntries[j].Name()[7:])
+			numI, _ := strconv.Atoi(dirEntries[i].Name()[10:])
+			numJ, _ := strconv.Atoi(dirEntries[j].Name()[10:])
 			return numI < numJ
 		})
 
 		subdirName = dirEntries[len(dirEntries)-1].Name()
 		fmt.Println(subdirName)
-		n, err := strconv.ParseUint(subdirName[8:], 10, 8)
+		n, err := strconv.ParseUint(subdirName[10:], 10, 8)
 		index = uint8(n)
 		if err != nil {
 			return nil, err
 		}
 		fmt.Println(index)
 		index++
-		subdirName = fmt.Sprintf("%dsstable%d", 1, index)
+		subdirName = fmt.Sprintf("%d_sstable_%d", 1, index)
 		subdirPath = filepath.Join(Path, subdirName)
 		dirEntries, err := os.ReadDir(subdirPath)
 		fmt.Println(dirEntries)
@@ -145,17 +144,25 @@ func NewSSTable(memEntries []*MemEntry, singleFile bool) (*SSTable, error) {
 			return nil, err
 		}
 
-		createFiles(memEntries, file, true)
+		err = createFiles(memEntries, file, true)
+		if err != nil {
+			return nil, err
+		}
 
 		err = file.Close()
 		if err != nil {
 			return nil, err
 		}
 
-		return &SSTable{
+		ss := &SSTable{
 			summaryConst: SummaryConst,
 			filename:     filename,
-		}, nil
+		}
+		err = compactLogic(1, ss)
+		if err != nil {
+			return nil, err
+		}
+		return ss, nil
 
 	} else {
 		// Filename format: sst_00001_lsmi_PART.db
@@ -216,9 +223,14 @@ func NewSSTable(memEntries []*MemEntry, singleFile bool) (*SSTable, error) {
 		}
 
 		// write to toc to access later
-		writeToTocFile(dataFilename, indexFilename, summaryFilename, filterFilename, metadataFilename, filepath.Join(subdirPath, tocFilename))
-
-		createFiles(memEntries, tocFile, false)
+		err = writeToTocFile(dataFilename, indexFilename, summaryFilename, filterFilename, metadataFilename, filepath.Join(subdirPath, tocFilename))
+		if err != nil {
+			return nil, err
+		}
+		err = createFiles(memEntries, tocFile, false)
+		if err != nil {
+			return nil, err
+		}
 
 		err = tocFile.Close()
 		if err != nil {
@@ -933,7 +945,10 @@ func createFiles(memEntries []*MemEntry, file *os.File, singleFile bool) error {
 				summaryMin = serializedIndexRecord
 			}
 		}
-		filter.AddElement([]byte(entry.Key))
+		err = filter.AddElement([]byte(entry.Key))
+		if err != nil {
+			return err
+		}
 		summaryMax = serializedIndexRecord
 		countKeysBetween++
 		offset += sizeOfDR
