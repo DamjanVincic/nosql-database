@@ -101,7 +101,7 @@ func NewSSTable(memEntries []*MemEntry, singleFile bool) (*SSTable, error) {
 	if len(dirEntries) == 0 {
 		// subdirName : sstableN (N - index)
 		index = 1
-		subdirName = fmt.Sprintf("sstable%d", index)
+		subdirName = fmt.Sprintf("%dsstable%d", 1, index)
 		subdirPath = filepath.Join(Path, subdirName)
 		err := os.Mkdir(subdirPath, os.ModePerm)
 		if err != nil {
@@ -118,14 +118,14 @@ func NewSSTable(memEntries []*MemEntry, singleFile bool) (*SSTable, error) {
 
 		subdirName = dirEntries[len(dirEntries)-1].Name()
 		fmt.Println(subdirName)
-		n, err := strconv.ParseUint(subdirName[7:], 10, 8)
+		n, err := strconv.ParseUint(subdirName[8:], 10, 8)
 		index = uint8(n)
 		if err != nil {
 			return nil, err
 		}
 		fmt.Println(index)
 		index++
-		subdirName = fmt.Sprintf("sstable%d", index)
+		subdirName = fmt.Sprintf("%dsstable%d", 1, index)
 		subdirPath = filepath.Join(Path, subdirName)
 		dirEntries, err := os.ReadDir(subdirPath)
 		fmt.Println(dirEntries)
