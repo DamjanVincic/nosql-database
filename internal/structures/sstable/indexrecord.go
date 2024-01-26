@@ -6,15 +6,15 @@ import (
 
 type IndexRecord struct {
 	keySize uint64
-	key     string
-	offset  uint64
+	Key     string
+	Offset  uint64
 }
 
 func NewIndexRecord(memEntry *MemEntry, offset uint64) *IndexRecord {
 	return &IndexRecord{
 		keySize: uint64(len([]byte(memEntry.Key))),
-		key:     memEntry.Key,
-		offset:  offset,
+		Key:     memEntry.Key,
+		Offset:  offset,
 	}
 }
 
@@ -27,10 +27,10 @@ func (indexRecord *IndexRecord) SerializeIndexRecord() []byte {
 	binary.BigEndian.PutUint64(bytes, indexRecord.keySize)
 
 	// Serialize Key (variable size)
-	copy(bytes[KeyStart:], []byte(indexRecord.key))
+	copy(bytes[KeyStart:], []byte(indexRecord.Key))
 
 	// Serialize Offset (8 bytes, BigEndian)
-	binary.BigEndian.PutUint64(bytes[KeyStart+indexRecord.keySize:], indexRecord.offset)
+	binary.BigEndian.PutUint64(bytes[KeyStart+indexRecord.keySize:], indexRecord.Offset)
 
 	return bytes
 }
@@ -46,8 +46,8 @@ func DeserializeIndexRecord(bytes []byte) (*IndexRecord, error) {
 	offset := binary.BigEndian.Uint64(bytes[KeyStart+int(keySize):])
 
 	return &IndexRecord{
-		key:     key,
+		Key:     key,
 		keySize: keySize,
-		offset:  offset,
+		Offset:  offset,
 	}, nil
 }

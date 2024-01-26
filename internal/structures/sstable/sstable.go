@@ -158,10 +158,6 @@ func NewSSTable(memEntries []*MemEntry, singleFile bool) (*SSTable, error) {
 			summaryConst: SummaryConst,
 			filename:     filename,
 		}
-		err = compactLogic(1, ss)
-		if err != nil {
-			return nil, err
-		}
 		return ss, nil
 
 	} else {
@@ -302,7 +298,7 @@ func writeToTocFile(dataFilename, indexFilename, summaryFilename, filterFilename
 
 	return nil
 }
-func readFromToc(tocfile string) ([]string, error) {
+func ReadFromToc(tocfile string) ([]string, error) {
 	tocFile, err := os.OpenFile(tocfile, os.O_RDWR, 0664)
 	if err != nil {
 		return nil, err
@@ -522,7 +518,7 @@ func ReadSummaryFromFile(mmapFile mmap.MMap, key string) (uint64, error) {
 		return 0, err
 	}
 	// check if key is in range of summary indexes
-	if key < summaryMin.key || key > summaryMax.key {
+	if key < summaryMin.Key || key > summaryMax.Key {
 		return 0, errors.New("key not in range of summary index table")
 	}
 	var summaryRecords []*IndexRecord
@@ -538,15 +534,15 @@ func ReadSummaryFromFile(mmapFile mmap.MMap, key string) (uint64, error) {
 		}
 		summaryRecords = append(summaryRecords, indexRecord)
 		// return second to last if we found the place of the key
-		if len(summaryRecords) >= 2 && summaryRecords[len(summaryRecords)-1].key > key && summaryRecords[len(summaryRecords)-2].key <= key {
-			return summaryRecords[len(summaryRecords)-2].offset, nil
+		if len(summaryRecords) >= 2 && summaryRecords[len(summaryRecords)-1].Key > key && summaryRecords[len(summaryRecords)-2].Key <= key {
+			return summaryRecords[len(summaryRecords)-2].Offset, nil
 		}
 		mmapFile = mmapFile[offset:]
 		// if we came to the end of the file return last one
 		// because if it passed all the way to here and it didnt return nil when we checked if its in the range in keys
 		// then it has to be somewhere near the end after the last summary index
 		if len(mmapFile) == 0 {
-			return indexRecord.offset, nil
+			return indexRecord.Offset, nil
 		}
 	}
 	return 0, errors.New("key not found")
@@ -872,12 +868,14 @@ func Get(key string) (*models.Data, error) {
 		}
 		indexRecords, err := ReadIndexFromFile(mmapFileIndex, indexOffset)
 		for i := 0; i < len(indexRecords); i++ {
-			if indexRecords[i].key == key {
-				dataRecord, err := ReadDataFromFile(mmapFileData, indexRecords[i].offset, indexRecords[i+1].offset)
+			if indexRecords[i].Key == key {
+				dataRecord, err := ReadDataFromFile(mmapFileData, indexRecords[i].Offset, indexRecords[i+1].Offset)
 				if err != nil {
 					return nil, err
 				}
-				return &models.Data{Value: dataRecord.value, Tombstone: dataRecord.tombstone, Timestamp: dataRecord.timestamp}, nil
+				// this could be changed since it is the same
+				// dataRecord to models.Data
+				return &models.Data{Value: dataRecord.Value, Tombstone: dataRecord.Tombstone, Timestamp: dataRecord.Timestamp}, nil
 			}
 		}
 		break
@@ -924,7 +922,7 @@ func createFiles(memEntries []*MemEntry, file *os.File, singleFile bool) error {
 	*/
 	// counter for index summary, for every n index records add one to summary
 	countKeysBetween := 0
-	filter := bloomfilter.CreateBloomFilter(len(memEntries), 0.2)
+	filter := bloomfilter.CreateBloomFilter(len(memEntries), 0.001)
 	merkle, err := CreateMerkleTree(memEntries)
 	if err != nil {
 		return err
@@ -1004,7 +1002,7 @@ func createFiles(memEntries []*MemEntry, file *os.File, singleFile bool) error {
 		return nil
 	}
 
-	files, err := readFromToc(file.Name())
+	files, err := ReadFromToc(file.Name())
 	if err != nil {
 		return err
 	}

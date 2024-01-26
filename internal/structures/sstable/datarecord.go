@@ -8,9 +8,9 @@ import (
 
 type DataRecord struct {
 	crc       uint32
-	timestamp uint64
-	tombstone bool
-	value     []byte
+	Timestamp uint64
+	Tombstone bool
+	Value     []byte
 }
 
 func NewDataRecord(memEntry *MemEntry) *DataRecord {
@@ -27,9 +27,9 @@ func NewDataRecord(memEntry *MemEntry) *DataRecord {
 
 	return &DataRecord{
 		crc:       crc32.ChecksumIEEE(bytes),
-		timestamp: memEntry.Value.Timestamp,
-		tombstone: memEntry.Value.Tombstone,
-		value:     memEntry.Value.Value,
+		Timestamp: memEntry.Value.Timestamp,
+		Tombstone: memEntry.Value.Tombstone,
+		Value:     memEntry.Value.Value,
 	}
 }
 
@@ -38,16 +38,16 @@ func (record *DataRecord) SerializeDataRecord() []byte {
 	// Append the CRC
 	binary.BigEndian.PutUint32(bytes[CrcStart:TimestampStart], record.crc)
 	// Append the Timestamp
-	binary.BigEndian.PutUint64(bytes[TimestampStart:TombstoneStart], record.timestamp)
+	binary.BigEndian.PutUint64(bytes[TimestampStart:TombstoneStart], record.Timestamp)
 	// Append the Tombstone
-	if record.tombstone {
+	if record.Tombstone {
 		bytes[TombstoneStart] = 1
 		return bytes
 	} else {
 		bytes[TombstoneStart] = 0
 	}
 	// Append the Value
-	bytes = append(bytes, record.value...)
+	bytes = append(bytes, record.Value...)
 
 	return bytes
 }
@@ -68,8 +68,8 @@ func DeserializeDataRecord(bytes []byte) (*DataRecord, error) {
 
 	return &DataRecord{
 		crc:       Crc,
-		timestamp: Timestamp,
-		tombstone: Tombstone,
-		value:     Value,
+		Timestamp: Timestamp,
+		Tombstone: Tombstone,
+		Value:     Value,
 	}, nil
 }
