@@ -389,40 +389,6 @@ func ReadDataFromFile(mmapFile mmap.MMap, offsetStart, offsetEnd uint64) (*DataR
 	return dataRecord, nil
 }
 
-// get len of date and just write all records
-func WriteToIndexFile(file string, data []byte) error {
-	indexFile, err := os.OpenFile(file, os.O_RDWR, 0644)
-	if err != nil {
-		return err
-	}
-	flatData := make([]byte, 0)
-	flatData = append(flatData, data...)
-	totalBytes := int64(len(data))
-	fileStat, err := indexFile.Stat()
-	if err != nil {
-		return err
-	}
-	fileSize := fileStat.Size()
-
-	if err = indexFile.Truncate(totalBytes + fileSize); err != nil {
-		return err
-	}
-	mmapFile, err := mmap.Map(indexFile, mmap.RDWR, 0)
-	if err != nil {
-		return err
-	}
-	copy(mmapFile[fileSize:], flatData)
-	err = mmapFile.Unmap()
-	if err != nil {
-		return err
-	}
-	err = indexFile.Close()
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
 // it returns data offset
 func ReadIndexFromFile(mmapFile mmap.MMap, offsetStart uint64) ([]*IndexRecord, error) {
 	var result []*IndexRecord
@@ -1016,7 +982,7 @@ func createFiles(memEntries []*MemEntry, file *os.File, singleFile bool) error {
 		return err
 	}
 	filePath = filepath.Join(Path, fmt.Sprintf("%s%d", Path, number), files[1])
-	err = WriteToIndexFile(filePath, indexRecords)
+	err = WriteToFile(filePath, indexRecords)
 	if err != nil {
 		return err
 	}
