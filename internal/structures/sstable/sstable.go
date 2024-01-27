@@ -4,13 +4,14 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"github.com/DamjanVincic/key-value-engine/internal/models"
-	"github.com/DamjanVincic/key-value-engine/internal/structures/bloomfilter"
-	"github.com/edsrzf/mmap-go"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
+
+	"github.com/DamjanVincic/key-value-engine/internal/models"
+	"github.com/DamjanVincic/key-value-engine/internal/structures/bloomfilter"
+	"github.com/edsrzf/mmap-go"
 )
 
 const (
@@ -100,7 +101,7 @@ func NewSSTable(memEntries []*MemEntry, singleFile bool) (*SSTable, error) {
 	if len(dirEntries) == 0 {
 		// subdirName : sstableN (N - index)
 		index = 1
-		subdirName = fmt.Sprintf("%d_sstable_%d", 1, index)
+		subdirName = fmt.Sprintf("%02d_sstable_%05d", lsmIndex, index)
 		subdirPath = filepath.Join(Path, subdirName)
 		err := os.Mkdir(subdirPath, os.ModePerm)
 		if err != nil {
@@ -110,41 +111,48 @@ func NewSSTable(memEntries []*MemEntry, singleFile bool) (*SSTable, error) {
 		// Get the last file
 		// sort the entries in numerical order, because they are returned in lexicographical
 		sort.Slice(dirEntries, func(i, j int) bool {
-			numI, _ := strconv.Atoi(dirEntries[i].Name()[10:])
-			numJ, _ := strconv.Atoi(dirEntries[j].Name()[10:])
+			numI, _ := strconv.Atoi(dirEntries[i].Name()[:])
+			numJ, _ := strconv.Atoi(dirEntries[j].Name()[:])
 			return numI < numJ
 		})
 
 		subdirName = dirEntries[len(dirEntries)-1].Name()
 		fmt.Println(subdirName)
-		n, err := strconv.ParseUint(subdirName[10:], 10, 8)
+		n, err := strconv.ParseUint(subdirName[11:], 10, 8)
 		index = uint8(n)
 		if err != nil {
 			return nil, err
 		}
 		fmt.Println(index)
 		index++
-		subdirName = fmt.Sprintf("%d_sstable_%d", 1, index)
+		subdirName = fmt.Sprintf("%02d_sstable_%05d", lsmIndex, index)
 		subdirPath = filepath.Join(Path, subdirName)
-		dirEntries, err := os.ReadDir(subdirPath)
-		fmt.Println(dirEntries)
 		err = os.Mkdir(subdirPath, os.ModePerm)
 		if err != nil {
 			return nil, err
 		}
+		dirEntries, err := os.ReadDir(subdirPath)
+		if err != nil {
+			return nil, err
+		}
+		fmt.Println(dirEntries)
+		// err = os.Mkdir(subdirPath, os.ModePerm)
+		// if err != nil {
+		// 	return nil, err
+		// }
 	}
 	// creates files and save the data
 	if singleFile {
 		// creating file where everything will be held
 		// create the name of the file and open it
 		// in said file then write all data
-		filename := fmt.Sprintf("%s%05d_%d%s.db", Prefix, index, lsmIndex, SimpleSufix)
+		filename := fmt.Sprintf("%s%05d%s.db", Prefix, index, SimpleSufix)
 		file, err := os.OpenFile(filepath.Join(subdirPath, filename), os.O_CREATE|os.O_RDWR, 0644)
 		if err != nil {
 			return nil, err
 		}
 
-		err = createFiles(memEntries, file, true)
+		err = createFiles(memEntries, true, file)
 		if err != nil {
 			return nil, err
 		}
@@ -154,21 +162,20 @@ func NewSSTable(memEntries []*MemEntry, singleFile bool) (*SSTable, error) {
 			return nil, err
 		}
 
-		ss := &SSTable{
+		return &SSTable{
 			summaryConst: SummaryConst,
 			filename:     filename,
-		}
-		return ss, nil
+		}, nil
 
 	} else {
-		// Filename format: sst_00001_lsmi_PART.db
+		// Filename format: sst_00001_PART.db
 		// create names of new files
-		dataFilename = fmt.Sprintf("%s%05d_%d%s.db", Prefix, index, lsmIndex, DataSufix)
-		indexFilename = fmt.Sprintf("%s%05d_%d%s.db", Prefix, index, lsmIndex, IndexSufix)
-		summaryFilename = fmt.Sprintf("%s%05d_%d%s.db", Prefix, index, lsmIndex, SummarySufix)
-		filterFilename = fmt.Sprintf("%s%05d_%d%s.db", Prefix, index, lsmIndex, FilterSufix)
-		metadataFilename = fmt.Sprintf("%s%05d_%d%s.db", Prefix, index, lsmIndex, MetaSufix)
-		tocFilename = fmt.Sprintf("%s%05d_%d%s.txt", Prefix, index, lsmIndex, TocSufix)
+		dataFilename = fmt.Sprintf("%s%05d%s.db", Prefix, index, DataSufix)
+		indexFilename = fmt.Sprintf("%s%05d%s.db", Prefix, index, IndexSufix)
+		summaryFilename = fmt.Sprintf("%s%05d%s.db", Prefix, index, SummarySufix)
+		filterFilename = fmt.Sprintf("%s%05d%s.db", Prefix, index, FilterSufix)
+		metadataFilename = fmt.Sprintf("%s%05d%s.db", Prefix, index, MetaSufix)
+		tocFilename = fmt.Sprintf("%s%05d%s.db", Prefix, index, TocSufix)
 
 		//create files
 		dataFile, err := os.OpenFile(filepath.Join(subdirPath, dataFilename), os.O_CREATE|os.O_RDWR, 0644)
@@ -196,7 +203,12 @@ func NewSSTable(memEntries []*MemEntry, singleFile bool) (*SSTable, error) {
 			return nil, err
 		}
 
-		// we just created the files, so we need to close them
+		// write to toc to access later
+
+		err = createFiles(memEntries, false, dataFile, indexFile, summaryFile, filterFile, metadataFile, tocFile)
+		if err != nil {
+			return nil, err
+		}
 		err = dataFile.Close()
 		if err != nil {
 			return nil, err
@@ -217,17 +229,6 @@ func NewSSTable(memEntries []*MemEntry, singleFile bool) (*SSTable, error) {
 		if err != nil {
 			return nil, err
 		}
-
-		// write to toc to access later
-		err = writeToTocFile(dataFilename, indexFilename, summaryFilename, filterFilename, metadataFilename, filepath.Join(subdirPath, tocFilename))
-		if err != nil {
-			return nil, err
-		}
-		err = createFiles(memEntries, tocFile, false)
-		if err != nil {
-			return nil, err
-		}
-
 		err = tocFile.Close()
 		if err != nil {
 			return nil, err
@@ -239,12 +240,7 @@ func NewSSTable(memEntries []*MemEntry, singleFile bool) (*SSTable, error) {
 		}, nil
 	}
 }
-func writeToTocFile(dataFilename, indexFilename, summaryFilename, filterFilename, metadataFilename, tocFilename string) error {
-	tocFile, err := os.OpenFile(tocFilename, os.O_RDWR, 0644)
-	if err != nil {
-		return err
-	}
-	defer tocFile.Close()
+func createTocData(dataFilename, indexFilename, summaryFilename, filterFilename, metadataFilename string) []byte {
 	// there is 5 files and each size of the file is of size 8
 	totalBytes := int64(8 * 5) // for sizes of strings
 
@@ -275,28 +271,7 @@ func writeToTocFile(dataFilename, indexFilename, summaryFilename, filterFilename
 	data = append(data, metadataLength...)
 	data = append(data, []byte(metadataFilename)...)
 
-	fileStat, err := tocFile.Stat()
-	if err != nil {
-		return err
-	}
-	fileSize := fileStat.Size()
-
-	if err = tocFile.Truncate(fileSize + totalBytes); err != nil {
-		return err
-	}
-
-	mmapFile, err := mmap.Map(tocFile, mmap.RDWR, 0)
-	if err != nil {
-		return err
-	}
-	copy(mmapFile[fileSize:], data)
-
-	err = mmapFile.Unmap()
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return data
 }
 func ReadFromToc(tocfile string) ([]string, error) {
 	tocFile, err := os.OpenFile(tocfile, os.O_RDWR, 0664)
@@ -339,11 +314,7 @@ func ReadFromToc(tocfile string) ([]string, error) {
 // params - filename in case of single file it will be the sstable file itself,
 // in case of multifile sstable this will be data file
 //   - data to be written
-func WriteToFile(filename string, data []byte) error {
-	file, err := os.OpenFile(filename, os.O_RDWR, 0664)
-	if err != nil {
-		return err
-	}
+func WriteToFile(file *os.File, data []byte) error {
 	totalBytes := int64(len(data))
 	fileStat, err := file.Stat()
 	if err != nil {
@@ -360,10 +331,6 @@ func WriteToFile(filename string, data []byte) error {
 	}
 	copy(mmapFile[fileSize:], data)
 	err = mmapFile.Unmap()
-	if err != nil {
-		return err
-	}
-	err = file.Close()
 	if err != nil {
 		return err
 	}
@@ -422,46 +389,6 @@ func ReadIndexFromFile(mmapFile mmap.MMap, offsetStart uint64) ([]*IndexRecord, 
 }
 
 // same as index file just add summary min and max at the top
-func WriteSummaryToFile(file string, data, summaryMin, summaryMax []byte) error {
-	summaryFile, err := os.OpenFile(file, os.O_RDWR, 0644)
-	if err != nil {
-		return err
-	}
-	summaryMinSize := uint64(len(summaryMin))
-	summaryMaxSize := uint64(len(summaryMax))
-	totalBytes := int64(len(data))
-	totalBytes += 16 // for size vars
-	totalBytes += int64(len(summaryMax) + len(summaryMin))
-	flatData := make([]byte, 16)
-	binary.BigEndian.PutUint64(flatData[8:], summaryMaxSize)
-	binary.BigEndian.PutUint64(flatData[:8], summaryMinSize)
-	flatData = append(flatData, summaryMin...)
-	flatData = append(flatData, summaryMax...)
-	flatData = append(flatData, data...)
-
-	fileStat, err := summaryFile.Stat()
-	if err != nil {
-		return err
-	}
-	fileSize := fileStat.Size()
-	if err = summaryFile.Truncate(totalBytes + fileSize); err != nil {
-		return err
-	}
-	mmapFile, err := mmap.Map(summaryFile, mmap.RDWR, 0)
-	if err != nil {
-		return err
-	}
-	copy(mmapFile[fileSize:], flatData)
-	err = mmapFile.Unmap()
-	if err != nil {
-		return err
-	}
-	err = summaryFile.Close()
-	if err != nil {
-		return err
-	}
-	return nil
-}
 
 // it returns index offset
 func ReadSummaryFromFile(mmapFile mmap.MMap, key string) (uint64, error) {
@@ -513,41 +440,6 @@ func ReadSummaryFromFile(mmapFile mmap.MMap, key string) (uint64, error) {
 	}
 	return 0, errors.New("key not found")
 }
-func WriteBloomFilter(filter bloomfilter.BloomFilter, filterFilename string) error {
-	// First 4 bytes are the number of bytes in the byte array
-	// Next 4 bytes are the number of hash functions
-	filterFile, err := os.OpenFile(filterFilename, os.O_RDWR, 0644)
-	if err != nil {
-		return err
-	}
-	data := filter.Serialize()
-	totalBytes := int64(len(data))
-	//var flatData []byte
-	//flatData = append(flatData, data...)
-	fileStat, err := filterFile.Stat()
-	if err != nil {
-		return err
-	}
-	fileSize := fileStat.Size()
-
-	if err = filterFile.Truncate(int64(fileSize + totalBytes)); err != nil {
-		return err
-	}
-	mmapFile, err := mmap.Map(filterFile, mmap.RDWR, 0)
-	if err != nil {
-		return err
-	}
-	copy(mmapFile[fileSize:], data)
-	err = mmapFile.Unmap()
-	if err != nil {
-		return err
-	}
-	err = filterFile.Close()
-	if err != nil {
-		return err
-	}
-	return nil
-}
 
 // mmapFile in case of multi file sstable with be the hole file
 // in the case of single file sstable it will only be part that is bloom filter
@@ -572,36 +464,6 @@ func ReadMerkle(mmapFile mmap.MMap) (*MerkleTree, error) {
 		return nil, err
 	}
 	return merkle, err
-}
-func WriteToMerkleFile(merkle *MerkleTree, filename string) error {
-	metadataFile, err := os.OpenFile(filename, os.O_RDWR, 0644)
-	if err != nil {
-		return err
-	}
-	data := merkle.Serialize()
-	totalBytes := int64(len(data))
-	fileStat, err := metadataFile.Stat()
-	if err != nil {
-		return err
-	}
-	fileSize := fileStat.Size()
-	if err = metadataFile.Truncate(totalBytes + fileSize); err != nil {
-		return err
-	}
-	mmapFile, err := mmap.Map(metadataFile, mmap.RDWR, 0)
-	if err != nil {
-		return err
-	}
-	copy(mmapFile[fileSize:], data)
-	err = mmapFile.Unmap()
-	if err != nil {
-		return err
-	}
-	err = metadataFile.Close()
-	if err != nil {
-		return err
-	}
-	return nil
 }
 
 // get serialized data
@@ -639,13 +501,13 @@ func Get(key string) (*models.Data, error) {
 		return numI < numJ
 	})
 	lastSubDirName := dirEntries[len(dirEntries)-1].Name()
-	index, err := strconv.ParseUint(lastSubDirName[7:], 10, 64)
-	lastSubDirNameWithoutIndex := lastSubDirName[0:7]
+	index, err := strconv.ParseUint(lastSubDirName[11:], 10, 64)
+	lastSubDirNameWithoutIndex := lastSubDirName[:10]
 	if err != nil {
 		return nil, err
 	}
 	for {
-		subDirName := lastSubDirNameWithoutIndex + fmt.Sprintf("%d", index)
+		subDirName := lastSubDirNameWithoutIndex + fmt.Sprintf("%05d", index)
 		subDirPath := filepath.Join(Path, subDirName)
 		subDirEntries, err := os.ReadDir(subDirPath)
 		if os.IsNotExist(err) {
@@ -852,18 +714,21 @@ func Get(key string) (*models.Data, error) {
 
 // file name will be toc file for multi file sstable
 // and file for single file sstable
-func createFiles(memEntries []*MemEntry, file *os.File, singleFile bool) error {
+func createFiles(memEntries []*MemEntry, singleFile bool, files ...*os.File) error {
 	var data []byte
 	dataSize := uint64(0)
 	var dataRecords []byte
 	var indexRecords []byte
 	var summaryRecords []byte
+	var tocData []byte
 	summaryHeader := make([]byte, SummaryMinSizeSize+SummaryMaxSizeSize)
 
+	// for single file, container for summary records - we need it bc we dont know the size of data segment wich affects offsets
+	singleSummaryRecords := make([]*IndexRecord, 0)
 	var summaryMin []byte
 	var summaryMax []byte
 	var serializedIndexRecord []byte
-
+	var serializedSummaryRecord []byte
 	// for single file header
 	dataBlockSize := uint64(0)
 	indexBlockSize := uint64(0)
@@ -879,13 +744,11 @@ func createFiles(memEntries []*MemEntry, file *os.File, singleFile bool) error {
 	// set it right after header if its single file, after header are data records
 	offset := uint64(0)
 	indexOffset := uint64(0) // index block size from ssstable
-	/*
-		if singleFile {
-			offset = uint64(HeaderSize)
-			indexOffset = uint64(HeaderSize) // index block size from ssstable
-		}
 
-	*/
+	if singleFile {
+		offset = uint64(HeaderSize)
+	}
+
 	// counter for index summary, for every n index records add one to summary
 	countKeysBetween := 0
 	filter := bloomfilter.CreateBloomFilter(len(memEntries), 0.001)
@@ -902,11 +765,15 @@ func createFiles(memEntries []*MemEntry, file *os.File, singleFile bool) error {
 		dataBlockSize += sizeOfDR
 		indexBlockSize += sizeOfIR
 		if countKeysBetween%SummaryConst == 0 {
-			serializedIndexRecord, summaryRecords = addToIndex(indexOffset, entry, summaryRecords)
-			sizeOfSR = uint64(len(serializedIndexRecord))
-			summaryBlockSize += sizeOfSR
-			if summaryMin == nil {
-				summaryMin = serializedIndexRecord
+			if singleFile {
+				singleSummaryRecords = append(singleSummaryRecords, NewIndexRecord(entry, indexOffset))
+			} else {
+				serializedSummaryRecord, summaryRecords = addToIndex(indexOffset, entry, summaryRecords)
+				sizeOfSR = uint64(len(serializedSummaryRecord))
+				summaryBlockSize += sizeOfSR
+				if summaryMin == nil {
+					summaryMin = serializedSummaryRecord
+				}
 			}
 		}
 		err = filter.AddElement([]byte(entry.Key))
@@ -923,6 +790,20 @@ func createFiles(memEntries []*MemEntry, file *os.File, singleFile bool) error {
 	merkleData := merkle.Serialize()
 	metaBlockSize += uint64(len(merkleData))
 
+	if singleFile {
+		for _, summRecord := range singleSummaryRecords {
+			summRecord.Offset += dataBlockSize
+			serializedSummaryRecord = summRecord.SerializeIndexRecord()
+			if summaryMin == nil {
+				summaryMin = serializedSummaryRecord
+			}
+			summaryRecords = append(summaryRecords, serializedIndexRecord...)
+			summaryMax = serializedSummaryRecord
+			sizeOfSR = uint64(len(serializedSummaryRecord))
+			summaryBlockSize += sizeOfSR
+		}
+
+	}
 	binary.BigEndian.PutUint64(summaryHeader[SummaryMinSizestart:SummaryMaxSizeStart], uint64(len(summaryMin)))
 	binary.BigEndian.PutUint64(summaryHeader[SummaryMaxSizeStart:SummaryMaxSizeStart+SummaryMaxSizeSize], uint64(len(summaryMax)))
 	summaryHeaderSize := SummaryMinSizeSize + SummaryMaxSizeSize + uint64(len(summaryMin)) + uint64(len(summaryMax))
@@ -947,57 +828,35 @@ func createFiles(memEntries []*MemEntry, file *os.File, singleFile bool) error {
 		data = append(data, summaryHeader...)
 		data = append(data, merkleData...)
 
-		fileInfo, err := file.Stat()
+		err = WriteToFile(files[0], data)
 		if err != nil {
 			return err
 		}
-		fileSize := uint64(fileInfo.Size())
-		err = file.Truncate(int64(fileSize + uint64(dataSize)))
-		if err != nil {
-			return err
-		}
-		mmapFile, err := mmap.Map(file, mmap.RDWR, 0)
-		if err != nil {
-			return err
-		}
-		copy(mmapFile[fileSize:], data)
-		err = mmapFile.Unmap()
-		if err != nil {
-			return err
-		}
+
 		return nil
 	}
-
-	files, err := ReadFromToc(file.Name())
+	tocData = createTocData(files[0].Name(), files[1].Name(), files[2].Name(), files[3].Name(), files[4].Name())
+	err = WriteToFile(files[0], dataRecords)
 	if err != nil {
 		return err
 	}
-	number, err := strconv.Atoi(files[0][4:9])
+	err = WriteToFile(files[1], indexRecords)
 	if err != nil {
 		return err
 	}
-	filePath := filepath.Join(Path, fmt.Sprintf("%s%d", Path, number), files[0])
-	err = WriteToFile(filePath, dataRecords)
+	err = WriteToFile(files[2], summaryHeader)
 	if err != nil {
 		return err
 	}
-	filePath = filepath.Join(Path, fmt.Sprintf("%s%d", Path, number), files[1])
-	err = WriteToFile(filePath, indexRecords)
+	err = WriteToFile(files[3], filterData)
 	if err != nil {
 		return err
 	}
-	filePath = filepath.Join(Path, fmt.Sprintf("%s%d", Path, number), files[2])
-	err = WriteSummaryToFile(filePath, summaryRecords, summaryMin, summaryMax)
+	err = WriteToFile(files[4], merkleData)
 	if err != nil {
 		return err
 	}
-	filePath = filepath.Join(Path, fmt.Sprintf("%s%d", Path, number), files[3])
-	err = WriteBloomFilter(filter, filePath)
-	if err != nil {
-		return err
-	}
-	filePath = filepath.Join(Path, fmt.Sprintf("%s%d", Path, number), files[4])
-	err = WriteToMerkleFile(merkle, filePath)
+	err = WriteToFile(files[5], tocData)
 	if err != nil {
 		return err
 	}
