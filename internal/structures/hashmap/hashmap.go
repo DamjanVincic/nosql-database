@@ -1,7 +1,6 @@
 package hashmap
 
 import (
-	"errors"
 	"github.com/DamjanVincic/key-value-engine/internal/models"
 	"sort"
 )
@@ -15,24 +14,22 @@ func CreateHashMap() *HashMap {
 }
 
 // Get Error is returned because the interface requires it
-func (hashMap *HashMap) Get(key string) (*models.Data, error) {
+func (hashMap *HashMap) Get(key string) *models.Data {
 	value, ok := hashMap.data[key]
 	if !ok {
-		return nil, errors.New("could not find element with given key")
+		return nil
 	}
-	return value, nil
+	return value
 }
 
 // Put Error is returned because the interface requires it
-func (hashMap *HashMap) Put(key string, value []byte, tombstone bool, timestamp uint64) error {
+func (hashMap *HashMap) Put(key string, value []byte, tombstone bool, timestamp uint64) {
 	hashMap.data[key] = &models.Data{Value: value, Tombstone: tombstone, Timestamp: timestamp}
-	return nil
 }
 
 // Delete Error is returned because the interface requires it
-func (hashMap *HashMap) Delete(key string) error {
+func (hashMap *HashMap) Delete(key string) {
 	delete(hashMap.data, key)
-	return nil
 }
 
 // GetSorted returns all values sorted
@@ -45,7 +42,7 @@ func (hashMap *HashMap) GetSorted() []*models.MemEntry {
 
 	entries := make([]*models.MemEntry, 0)
 	for key := range keys {
-		entries = append(entries, &models.MemEntry{keys[key], hashMap.data[keys[key]]})
+		entries = append(entries, &models.MemEntry{Key: keys[key], Value: hashMap.data[keys[key]]})
 	}
 
 	return entries

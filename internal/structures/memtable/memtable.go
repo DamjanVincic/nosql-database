@@ -13,10 +13,10 @@ const (
 )
 
 type MemtableData interface {
-	Get(key string) (*models.Data, error)
+	Get(key string) *models.Data
 	GetSorted() []*models.MemEntry
-	Put(key string, value []byte, tombstone bool, timestamp uint64) error
-	Delete(key string) error
+	Put(key string, value []byte, tombstone bool, timestamp uint64)
+	Delete(key string)
 	Size() int
 }
 
@@ -60,14 +60,10 @@ func (memtable *Memtable) makePartition() {
 }
 
 // puts values in currentPartition, creates new partition if needed, flushes oldest partition if needed
-func (memtable *Memtable) Put(key string, value []byte, timestamp uint64, tombstone bool) (toFlush []*models.MemEntry, err error) {
+func (memtable *Memtable) Put(key string, value []byte, timestamp uint64, tombstone bool) (toFlush []*models.MemEntry) {
 	toFlush = nil
-	err = nil
 
-	err = memtable.currentPartition.Put(key, value, tombstone, timestamp)
-	if err != nil {
-		return
-	}
+	memtable.currentPartition.Put(key, value, tombstone, timestamp)
 
 	if memtable.currentPartition.Size() >= maxEntries {
 		if len(memtable.partitions)+1 >= maxPartitions {
@@ -81,18 +77,15 @@ func (memtable *Memtable) Put(key string, value []byte, timestamp uint64, tombst
 // returns newest value with given key
 func (memtable *Memtable) Get(key string) *models.Data {
 	var data *models.Data
-	data = nil
-	var err error
-	err = nil
 
-	data, err = memtable.currentPartition.Get(key)
-	if err == nil {
+	data = memtable.currentPartition.Get(key)
+	if data != nil {
 		return data
 	}
 
 	for i := len(memtable.partitions) - 1; i >= 0; i-- {
-		data, err = memtable.partitions[i].Get(key)
-		if err == nil {
+		data = memtable.partitions[i].Get(key)
+		if data != nil {
 			return data
 		}
 	}
