@@ -19,7 +19,7 @@ type BTreeNode struct {
 
 type BTree struct {
 	root *BTreeNode
-	size uint64
+	size int
 }
 
 func CreateBTree() *BTree {
@@ -32,7 +32,7 @@ func CreateBTree() *BTree {
 	}
 	tree := &BTree{
 		root: root,
-		size: uint64(0),
+		size: 0,
 	}
 	return tree
 }
@@ -40,9 +40,6 @@ func CreateBTree() *BTree {
 /*
 function that checks whether key is in the node or not
 */
-func (tree *BTree) Size() uint64 {
-	return tree.size
-}
 func contains(list []string, element string) bool {
 	for _, value := range list {
 		if value == element {
@@ -99,6 +96,7 @@ func (tree *BTree) Put(key string, dataValue []byte, tombstone bool, timestamp u
 	node := search(key, root)
 	if node != nil {
 		node.data[key] = value
+		return
 	}
 	tree.size++
 	// if root is empty we need to initialize the tree
@@ -444,4 +442,8 @@ func (node *BTreeNode) traverse(result []*models.MemEntry) []*models.MemEntry {
 	}
 
 	return result
+}
+
+func (tree *BTree) Size() int {
+	return tree.size
 }
