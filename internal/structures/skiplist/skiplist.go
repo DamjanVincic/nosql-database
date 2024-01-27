@@ -1,7 +1,6 @@
 package skiplist
 
 import (
-	"errors"
 	"github.com/DamjanVincic/key-value-engine/internal/models"
 	"math/rand"
 )
@@ -57,8 +56,7 @@ func CreateSkipList() *SkipList {
 	return &s
 }
 
-func (skipList *SkipList) find(key string, findClosest bool) (found *SkipListNode, err error) {
-	err = nil
+func (skipList *SkipList) find(key string, findClosest bool) (found *SkipListNode) {
 	found = nil
 
 	current := skipList.heads[skipList.height-1] //starting search from top level
@@ -76,8 +74,6 @@ func (skipList *SkipList) find(key string, findClosest bool) (found *SkipListNod
 			} else { //key does not exist
 				if findClosest {
 					found = current
-				} else {
-					err = errors.New("could not find element with given key")
 				}
 				return
 			}
@@ -85,9 +81,9 @@ func (skipList *SkipList) find(key string, findClosest bool) (found *SkipListNod
 	}
 }
 
-func (skipList *SkipList) Get(key string) (found *models.Data, ok error) {
-	elem, ok := skipList.find(key, false)
-	if ok == nil {
+func (skipList *SkipList) Get(key string) (found *models.Data) {
+	elem := skipList.find(key, false)
+	if elem != nil {
 		found = elem.value
 	} else {
 		found = nil
@@ -95,19 +91,14 @@ func (skipList *SkipList) Get(key string) (found *models.Data, ok error) {
 	return
 }
 
-func (skipList *SkipList) Put(key string, value []byte, tombstone bool, timestamp uint64) error {
-	closestNode, ok := skipList.find(key, true)
-
-	if ok != nil {
-		return ok
-	}
+func (skipList *SkipList) Put(key string, value []byte, tombstone bool, timestamp uint64) {
+	closestNode := skipList.find(key, true)
 
 	//if node already exists, update values in Value field
 	if closestNode.key == key {
 		closestNode.value.Value = value
 		closestNode.value.Tombstone = tombstone
 		closestNode.value.Timestamp = timestamp
-		return ok
 	}
 
 	skipListValue := &models.Data{Value: value, Timestamp: timestamp, Tombstone: tombstone}
@@ -151,13 +142,12 @@ func (skipList *SkipList) Put(key string, value []byte, tombstone bool, timestam
 	}
 
 	skipList.size++
-	return ok
 }
 
-func (skipList *SkipList) Delete(key string) error {
-	found, ok := skipList.find(key, false)
-	if ok != nil {
-		return ok
+func (skipList *SkipList) Delete(key string) {
+	found := skipList.find(key, false)
+	if found == nil {
+		return
 	}
 
 	//remove node on the highest level
@@ -169,5 +159,4 @@ func (skipList *SkipList) Delete(key string) error {
 		found.next.previous = found.previous
 	}
 	skipList.size--
-	return ok
 }
