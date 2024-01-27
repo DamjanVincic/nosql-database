@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	T = 2 // degree of nodes
+	T = 3 // degree of nodes
 )
 
 type BTreeNode struct {
@@ -123,9 +123,9 @@ func insertInNodeThatHasRoom(key string, value *models.Data, node *BTreeNode) {
 	i := len(node.keys)
 	// if node is leaf just add and sort
 	if node.leaf {
+		node.keys = append(node.keys, "")
+		node.data[key] = value
 		for i > 0 && node.keys[i-1] > key {
-			node.keys = append(node.keys, "")
-			node.data[key] = value
 			node.keys[i] = node.keys[i-1]
 			//node.children[i] = node.children[i-1]
 			i--
