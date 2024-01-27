@@ -174,7 +174,7 @@ func (skipList *SkipList) Delete(key string) error {
 
 // returns all values sorted
 func (skipList *SkipList) GetSorted() []*models.MemEntry {
-	entries := make([]*models.MemEntry, skipList.size)
+	entries := make([]*models.MemEntry, 0)
 	current := skipList.heads[0]
 	for current.next.key != positiveInfinity {
 		current = current.next
