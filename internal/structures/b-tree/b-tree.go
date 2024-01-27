@@ -19,6 +19,7 @@ type BTreeNode struct {
 }
 type BTree struct {
 	root *BTreeNode
+	size uint64
 }
 
 func CreateBTree() *BTree {
@@ -31,6 +32,7 @@ func CreateBTree() *BTree {
 	}
 	tree := &BTree{
 		root: root,
+		size: uint64(0),
 	}
 	return tree
 }
@@ -89,6 +91,9 @@ if root is not initialized, it initializes it
 if the root is full its split,
 if not key is added in empty space
 */
+func (tree *BTree) Size() uint64 {
+	return tree.size
+}
 func (tree *BTree) Put(key string, dataValue []byte, tombstone bool, timestamp uint64) error {
 	value := &models.Data{Value: dataValue, Tombstone: tombstone, Timestamp: timestamp}
 	root := tree.root
@@ -97,6 +102,7 @@ func (tree *BTree) Put(key string, dataValue []byte, tombstone bool, timestamp u
 		node.data[key] = value
 		return nil
 	}
+	tree.size++
 	// if root is empty we need to initialize the tree
 	if len(root.keys) == 2*T-1 {
 		// when split, middle element goes to parent node
