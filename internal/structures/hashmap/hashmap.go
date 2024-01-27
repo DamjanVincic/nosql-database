@@ -11,22 +11,20 @@ func CreateHashMap() *HashMap {
 }
 
 // Get Error is returned because the interface requires it
-func (hashMap *HashMap) Get(key string) (*models.Data, error) {
+func (hashMap *HashMap) Get(key string) *models.Data {
 	value, ok := hashMap.data[key]
 	if !ok {
-		return nil, nil
+		return nil
 	}
-	return value, nil
+	return value
 }
 
 // Put Error is returned because the interface requires it
-func (hashMap *HashMap) Put(key string, value []byte, tombstone bool, timestamp uint64) error {
+func (hashMap *HashMap) Put(key string, value []byte, tombstone bool, timestamp uint64) {
 	hashMap.data[key] = &models.Data{Value: value, Tombstone: tombstone, Timestamp: timestamp}
-	return nil
 }
 
 // Delete Error is returned because the interface requires it
-func (hashMap *HashMap) Delete(key string) error {
+func (hashMap *HashMap) Delete(key string) {
 	delete(hashMap.data, key)
-	return nil
 }

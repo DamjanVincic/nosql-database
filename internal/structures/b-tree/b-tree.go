@@ -1,7 +1,6 @@
 package btree
 
 import (
-	"errors"
 	"fmt"
 	"github.com/DamjanVincic/key-value-engine/internal/models"
 )
@@ -17,6 +16,7 @@ type BTreeNode struct {
 	leaf     bool         // is node a leaf
 	data     map[string]*models.Data
 }
+
 type BTree struct {
 	root *BTreeNode
 	size uint64
@@ -40,6 +40,9 @@ func CreateBTree() *BTree {
 /*
 function that checks whether key is in the node or not
 */
+func (tree *BTree) Size() uint64 {
+	return tree.size
+}
 func contains(list []string, element string) bool {
 	for _, value := range list {
 		if value == element {
@@ -53,18 +56,17 @@ func contains(list []string, element string) bool {
 searches whether the key is in the tree
 optimize to not check branch that cant possibly have the key
 */
-func (tree *BTree) Get(key string) (*models.Data, error) {
-	//tree.root.PrintBTree(0)
-	found, node := search(key, tree.root)
-	if found {
-		return node.data[key], nil
+func (tree *BTree) Get(key string) *models.Data {
+	node := search(key, tree.root)
+	if node != nil {
+		return node.data[key]
 	}
-	return nil, errors.New("key not found")
+	return nil
 }
 
-func search(key string, node *BTreeNode) (bool, *BTreeNode) {
+func search(key string, node *BTreeNode) *BTreeNode {
 	if contains(node.keys, key) {
-		return true, node
+		return node
 	}
 
 	index := 0
@@ -74,7 +76,7 @@ func search(key string, node *BTreeNode) (bool, *BTreeNode) {
 		}
 	}
 	if index < len(node.keys) && node.keys[index] == key {
-		return true, node
+		return node
 	}
 
 	// iterate through children only if its not a leaf node
@@ -82,7 +84,7 @@ func search(key string, node *BTreeNode) (bool, *BTreeNode) {
 		return search(key, node.children[index])
 	}
 
-	return false, nil
+	return nil
 }
 
 /*
@@ -91,16 +93,12 @@ if root is not initialized, it initializes it
 if the root is full its split,
 if not key is added in empty space
 */
-func (tree *BTree) Size() uint64 {
-	return tree.size
-}
-func (tree *BTree) Put(key string, dataValue []byte, tombstone bool, timestamp uint64) error {
+func (tree *BTree) Put(key string, dataValue []byte, tombstone bool, timestamp uint64) {
 	value := &models.Data{Value: dataValue, Tombstone: tombstone, Timestamp: timestamp}
 	root := tree.root
-	found, node := search(key, root)
-	if found {
+	node := search(key, root)
+	if node != nil {
 		node.data[key] = value
-		return nil
 	}
 	tree.size++
 	// if root is empty we need to initialize the tree
@@ -122,7 +120,6 @@ func (tree *BTree) Put(key string, dataValue []byte, tombstone bool, timestamp u
 		insertInNodeThatHasRoom(key, value, root)
 		tree.root = root
 	}
-	return nil
 }
 
 func insertInNodeThatHasRoom(key string, value *models.Data, node *BTreeNode) {
@@ -293,8 +290,8 @@ node doesnt contain key
 //}
 
 // Mock delete function to implement the interface
-func (tree *BTree) Delete(key string) error {
-	return nil
+func (tree *BTree) Delete(key string) {
+	return
 }
 
 //func borrowKeyFromSibling(node *BTreeNode, indexLeft, indexRight int) *BTreeNode {
