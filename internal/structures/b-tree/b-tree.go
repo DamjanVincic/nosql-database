@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/DamjanVincic/key-value-engine/internal/models"
+	"sort"
 )
 
 const (
@@ -409,16 +410,35 @@ func deleteAtIndex(index int, list []string) []string {
 //	return ""
 //}
 
+func (tree *BTree) PrintBTree() {
+	var data = make(map[int][]string)
+	tree.root.printBTree(0, data)
+
+	keys := make([]int, 0, len(data))
+	for k := range data {
+		keys = append(keys, k)
+	}
+	sort.Ints(keys)
+
+	for _, key := range keys {
+		fmt.Print(fmt.Sprintf("Level %d: ", key))
+		value := data[key]
+		for _, val := range value {
+			fmt.Print(fmt.Sprintf("%s ", val))
+		}
+		fmt.Println()
+	}
+}
+
 /*
 helper function to see structure of the tree
 */
-func (node *BTreeNode) PrintBTree(level int) {
+func (node *BTreeNode) printBTree(level int, data map[int][]string) {
 	if node != nil {
-		fmt.Printf("Level %d: ", level)
-		fmt.Println(node.keys)
+		data[level] = append(data[level], node.keys...)
 
 		for _, child := range node.children {
-			child.PrintBTree(level + 1)
+			child.printBTree(level+1, data)
 		}
 	}
 }
