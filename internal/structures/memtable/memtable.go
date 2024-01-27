@@ -2,6 +2,7 @@ package memtable
 
 import (
 	"github.com/DamjanVincic/key-value-engine/internal/models"
+	btree "github.com/DamjanVincic/key-value-engine/internal/structures/b-tree"
 	"github.com/DamjanVincic/key-value-engine/internal/structures/hashmap"
 	"github.com/DamjanVincic/key-value-engine/internal/structures/skiplist"
 )
@@ -39,6 +40,8 @@ func (memtable *Memtable) makePartition() {
 	switch dataStructure {
 	case 1:
 		newPartition = skiplist.CreateSkipList()
+	case 2:
+		newPartition = btree.CreateBTree()
 	case 3:
 		newPartition = hashmap.CreateHashMap()
 	}

@@ -420,20 +420,22 @@ func (node *BTreeNode) PrintBTree(level int) {
 	}
 }
 
-func (tree *BTree) GetSortedList() map[string]*models.Data {
-	result := make(map[string]*models.Data)
-	tree.root.traverse(result)
+func (tree *BTree) GetSorted() []*models.MemEntry {
+	var result []*models.MemEntry
+	result = tree.root.traverse(result)
 	return result
 }
 
-func (node *BTreeNode) traverse(result map[string]*models.Data) {
+func (node *BTreeNode) traverse(result []*models.MemEntry) []*models.MemEntry {
 	for i := 0; i < len(node.keys); i++ {
 		if !node.leaf {
-			node.children[i].traverse(result)
+			result = node.children[i].traverse(result)
 		}
-		result[node.keys[i]] = node.data[node.keys[i]]
+		result = append(result, &models.MemEntry{Key: node.keys[i], Value: node.data[node.keys[i]]})
 	}
 	if !node.leaf {
-		node.children[len(node.keys)].traverse(result)
+		result = node.children[len(node.keys)].traverse(result)
 	}
+
+	return result
 }
