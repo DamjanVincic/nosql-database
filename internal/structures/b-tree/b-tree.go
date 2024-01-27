@@ -92,9 +92,10 @@ if not key is added in empty space
 func (tree *BTree) Put(key string, dataValue []byte, tombstone bool, timestamp uint64) error {
 	value := &models.Data{Value: dataValue, Tombstone: tombstone, Timestamp: timestamp}
 	root := tree.root
-	found, _ := search(key, root)
+	found, node := search(key, root)
 	if found {
-		return errors.New("key already in tree")
+		node.data[key] = value
+		return nil
 	}
 	// if root is empty we need to initialize the tree
 	if len(root.keys) == 2*T-1 {
