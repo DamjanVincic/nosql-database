@@ -678,7 +678,6 @@ func Get(key string) (*models.Data, error) {
 		// start process for getting the element
 		// first we need to check if its in bloom filter
 		found, err := ReadBloomFilterFromFile(key, mmapFileFilter)
-		fmt.Println(i)
 		if err != nil {
 			return nil, err
 		}
@@ -694,25 +693,22 @@ func Get(key string) (*models.Data, error) {
 
 		//check if its in summary range (between min and max index)
 		indexOffset, err := ReadSummaryFromFile(mmapFileSummary, key)
-		fmt.Println("s")
 
-		if indexOffset == 0 && err != nil {
+		if err != nil {
 			i++
 			continue
 		}
 
 		//check if its in index
 		dataOffset, err := ReadIndexFromFile(mmapFileIndex, key, indexOffset)
-		fmt.Println("i")
 
-		if dataOffset == 0 && err == nil {
+		if err != nil {
 			i++
 			continue
 		}
 
 		//find it in data
 		dataRecord, err := ReadDataFromFile(mmapFileData, key, dataOffset)
-		fmt.Println("d")
 
 		if err != nil {
 			i++
@@ -875,12 +871,12 @@ func ReadDataFromFile(mmapFile mmap.MMap, key string, offset uint64) (*wal.Recor
 	offset = 0
 	//read IndexConst number of data records
 	for i := 0; i < IndexConst; i++ {
-		keySize := binary.BigEndian.Uint64(mmapFile[offset+DataKeySizeStart : offset+DataValueSizeStart])
-		valueSize := binary.BigEndian.Uint64(mmapFile[offset+DataValueSizeStart : offset+DataKeyStart])
+		keySize := binary.BigEndian.Uint64(mmapFile[DataKeySizeStart:DataValueSizeStart])
+		valueSize := binary.BigEndian.Uint64(mmapFile[DataValueSizeStart:DataKeyStart])
 
 		// make sure to read complete data rec
 		dataRecordSize = RecordHeaderSize + keySize + valueSize
-		dataRecord, err := wal.Deserialize(mmapFile[offset:dataRecordSize])
+		dataRecord, err := wal.Deserialize(mmapFile[:dataRecordSize])
 		if err != nil {
 			return nil, errors.New("error deserializing index record")
 		}
@@ -889,7 +885,8 @@ func ReadDataFromFile(mmapFile mmap.MMap, key string, offset uint64) (*wal.Recor
 		if dataRecord.Key == key {
 			return dataRecord, nil
 		}
-		offset += dataRecordSize
+		offset = dataRecordSize
+		mmapFile = mmapFile[offset:]
 		// when you get to the end it means there is no match
 		if mmapFileSize == int(offset) {
 			return nil, nil
