@@ -832,26 +832,27 @@ func ReadIndexFromFile(mmapFile mmap.MMap, key string, offsetStart uint64) (uint
 	// 8 for offset
 	// make sure that the next thing we read is indeed index (/key size of the key of index)
 	mmapFile = mmapFile[offsetStart:]
+	mmapFileSize := uint64(len(mmapFile))
 	indexRecordSize := uint64(0)
+	offset := uint64(0)
 	//read SummaryConst number of index records
 	for i := 0; i < SummaryConst; i++ {
-		keySize := binary.BigEndian.Uint64(mmapFile[KeySizeStart:KeySizeSize])
+		keySize := binary.BigEndian.Uint64(mmapFile[offset+KeySizeStart : offset+KeySizeSize])
 		// this could be const as well, we know all offsets are uint64
 		indexRecordSize = keySize + KeySizeSize + OffsetSize
-		indexRecord, err := DeserializeIndexRecord(mmapFile[:indexRecordSize])
+		indexRecord, err := DeserializeIndexRecord(mmapFile[offset : offset+indexRecordSize])
 		if err != nil {
 			return 0, errors.New("error deserializing index record")
 		}
 		indexRecords = append(indexRecords, indexRecord)
-		mmapFile = mmapFile[indexRecordSize:]
 
 		// when you find the record which key is bigger, the result is the previous record which key is smaller
 		if len(indexRecords) >= 2 && indexRecords[len(indexRecords)-1].Key > key && indexRecords[len(indexRecords)-2].Key <= key {
 			return indexRecords[len(indexRecords)-2].Offset, nil
 		}
-
+		offset += indexRecordSize
 		// when you get to the end it means the result is the last one read
-		if len(mmapFile) == 0 {
+		if mmapFileSize == offset {
 			return indexRecord.Offset, nil
 		}
 	}
@@ -871,12 +872,12 @@ func ReadDataFromFile(mmapFile mmap.MMap, key string, offset uint64) (*wal.Recor
 	offset = 0
 	//read IndexConst number of data records
 	for i := 0; i < IndexConst; i++ {
-		keySize := binary.BigEndian.Uint64(mmapFile[DataKeySizeStart:DataValueSizeStart])
-		valueSize := binary.BigEndian.Uint64(mmapFile[DataValueSizeStart:DataKeyStart])
+		keySize := binary.BigEndian.Uint64(mmapFile[offset+DataKeySizeStart : offset+DataValueSizeStart])
+		valueSize := binary.BigEndian.Uint64(mmapFile[offset+DataValueSizeStart : offset+DataKeyStart])
 
 		// make sure to read complete data rec
 		dataRecordSize = RecordHeaderSize + keySize + valueSize
-		dataRecord, err := wal.Deserialize(mmapFile[:dataRecordSize])
+		dataRecord, err := wal.Deserialize(mmapFile[offset : offset+dataRecordSize])
 		if err != nil {
 			return nil, errors.New("error deserializing index record")
 		}
@@ -885,8 +886,7 @@ func ReadDataFromFile(mmapFile mmap.MMap, key string, offset uint64) (*wal.Recor
 		if dataRecord.Key == key {
 			return dataRecord, nil
 		}
-		offset = dataRecordSize
-		mmapFile = mmapFile[offset:]
+		offset += dataRecordSize
 		// when you get to the end it means there is no match
 		if mmapFileSize == int(offset) {
 			return nil, nil
