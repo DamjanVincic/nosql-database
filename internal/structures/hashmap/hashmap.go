@@ -24,7 +24,7 @@ func (hashMap *HashMap) Get(key string) *models.Data {
 
 // Put Error is returned because the interface requires it
 func (hashMap *HashMap) Put(key string, value []byte, tombstone bool, timestamp uint64) {
-	hashMap.data[key] = &models.Data{Value: value, Tombstone: tombstone, Timestamp: timestamp}
+	hashMap.data[key] = &models.Data{Key: key, Value: value, Tombstone: tombstone, Timestamp: timestamp}
 }
 
 // Delete Error is returned because the interface requires it
@@ -33,16 +33,16 @@ func (hashMap *HashMap) Delete(key string) {
 }
 
 // GetSorted returns all values sorted
-func (hashMap *HashMap) GetSorted() []*models.MemEntry {
+func (hashMap *HashMap) GetSorted() []*models.Data {
 	keys := make([]string, 0)
 	for key := range hashMap.data {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
 
-	entries := make([]*models.MemEntry, 0)
-	for key := range keys {
-		entries = append(entries, &models.MemEntry{Key: keys[key], Value: hashMap.data[keys[key]]})
+	entries := make([]*models.Data, 0)
+	for _, key := range keys {
+		entries = append(entries, hashMap.data[key])
 	}
 
 	return entries
