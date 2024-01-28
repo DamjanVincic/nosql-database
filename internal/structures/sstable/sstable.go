@@ -167,7 +167,7 @@ func NewSSTable(memEntries []*MemEntry, singleFile bool) (*SSTable, error) {
 			return nil, err
 		}
 
-		err = createFiles(memEntries, true, file)
+		err = createFiles(memEntries, singleFile, file)
 		if err != nil {
 			return nil, err
 		}
@@ -291,16 +291,19 @@ func createFiles(memEntries []*MemEntry, singleFile bool, files ...*os.File) err
 	countRecords := 0
 	countIndexRecords := 0
 
-	//create a merkle tree and an empty bloom filter
+	merkleDataRecords := []*wal.Record{}
+	//create an empty bloom filter
 	filter := bloomfilter.CreateBloomFilter(len(memEntries), 0.001)
-	merkle, err := CreateMerkleTree(memEntries, nil)
-	if err != nil {
-		return err
-	}
 	// proccess of adding entries
 	for _, entry := range memEntries {
 		//every entry is saved in data segment
-		sizeOfDR, dataRecords = addToDataSegment(entry, dataRecords)
+
+		dataRecord := *wal.NewRecord(entry.Key, entry.Value.Value, entry.Value.Tombstone)
+		merkleDataRecords = append(merkleDataRecords, &dataRecord)
+		serializedRecord := dataRecord.Serialize()
+		sizeOfDR = uint64(len(serializedRecord))
+		dataRecords = append(dataRecords, serializedRecord...)
+
 		dataBlockSize += sizeOfDR
 		// every Nth one is saved in the index (key, offset of dataRec)
 		if countRecords%IndexConst == 0 {
@@ -321,12 +324,16 @@ func createFiles(memEntries []*MemEntry, singleFile bool, files ...*os.File) err
 			summaryMax = serializedIndexRecord
 		}
 		//add key to bf
-		err = filter.AddElement([]byte(entry.Key))
+		err := filter.AddElement([]byte(entry.Key))
 		if err != nil {
 			return err
 		}
 		offset += sizeOfDR
 		countRecords++
+	}
+	merkle, err := CreateMerkleTree(merkleDataRecords, HashWithSeed{Seed: []byte{101, 182, 178, 156}})
+	if err != nil {
+		return err
 	}
 	//serialize filter and data
 	filterData := filter.Serialize()
@@ -403,8 +410,9 @@ func createFiles(memEntries []*MemEntry, singleFile bool, files ...*os.File) err
 }
 
 // get serialized data
-func addToDataSegment(entry *MemEntry, result []byte) (uint64, []byte) {
+func addToDataSegment(entry *MemEntry, result []byte, merkleDataRecords []*wal.Record) (uint64, []byte) {
 	dataRecord := *wal.NewRecord(entry.Key, entry.Value.Value, entry.Value.Tombstone)
+	merkleDataRecords = append(merkleDataRecords, &dataRecord)
 	serializedRecord := dataRecord.Serialize()
 	return uint64(len(serializedRecord)), append(result, serializedRecord...)
 }
@@ -935,7 +943,7 @@ func compareMerkleTrees(mmapFileMeta, mmapFileData mmap.MMap) bool {
 	if err != nil {
 		return false
 	}
-	hashWithSeed := &merkle.HashWithSeed
+	hashWithSeed := HashWithSeed{Seed: []byte{101, 182, 178, 156}}
 	entries, err := GetAllMemEntries(mmapFileData)
 	if err != nil {
 		return false

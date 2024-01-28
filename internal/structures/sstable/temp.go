@@ -3,6 +3,7 @@ package sstable
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"hash/fnv"
 	"math"
 	"time"
@@ -76,14 +77,14 @@ since merkle tree is build from bottom up we need all data as leafs
 if number of leafs is not 2**n we need to add empty nodes
 there hash wont change anything
 */
-func CreateMerkleTree(allData []*MemEntry, hashFunc *HashWithSeed) (*MerkleTree, error) {
+func CreateMerkleTree(allData []*MemEntry, hashFunc HashWithSeed) (*MerkleTree, error) {
 	var nodes []*Node
 	var merkleTree MerkleTree
-	if hashFunc == nil {
-		hashFunc = &CreateHashFunctions(1)[0]
-	} else {
-		merkleTree.HashWithSeed = *hashFunc
+	empty := HashWithSeed{}
+	if bytes.Equal(empty.Seed, hashFunc.Seed) {
+		hashFunc = CreateHashFunctions(1)[0]
 	}
+	merkleTree.HashWithSeed = hashFunc
 
 	// creating all the end nodes
 	for _, entry := range allData {
@@ -114,6 +115,9 @@ func CreateMerkleTree(allData []*MemEntry, hashFunc *HashWithSeed) (*MerkleTree,
 
 		for i := 0; i < len(nodes); i += 2 {
 			// add two array together and hash
+			fmt.Println()
+			fmt.Println(nodes[i].data)
+			fmt.Println(nodes[i+1].data)
 			values, err := merkleTree.HashWithSeed.Hash(append(nodes[i].data, nodes[i+1].data...))
 			if err != nil {
 				return nil, err
