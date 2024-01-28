@@ -12,8 +12,9 @@ const (
 )
 
 type SkipListNode struct {
-	key      string
-	value    *models.Data
+	//key      string
+	//value    *models.Data
+	data     *models.Data
 	previous *SkipListNode
 	next     *SkipListNode
 	below    *SkipListNode
@@ -50,8 +51,10 @@ func CreateSkipList() *SkipList {
 		height: 1,
 		size:   0,
 	}
-	s.heads = append(s.heads, &SkipListNode{key: negativeInfinity})
-	s.tails = append(s.tails, &SkipListNode{key: positiveInfinity, previous: s.heads[0]})
+	//s.heads = append(s.heads, &SkipListNode{key: negativeInfinity})
+	s.heads = append(s.heads, &SkipListNode{data: &models.Data{Key: negativeInfinity}})
+	//s.tails = append(s.tails, &SkipListNode{key: positiveInfinity, previous: s.heads[0]})
+	s.tails = append(s.tails, &SkipListNode{data: &models.Data{Key: positiveInfinity}, previous: s.heads[0]})
 	s.heads[0].next = s.tails[0]
 	return &s
 }
@@ -63,12 +66,12 @@ func (skipList *SkipList) find(key string, findClosest bool) (found *SkipListNod
 
 	for {
 		next := current.next
-		if next.key == key {
+		if next.data.Key == key {
 			found = next
 			return
-		} else if next.key < key && next.key != positiveInfinity {
+		} else if next.data.Key < key && next.data.Key != positiveInfinity {
 			current = current.next
-		} else if next.key > key || next.key == positiveInfinity { //key is not on this level, if possible go below
+		} else if next.data.Key > key || next.data.Key == positiveInfinity { //key is not on this level, if possible go below
 			if current.below != nil {
 				current = current.below
 			} else { //key does not exist
@@ -84,7 +87,7 @@ func (skipList *SkipList) find(key string, findClosest bool) (found *SkipListNod
 func (skipList *SkipList) Get(key string) (found *models.Data) {
 	elem := skipList.find(key, false)
 	if elem != nil {
-		found = elem.value
+		found = elem.data
 	} else {
 		found = nil
 	}
@@ -94,14 +97,18 @@ func (skipList *SkipList) Get(key string) (found *models.Data) {
 func (skipList *SkipList) Put(key string, value []byte, tombstone bool, timestamp uint64) {
 	closestNode := skipList.find(key, true)
 
+	skipListValue := &models.Data{Key: key, Value: value, Timestamp: timestamp, Tombstone: tombstone}
+
 	//if node already exists, update values in Value field
-	if closestNode.key == key {
-		closestNode.value.Value = value
-		closestNode.value.Tombstone = tombstone
-		closestNode.value.Timestamp = timestamp
+	if closestNode.data.Key == key {
+		closestNode.data = skipListValue
+		//closestNode.value.Value = value
+		//closestNode.value.Tombstone = tombstone
+		//closestNode.value.Timestamp = timestamp
+		return
 	}
 
-	skipListValue := &models.Data{Value: value, Timestamp: timestamp, Tombstone: tombstone}
+	//skipListValue := &models.Data{Value: value, Timestamp: timestamp, Tombstone: tombstone}
 
 	level := roll()
 
@@ -110,9 +117,11 @@ func (skipList *SkipList) Put(key string, value []byte, tombstone bool, timestam
 		level = skipList.height + 1
 		skipList.height = level
 
-		skipList.heads = append(skipList.heads, &SkipListNode{key: negativeInfinity, below: skipList.heads[level-2]})
+		//skipList.heads = append(skipList.heads, &SkipListNode{key: negativeInfinity, below: skipList.heads[level-2]})
+		skipList.heads = append(skipList.heads, &SkipListNode{data: &models.Data{Key: negativeInfinity}, below: skipList.heads[level-2]})
 		skipList.heads[level-2].above = skipList.heads[level-1]
-		skipList.tails = append(skipList.tails, &SkipListNode{key: positiveInfinity, below: skipList.tails[level-2], previous: skipList.heads[level-1]})
+		//skipList.tails = append(skipList.tails, &SkipListNode{key: positiveInfinity, below: skipList.tails[level-2], previous: skipList.heads[level-1]})
+		skipList.tails = append(skipList.tails, &SkipListNode{data: &models.Data{Key: positiveInfinity}, below: skipList.tails[level-2], previous: skipList.heads[level-1]})
 		skipList.heads[level-1].next = skipList.tails[level-1]
 		skipList.tails[level-2].above = skipList.tails[level-1]
 	}
@@ -121,7 +130,7 @@ func (skipList *SkipList) Put(key string, value []byte, tombstone bool, timestam
 	lastNewNode = nil
 
 	for i := 0; i < level; i++ { //create new node on all levels needed
-		newNode := &SkipListNode{previous: closestNode, next: closestNode.next, below: lastNewNode, above: nil, key: key, value: skipListValue}
+		newNode := &SkipListNode{previous: closestNode, next: closestNode.next, below: lastNewNode, above: nil, data: skipListValue}
 		newNode.next.previous = newNode
 		closestNode.next = newNode
 		if lastNewNode != nil { //connect new node to nodes below
@@ -162,12 +171,12 @@ func (skipList *SkipList) Delete(key string) {
 }
 
 // returns all values sorted
-func (skipList *SkipList) GetSorted() []*models.MemEntry {
-	entries := make([]*models.MemEntry, 0)
+func (skipList *SkipList) GetSorted() []*models.Data {
+	entries := make([]*models.Data, 0)
 	current := skipList.heads[0]
-	for current.next.key != positiveInfinity {
+	for current.next.data.Key != positiveInfinity {
 		current = current.next
-		entries = append(entries, &models.MemEntry{Key: current.key, Value: current.value})
+		entries = append(entries, current.data)
 	}
 	return entries
 }
