@@ -91,7 +91,7 @@ if the root is full its split,
 if not key is added in empty space
 */
 func (tree *BTree) Put(key string, dataValue []byte, tombstone bool, timestamp uint64) {
-	value := &models.Data{Value: dataValue, Tombstone: tombstone, Timestamp: timestamp}
+	value := &models.Data{Key: key, Value: dataValue, Tombstone: tombstone, Timestamp: timestamp}
 	root := tree.root
 	node := search(key, root)
 	if node != nil {
@@ -424,18 +424,19 @@ func (node *BTreeNode) PrintBTree(level int) {
 	}
 }
 
-func (tree *BTree) GetSorted() []*models.MemEntry {
-	var result []*models.MemEntry
+func (tree *BTree) GetSorted() []*models.Data {
+	var result []*models.Data
 	result = tree.root.traverse(result)
 	return result
 }
 
-func (node *BTreeNode) traverse(result []*models.MemEntry) []*models.MemEntry {
+func (node *BTreeNode) traverse(result []*models.Data) []*models.Data {
 	for i := 0; i < len(node.keys); i++ {
 		if !node.leaf {
 			result = node.children[i].traverse(result)
 		}
-		result = append(result, &models.MemEntry{Key: node.keys[i], Value: node.data[node.keys[i]]})
+		//result = append(result, &models.MemEntry{Key: node.keys[i], Value: node.data[node.keys[i]]})
+		result = append(result, node.data[node.keys[i]])
 	}
 	if !node.leaf {
 		result = node.children[len(node.keys)].traverse(result)
