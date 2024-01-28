@@ -19,6 +19,7 @@ type BTreeNode struct {
 
 type BTree struct {
 	root *BTreeNode
+	size int
 }
 
 func CreateBTree() *BTree {
@@ -31,6 +32,7 @@ func CreateBTree() *BTree {
 	}
 	tree := &BTree{
 		root: root,
+		size: 0,
 	}
 	return tree
 }
@@ -89,12 +91,14 @@ if the root is full its split,
 if not key is added in empty space
 */
 func (tree *BTree) Put(key string, dataValue []byte, tombstone bool, timestamp uint64) {
-	value := &models.Data{Value: dataValue, Tombstone: tombstone, Timestamp: timestamp}
+	value := &models.Data{Key: key, Value: dataValue, Tombstone: tombstone, Timestamp: timestamp}
 	root := tree.root
 	node := search(key, root)
 	if node != nil {
 		node.data[key] = value
+		return
 	}
+	tree.size++
 	// if root is empty we need to initialize the tree
 	if len(root.keys) == 2*T-1 {
 		// when split, middle element goes to parent node
@@ -420,20 +424,26 @@ func (node *BTreeNode) PrintBTree(level int) {
 	}
 }
 
-func (tree *BTree) GetSortedList() map[string]*models.Data {
-	result := make(map[string]*models.Data)
-	tree.root.traverse(result)
+func (tree *BTree) GetSorted() []*models.Data {
+	var result []*models.Data
+	result = tree.root.traverse(result)
 	return result
 }
 
-func (node *BTreeNode) traverse(result map[string]*models.Data) {
+func (node *BTreeNode) traverse(result []*models.Data) []*models.Data {
 	for i := 0; i < len(node.keys); i++ {
 		if !node.leaf {
-			node.children[i].traverse(result)
+			result = node.children[i].traverse(result)
 		}
-		result[node.keys[i]] = node.data[node.keys[i]]
+		result = append(result, node.data[node.keys[i]])
 	}
 	if !node.leaf {
-		node.children[len(node.keys)].traverse(result)
+		result = node.children[len(node.keys)].traverse(result)
 	}
+
+	return result
+}
+
+func (tree *BTree) Size() int {
+	return tree.size
 }
