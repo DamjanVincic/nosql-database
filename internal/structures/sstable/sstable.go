@@ -19,16 +19,18 @@ import (
 const (
 	CrcSize       = 4
 	TimestampSize = 8
-
 	TombstoneSize = 1
 	KeySizeSize   = 8
 	OffsetSize    = 8
+	ValueSizeSize = 8
 	//for dataRecord
-	CrcStart         = 0
-	TimestampStart   = CrcStart + CrcSize
-	TombstoneStart   = TimestampStart + TimestampSize
-	ValueStart       = TombstoneStart + TombstoneSize
-	RecordHeaderSize = CrcSize + TimestampSize + TombstoneSize
+	CrcStart           = 0
+	TimestampStart     = CrcStart + CrcSize
+	TombstoneStart     = TimestampStart + TimestampSize
+	DataKeySizeStart   = TombstoneStart + TombstoneSize
+	DataValueSizeStart = DataKeySizeStart + KeySizeSize
+	DataKeyStart       = DataValueSizeStart + ValueSizeSize
+	RecordHeaderSize   = CrcSize + TimestampSize + TombstoneSize + KeySizeSize + ValueSizeSize
 	//for index and summary index thinning
 	IndexConst   = 5 //from config file
 	SummaryConst = 5 //from config file
@@ -567,7 +569,7 @@ func Get(key string) (*models.Data, error) {
 			indexFilePath := filepath.Join(subDirPath, subDirEntries[2].Name())
 			metaFilePath := filepath.Join(subDirPath, subDirEntries[3].Name())
 			summaryFilePath := filepath.Join(subDirPath, subDirEntries[4].Name())
-			tocFilePath := filepath.Join(subDirPath, subDirEntries[5].Name())
+			// tocFilePath := filepath.Join(subDirPath, subDirEntries[5].Name())
 
 			// in the next part we are doing the copying in case mmap acts unexpectedly after file is closed
 			// get data file to read
@@ -630,7 +632,7 @@ func Get(key string) (*models.Data, error) {
 			mmapFileMeta = make([]byte, len(mmapFileMetaPart))
 			copy(mmapFileMeta, mmapFileMetaPart)
 
-			tocFile, err := os.OpenFile(tocFilePath, os.O_RDWR, 0644)
+			// tocFile, err := os.OpenFile(tocFilePath, os.O_RDWR, 0644)
 
 			err = mmapFileDataPart.Unmap()
 			if err != nil {
@@ -668,14 +670,15 @@ func Get(key string) (*models.Data, error) {
 			if err != nil {
 				return nil, err
 			}
-			err = tocFile.Close()
-			if err != nil {
-				return nil, err
-			}
+			// err = tocFile.Close()
+			// if err != nil {
+			// 	return nil, err
+			// }
 		}
 		// start process for getting the element
 		// first we need to check if its in bloom filter
 		found, err := ReadBloomFilterFromFile(key, mmapFileFilter)
+		fmt.Println(i)
 		if err != nil {
 			return nil, err
 		}
@@ -691,29 +694,34 @@ func Get(key string) (*models.Data, error) {
 
 		//check if its in summary range (between min and max index)
 		indexOffset, err := ReadSummaryFromFile(mmapFileSummary, key)
-		if err != nil {
-			return nil, err
+		fmt.Println("s")
+
+		if indexOffset == 0 && err != nil {
+			i++
+			continue
 		}
 
 		//check if its in index
-		indexRecords, err := ReadIndexFromFile(mmapFileIndex, indexOffset)
+		dataOffset, err := ReadIndexFromFile(mmapFileIndex, key, indexOffset)
+		fmt.Println("i")
+
+		if dataOffset == 0 && err == nil {
+			i++
+			continue
+		}
+
+		//find it in data
+		dataRecord, err := ReadDataFromFile(mmapFileData, key, dataOffset)
+		fmt.Println("d")
+
 		if err != nil {
-			return nil, err
+			i++
+			continue
 		}
-		for i := 0; i < len(indexRecords); i++ {
-			if indexRecords[i].Key == key {
-				dataRecord, err := ReadDataFromFile(mmapFileData, indexRecords[i].Offset, indexRecords[i+1].Offset)
-				if err != nil {
-					return nil, err
-				}
-
-				return &models.Data{Value: dataRecord.Value, Tombstone: dataRecord.Tombstone, Timestamp: dataRecord.Timestamp}, nil
-			}
+		if dataRecord != nil {
+			return &models.Data{Value: dataRecord.Value, Tombstone: dataRecord.Tombstone, Timestamp: dataRecord.Timestamp}, nil
 		}
-		break
-
 	}
-	return nil, nil
 }
 
 // read filenames from TOC file
@@ -796,9 +804,10 @@ func ReadSummaryFromFile(mmapFile mmap.MMap, key string) (uint64, error) {
 	offset := uint64(0)
 	for {
 		// each summary record has keySize, key and offset
-		keySize := binary.BigEndian.Uint64(mmapFile[KeySizeStart:KeySizeSize])
+		keySize := binary.BigEndian.Uint64(mmapFile[offset+KeySizeStart : offset+KeySizeSize])
 		summaryRecordSize := KeySizeSize + keySize + OffsetSize
-		summaryRecord, err := DeserializeIndexRecord(mmapFile[offset:summaryRecordSize])
+		serializedSummRec := mmapFile[offset : offset+summaryRecordSize]
+		summaryRecord, err := DeserializeIndexRecord(serializedSummRec)
 		if err != nil {
 			return 0, errors.New("error deserializing index record")
 		}
@@ -820,35 +829,38 @@ func ReadSummaryFromFile(mmapFile mmap.MMap, key string) (uint64, error) {
 }
 
 // check if key is in index range, if it is return data record offset, if it is not return 0
-func ReadIndexFromFile(mmapFile mmap.MMap, offsetStart uint64) ([]*IndexRecord, error) {
-	var result []*IndexRecord
+func ReadIndexFromFile(mmapFile mmap.MMap, key string, offsetStart uint64) (uint64, error) {
+	var indexRecords []*IndexRecord
 	// 8 for size of key size
 	// key size for key
 	// 8 for offset
 	// make sure that the next thing we read is indeed index (/key size of the key of index)
 	mmapFile = mmapFile[offsetStart:]
-	offset := uint64(0)
-	// <= because later on when we read data file we need two offsets, so in case we are looking for the last one
-	// its end is the start of new summary index
-	// ex. look for 4, we have 0 1 2 3 4 5 6 7 ... written
-	// return 0 1 2 3 4 5, if we dont return the 5 we dont have the end offset
-	for i := 0; i <= SummaryConst; i++ {
+	indexRecordSize := uint64(0)
+	//read SummaryConst number of index records
+	for i := 0; i < SummaryConst; i++ {
 		keySize := binary.BigEndian.Uint64(mmapFile[KeySizeStart:KeySizeSize])
 		// this could be const as well, we know all offsets are uint64
-		offset = keySize + KeySizeSize + 8
-		indexRecord, err := DeserializeIndexRecord(mmapFile[:offset])
+		indexRecordSize = keySize + KeySizeSize + OffsetSize
+		indexRecord, err := DeserializeIndexRecord(mmapFile[:indexRecordSize])
 		if err != nil {
-			return nil, errors.New("error deserializing index record")
+			return 0, errors.New("error deserializing index record")
 		}
-		result = append(result, indexRecord)
-		mmapFile = mmapFile[offset:]
+		indexRecords = append(indexRecords, indexRecord)
+		mmapFile = mmapFile[indexRecordSize:]
+
+		// when you find the record which key is bigger, the result is the previous record which key is smaller
+		if len(indexRecords) >= 2 && indexRecords[len(indexRecords)-1].Key > key && indexRecords[len(indexRecords)-2].Key <= key {
+			return indexRecords[len(indexRecords)-2].Offset, nil
+		}
+
+		// when you get to the end it means the result is the last one read
 		if len(mmapFile) == 0 {
-			result = append(result, indexRecord)
-			return result, nil
+			return indexRecord.Offset, nil
 		}
 	}
-
-	return result, nil
+	//read all SummaryConst rec it means the result is the last one read
+	return indexRecords[len(indexRecords)-1].Offset, nil
 }
 
 // we need to know where datarecord is placed to after looking for key in
@@ -856,18 +868,34 @@ func ReadIndexFromFile(mmapFile mmap.MMap, offsetStart uint64) ([]*IndexRecord, 
 // deserialization bytes between these to locations gives us the said record we are looking for
 // param mmapFile - we do this instead passing the file or filename itself so we can use function for
 // both multi and single sile sstable, we do this for all reads
-func ReadDataFromFile(mmapFile mmap.MMap, offsetStart, offsetEnd uint64) (*wal.Record, error) {
-	var serializedDataRecord []byte
-	if offsetStart == offsetEnd {
-		serializedDataRecord = mmapFile[offsetStart:]
-	} else {
-		serializedDataRecord = mmapFile[offsetStart:offsetEnd]
+func ReadDataFromFile(mmapFile mmap.MMap, key string, offset uint64) (*wal.Record, error) {
+	mmapFile = mmapFile[offset:]
+	mmapFileSize := len(mmapFile)
+	dataRecordSize := uint64(0)
+	offset = 0
+	//read IndexConst number of data records
+	for i := 0; i < IndexConst; i++ {
+		keySize := binary.BigEndian.Uint64(mmapFile[offset+DataKeySizeStart : offset+DataValueSizeStart])
+		valueSize := binary.BigEndian.Uint64(mmapFile[offset+DataValueSizeStart : offset+DataKeyStart])
+
+		// make sure to read complete data rec
+		dataRecordSize = RecordHeaderSize + keySize + valueSize
+		dataRecord, err := wal.Deserialize(mmapFile[offset:dataRecordSize])
+		if err != nil {
+			return nil, errors.New("error deserializing index record")
+		}
+
+		// keys must be equal
+		if dataRecord.Key == key {
+			return dataRecord, nil
+		}
+		offset += dataRecordSize
+		// when you get to the end it means there is no match
+		if mmapFileSize == int(offset) {
+			return nil, nil
+		}
 	}
-	dataRecord, err := wal.Deserialize(serializedDataRecord)
-	if err != nil {
-		return nil, err
-	}
-	return dataRecord, nil
+	return nil, nil
 }
 
 func ReadMerkle(mmapFile mmap.MMap) (*MerkleTree, error) {
