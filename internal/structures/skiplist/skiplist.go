@@ -12,8 +12,6 @@ const (
 )
 
 type SkipListNode struct {
-	//key      string
-	//value    *models.Data
 	data     *models.Data
 	previous *SkipListNode
 	next     *SkipListNode
@@ -51,9 +49,7 @@ func CreateSkipList() *SkipList {
 		height: 1,
 		size:   0,
 	}
-	//s.heads = append(s.heads, &SkipListNode{key: negativeInfinity})
 	s.heads = append(s.heads, &SkipListNode{data: &models.Data{Key: negativeInfinity}})
-	//s.tails = append(s.tails, &SkipListNode{key: positiveInfinity, previous: s.heads[0]})
 	s.tails = append(s.tails, &SkipListNode{data: &models.Data{Key: positiveInfinity}, previous: s.heads[0]})
 	s.heads[0].next = s.tails[0]
 	return &s
@@ -102,13 +98,8 @@ func (skipList *SkipList) Put(key string, value []byte, tombstone bool, timestam
 	//if node already exists, update values in Value field
 	if closestNode.data.Key == key {
 		closestNode.data = skipListValue
-		//closestNode.value.Value = value
-		//closestNode.value.Tombstone = tombstone
-		//closestNode.value.Timestamp = timestamp
 		return
 	}
-
-	//skipListValue := &models.Data{Value: value, Timestamp: timestamp, Tombstone: tombstone}
 
 	level := roll()
 
@@ -117,10 +108,8 @@ func (skipList *SkipList) Put(key string, value []byte, tombstone bool, timestam
 		level = skipList.height + 1
 		skipList.height = level
 
-		//skipList.heads = append(skipList.heads, &SkipListNode{key: negativeInfinity, below: skipList.heads[level-2]})
 		skipList.heads = append(skipList.heads, &SkipListNode{data: &models.Data{Key: negativeInfinity}, below: skipList.heads[level-2]})
 		skipList.heads[level-2].above = skipList.heads[level-1]
-		//skipList.tails = append(skipList.tails, &SkipListNode{key: positiveInfinity, below: skipList.tails[level-2], previous: skipList.heads[level-1]})
 		skipList.tails = append(skipList.tails, &SkipListNode{data: &models.Data{Key: positiveInfinity}, below: skipList.tails[level-2], previous: skipList.heads[level-1]})
 		skipList.heads[level-1].next = skipList.tails[level-1]
 		skipList.tails[level-2].above = skipList.tails[level-1]

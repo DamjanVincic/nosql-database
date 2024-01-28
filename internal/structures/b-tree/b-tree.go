@@ -435,7 +435,6 @@ func (node *BTreeNode) traverse(result []*models.Data) []*models.Data {
 		if !node.leaf {
 			result = node.children[i].traverse(result)
 		}
-		//result = append(result, &models.MemEntry{Key: node.keys[i], Value: node.data[node.keys[i]]})
 		result = append(result, node.data[node.keys[i]])
 	}
 	if !node.leaf {
