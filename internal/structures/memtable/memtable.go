@@ -2,7 +2,7 @@ package memtable
 
 import (
 	"github.com/DamjanVincic/key-value-engine/internal/models"
-	btree "github.com/DamjanVincic/key-value-engine/internal/structures/b-tree"
+	"github.com/DamjanVincic/key-value-engine/internal/structures/b-tree"
 	"github.com/DamjanVincic/key-value-engine/internal/structures/hashmap"
 	"github.com/DamjanVincic/key-value-engine/internal/structures/skiplist"
 )
@@ -15,7 +15,7 @@ const (
 
 type MemtableData interface {
 	Get(key string) *models.Data
-	GetSorted() []*models.MemEntry
+	GetSorted() []*models.Data
 	Put(key string, value []byte, tombstone bool, timestamp uint64)
 	Delete(key string)
 	Size() int
@@ -63,7 +63,7 @@ func (memtable *Memtable) makePartition() {
 }
 
 // puts values in currentPartition, creates new partition if needed, flushes oldest partition if needed
-func (memtable *Memtable) Put(key string, value []byte, timestamp uint64, tombstone bool) (toFlush []*models.MemEntry) {
+func (memtable *Memtable) Put(key string, value []byte, timestamp uint64, tombstone bool) (toFlush []*models.Data) {
 	toFlush = nil
 
 	memtable.currentPartition.Put(key, value, tombstone, timestamp)
