@@ -83,13 +83,19 @@ func (memtable *Memtable) Get(key string) *models.Data {
 
 	data = memtable.currentPartition.Get(key)
 	if data != nil {
-		return data
+		if !data.Tombstone {
+			return data
+		}
+		return nil
 	}
 
 	for i := len(memtable.partitions) - 1; i >= 0; i-- {
 		data = memtable.partitions[i].Get(key)
 		if data != nil {
-			return data
+			if !data.Tombstone {
+				return data
+			}
+			return nil
 		}
 	}
 	return nil
