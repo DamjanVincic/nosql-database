@@ -3,10 +3,11 @@ package sstable
 import (
 	"bytes"
 	"encoding/binary"
+	"hash/fnv"
 	"math"
+	"time"
 
 	"github.com/DamjanVincic/key-value-engine/internal/models"
-	"github.com/DamjanVincic/key-value-engine/internal/structures/hash"
 )
 
 const (
@@ -18,7 +19,7 @@ const (
 
 type MerkleTree struct {
 	Root         *Node
-	HashWithSeed hash.HashWithSeed
+	HashWithSeed HashWithSeed
 }
 
 type Node struct {
@@ -75,14 +76,18 @@ since merkle tree is build from bottom up we need all data as leafs
 if number of leafs is not 2**n we need to add empty nodes
 there hash wont change anything
 */
-func CreateMerkleTree(allData []*MemEntry) (*MerkleTree, error) {
+func CreateMerkleTree(allData []*MemEntry, hashFunc *HashWithSeed) (*MerkleTree, error) {
 	var nodes []*Node
 	var merkleTree MerkleTree
-	merkleTree.HashWithSeed = hash.CreateHashFunctions(1)[0]
+	if hashFunc == nil {
+		hashFunc = &CreateHashFunctions(1)[0]
+	} else {
+		merkleTree.HashWithSeed = *hashFunc
+	}
 
 	// creating all the end nodes
-	for _, memEntry := range allData {
-		node, err := merkleTree.createNewNode(memEntry.Key, memEntry.Value)
+	for _, entry := range allData {
+		node, err := merkleTree.createNewNode(entry.Key, entry.Value)
 		if err != nil {
 			return nil, err
 		}
@@ -133,7 +138,7 @@ func CreateMerkleTree(allData []*MemEntry) (*MerkleTree, error) {
 func (tree *MerkleTree) Serialize() []byte {
 	//add size of hashWithSeed to byte array
 	bytes := make([]byte, HashWithSeedSizeSize)
-	serializedHash := hash.Serialize([]hash.HashWithSeed{tree.HashWithSeed})
+	serializedHash := Serialize([]HashWithSeed{tree.HashWithSeed})
 	hashFuncSize := uint64(len(serializedHash))
 	binary.BigEndian.PutUint64(bytes[:HashWithSeedSizeSize], hashFuncSize)
 	//append hashWithSeed
@@ -166,7 +171,7 @@ func MerkleBFS(root *Node) []byte {
 func DeserializeMerkle(data []byte) (*MerkleTree, error) {
 	//deserialize hash func
 	hashWithSeedSize := binary.BigEndian.Uint64(data[:HashWithSeedSizeSize])
-	hashWithSeed := hash.Deserialize(data[HashWithSeedSizeSize : HashWithSeedSizeSize+hashWithSeedSize])[0]
+	hashWithSeed := Deserialize(data[HashWithSeedSizeSize : HashWithSeedSizeSize+hashWithSeedSize])[0]
 	//deserialize nodes
 	var nodes []byte
 	for offset := HashWithSeedSizeSize + hashWithSeedSize; offset < uint64(len(data)); offset += HashedNodesSize {
@@ -199,8 +204,8 @@ func binaryTree(data []byte, index int) *Node {
 func (merkleTree *MerkleTree) IsEqualTo(comparableTree *MerkleTree) bool {
 
 	//compare hash functions (must serialize them)
-	serializedHash := hash.Serialize([]hash.HashWithSeed{merkleTree.HashWithSeed})
-	serializedComparableHash := hash.Serialize([]hash.HashWithSeed{comparableTree.HashWithSeed})
+	serializedHash := Serialize([]HashWithSeed{merkleTree.HashWithSeed})
+	serializedComparableHash := Serialize([]HashWithSeed{comparableTree.HashWithSeed})
 	if !bytes.Equal(serializedHash, serializedComparableHash) {
 		return false
 	}
@@ -214,4 +219,48 @@ func (merkleTree *MerkleTree) IsEqualTo(comparableTree *MerkleTree) bool {
 	}
 
 	return true
+}
+
+type HashWithSeed struct {
+	Seed []byte
+}
+
+func (h HashWithSeed) Hash(data []byte) (uint64, error) {
+	fn := fnv.New64()
+	_, err := fn.Write(append(data, h.Seed...))
+	if err != nil {
+		return 0, err
+	}
+	return fn.Sum64(), nil
+}
+
+func CreateHashFunctions(k uint32) []HashWithSeed {
+	// Create k hash functions with different seeds based on the current time
+	functions := make([]HashWithSeed, k)
+	currentTime := uint32(time.Now().Unix())
+	for i := uint32(0); i < k; i++ {
+		seed := make([]byte, 4)
+		binary.BigEndian.PutUint32(seed, currentTime+i)
+		hfn := HashWithSeed{Seed: seed}
+		functions[i] = hfn
+	}
+	return functions
+}
+
+func Serialize(functions []HashWithSeed) []byte {
+	// Append binary representation of each function's 32 bit seed
+	bytes := make([]byte, 0)
+	for _, fn := range functions {
+		bytes = append(bytes, fn.Seed...)
+	}
+	return bytes
+}
+
+func Deserialize(bytes []byte) []HashWithSeed {
+	// Go through all bytes and create a new hash function for each 4 bytes (32 bit seed)
+	functions := make([]HashWithSeed, 0)
+	for i := 0; i < len(bytes); i += 4 {
+		functions = append(functions, HashWithSeed{Seed: bytes[i : i+4]})
+	}
+	return functions
 }

@@ -293,7 +293,7 @@ func createFiles(memEntries []*MemEntry, singleFile bool, files ...*os.File) err
 
 	//create a merkle tree and an empty bloom filter
 	filter := bloomfilter.CreateBloomFilter(len(memEntries), 0.001)
-	merkle, err := CreateMerkleTree(memEntries)
+	merkle, err := CreateMerkleTree(memEntries, nil)
 	if err != nil {
 		return err
 	}
@@ -675,6 +675,11 @@ func Get(key string) (*models.Data, error) {
 			// 	return nil, err
 			// }
 		}
+
+		if !compareMerkleTrees(mmapFileMeta, mmapFileData) {
+			return nil, errors.New("CORRUPTED DATA")
+		}
+
 		// start process for getting the element
 		// first we need to check if its in bloom filter
 		found, err := ReadBloomFilterFromFile(key, mmapFileFilter)
@@ -900,12 +905,44 @@ func ReadMerkle(mmapFile mmap.MMap) (*MerkleTree, error) {
 	if err != nil {
 		return nil, err
 	}
-	err = mmapFile.Unmap()
-	if err != nil {
-		return nil, err
-	}
-	if err != nil {
-		return nil, err
-	}
 	return merkle, err
+}
+func GetAllMemEntries(mmapFile mmap.MMap) ([]*MemEntry, error) {
+	var entries []*MemEntry
+	mmapFileSize := len(mmapFile)
+	dataRecordSize := uint64(0)
+	offset := uint64(0)
+	//read IndexConst number of data records
+	for mmapFileSize != int(offset) {
+		keySize := binary.BigEndian.Uint64(mmapFile[offset+DataKeySizeStart : offset+DataValueSizeStart])
+		valueSize := binary.BigEndian.Uint64(mmapFile[offset+DataValueSizeStart : offset+DataKeyStart])
+
+		// make sure to read complete data rec
+		dataRecordSize = RecordHeaderSize + keySize + valueSize
+		dataRecord, err := wal.Deserialize(mmapFile[offset : offset+dataRecordSize])
+		if err != nil {
+			return nil, errors.New("error deserializing index record")
+		}
+		data := &models.Data{Value: dataRecord.Value, Tombstone: dataRecord.Tombstone, Timestamp: dataRecord.Timestamp}
+		entries = append(entries, &MemEntry{Key: dataRecord.Key, Value: data})
+		offset += dataRecordSize
+		// when you get to the end it means there is no match
+	}
+	return entries, nil
+}
+func compareMerkleTrees(mmapFileMeta, mmapFileData mmap.MMap) bool {
+	merkle, err := ReadMerkle(mmapFileMeta)
+	if err != nil {
+		return false
+	}
+	hashWithSeed := &merkle.HashWithSeed
+	entries, err := GetAllMemEntries(mmapFileData)
+	if err != nil {
+		return false
+	}
+	newMerkle, err := CreateMerkleTree(entries, hashWithSeed)
+	if err != nil {
+		return false
+	}
+	return merkle.IsEqualTo(newMerkle)
 }
