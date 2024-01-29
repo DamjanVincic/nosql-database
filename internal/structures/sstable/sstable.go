@@ -90,31 +90,32 @@ same struct for SSTable single and multi-file implementation
 type SSTable struct {
 	indexConst   uint16
 	summaryConst uint16
+	singleFile   bool
 }
 
-func NewSSTable(indexSparseConst uint16, summarySparseConst uint16, compression bool) *SSTable {
-	// dirEntries, err := os.ReadDir(Path)
-	// if os.IsNotExist(err) {
-	// 	err := os.Mkdir(Path, os.ModePerm)
-	// 	if err != nil {
-	// 		return nil, err
-	// 	}
-	// }
-	return &SSTable{
-		indexConst:   indexSparseConst,
-		summaryConst: summarySparseConst,
-	}
-}
-
-// we know which SSTable to create based on the singleFile variable, set in the configuration file
-func (sstable *SSTable) Write(memEntries []*models.Data, singleFile bool) error {
-	// Create the ssTable directory (with all ssTable files) if it doesn't exist
-	dirEntries, err := os.ReadDir(Path)
+func NewSSTable(indexSparseConst uint16, summarySparseConst uint16, singleFile bool) (*SSTable, error) {
+	//check if sstable dir exists, if not create it
+	// _ = dirEntries, now its like this bc we dont use it anywhere (Mijat)
+	_, err := os.ReadDir(Path)
 	if os.IsNotExist(err) {
 		err := os.Mkdir(Path, os.ModePerm)
 		if err != nil {
-			return err
+			return nil, err
 		}
+	}
+	return &SSTable{
+		indexConst:   indexSparseConst,
+		summaryConst: summarySparseConst,
+		singleFile:   singleFile,
+	}, nil
+}
+
+// we know which SSTable to create based on the singleFile variable, set in the configuration file
+func (sstable *SSTable) Write(memEntries []*models.Data) error {
+	// Create the ssTable directory (with all ssTable files) if it doesn't exist
+	dirEntries, err := os.ReadDir(Path)
+	if os.IsNotExist(err) {
+		return err
 	}
 	var dataFilename string
 	var indexFilename string
@@ -165,7 +166,7 @@ func (sstable *SSTable) Write(memEntries []*models.Data, singleFile bool) error 
 		}
 	}
 	// creates files and save the data
-	if singleFile {
+	if sstable.singleFile {
 		// create single file for ssTable
 		// name - sst_00000  - 5-digit num for index
 		filename := fmt.Sprintf("%s%05d.db", Prefix, index)
@@ -174,7 +175,7 @@ func (sstable *SSTable) Write(memEntries []*models.Data, singleFile bool) error 
 			return err
 		}
 
-		err = sstable.createFiles(memEntries, singleFile, file)
+		err = sstable.createFiles(memEntries, sstable.singleFile, file)
 		if err != nil {
 			return err
 		}
@@ -222,7 +223,7 @@ func (sstable *SSTable) Write(memEntries []*models.Data, singleFile bool) error 
 			return err
 		}
 
-		err = sstable.createFiles(memEntries, singleFile, dataFile, indexFile, summaryFile, filterFile, metadataFile, tocFile)
+		err = sstable.createFiles(memEntries, sstable.singleFile, dataFile, indexFile, summaryFile, filterFile, metadataFile, tocFile)
 		if err != nil {
 			return err
 		}
