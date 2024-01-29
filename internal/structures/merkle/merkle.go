@@ -73,11 +73,6 @@ func CreateMerkleTree(allData []*models.DataRecord, hashFunc *hash.HashWithSeed)
 	for i := uint64(len(nodes)); i < targetSize; i++ {
 		// add number of empty nodes that is needed
 		empty := models.NewDataRecord(&models.Data{Key: "", Value: []byte{}, Tombstone: false, Timestamp: 0})
-		//empty := &models.DataRecord{
-		//	Data:      &models.Data{Key: "", Value: []byte{}, Tombstone: false, Timestamp: 0},
-		//	KeySize:   0,
-		//	ValueSize: 0,
-		//}
 		node, err := merkleTree.createNewNode(empty)
 		if err != nil {
 			return nil, err
