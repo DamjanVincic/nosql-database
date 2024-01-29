@@ -92,7 +92,7 @@ type SSTable struct {
 	summaryConst uint16
 }
 
-func NewSSTable(indexSparseConst uint16, summarySparseConst uint16, compression bool) (*SSTable, error) {
+func NewSSTable(indexSparseConst uint16, summarySparseConst uint16, compression bool) *SSTable {
 	// dirEntries, err := os.ReadDir(Path)
 	// if os.IsNotExist(err) {
 	// 	err := os.Mkdir(Path, os.ModePerm)
@@ -103,7 +103,7 @@ func NewSSTable(indexSparseConst uint16, summarySparseConst uint16, compression 
 	return &SSTable{
 		indexConst:   indexSparseConst,
 		summaryConst: summarySparseConst,
-	}, nil
+	}
 }
 
 // we know which SSTable to create based on the singleFile variable, set in the configuration file
@@ -275,8 +275,8 @@ func (sstable *SSTable) createFiles(memEntries []*models.Data, singleFile bool, 
 	binary.BigEndian.PutUint16(indexRecords[:IndexConstSize], sstable.indexConst)
 	// in summary header we have min and max index record (ranked by key)
 	summaryHeader := make([]byte, SummaryMinSizeSize+SummaryMaxSizeSize+SummaryConstSize)
-	var summaryMin []byte
-	var summaryMax []byte
+	var summaryMin string
+	var summaryMax string
 	var serializedIndexRecord []byte
 	var serializedSummaryRecord []byte
 	// for single file header
@@ -324,14 +324,14 @@ func (sstable *SSTable) createFiles(memEntries []*models.Data, singleFile bool, 
 				serializedSummaryRecord, summaryRecords = addToIndex(indexOffset, entry, summaryRecords)
 				sizeOfSR = uint64(len(serializedSummaryRecord))
 				summaryBlockSize += sizeOfSR
-				if summaryMin == nil {
-					summaryMin = serializedSummaryRecord
+				if summaryMin == "" {
+					summaryMin = dataRecord.Data.Key
 				}
 			}
 			indexOffset += sizeOfIR
 			countIndexRecords++
-			summaryMax = serializedIndexRecord
 		}
+		summaryMax = dataRecord.Data.Key
 		//add key to bf
 		err := filter.AddElement([]byte(entry.Key))
 		if err != nil {
@@ -351,12 +351,12 @@ func (sstable *SSTable) createFiles(memEntries []*models.Data, singleFile bool, 
 
 	//creating summary index header
 	binary.BigEndian.PutUint16(summaryHeader[:SummaryMinSizestart], sstable.summaryConst)
-	binary.BigEndian.PutUint64(summaryHeader[SummaryMinSizestart:SummaryMaxSizeStart], uint64(len(summaryMin)))
-	binary.BigEndian.PutUint64(summaryHeader[SummaryMaxSizeStart:SummaryMaxSizeStart+SummaryMaxSizeSize], uint64(len(summaryMax)))
-	summaryHeaderSize := SummaryConstSize + SummaryMinSizeSize + SummaryMaxSizeSize + uint64(len(summaryMin)) + uint64(len(summaryMax))
+	binary.BigEndian.PutUint64(summaryHeader[SummaryMinSizestart:SummaryMaxSizeStart], uint64(len([]byte(summaryMin))))
+	binary.BigEndian.PutUint64(summaryHeader[SummaryMaxSizeStart:SummaryMaxSizeStart+SummaryMaxSizeSize], uint64(len([]byte(summaryMax))))
+	summaryHeaderSize := SummaryConstSize + SummaryMinSizeSize + SummaryMaxSizeSize + uint64(len([]byte(summaryMin))) + uint64(len([]byte(summaryMax)))
 	//append all summary index records
-	summaryHeader = append(summaryHeader, summaryMin...)
-	summaryHeader = append(summaryHeader, summaryMax...)
+	summaryHeader = append(summaryHeader, []byte(summaryMin)...)
+	summaryHeader = append(summaryHeader, []byte(summaryMax)...)
 	summaryHeader = append(summaryHeader, summaryRecords...)
 	summaryBlockSize += uint64(summaryHeaderSize)
 
@@ -709,7 +709,7 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 		if !found {
 			i++
 			// if there are no more sstables, return nil for value
-			if i == len(dirEntries) {
+			if i >= len(dirEntries) {
 				return nil, nil
 			}
 			continue
@@ -720,6 +720,9 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 
 		if err != nil {
 			i++
+			if i >= len(dirEntries) {
+				return nil, nil
+			}
 			continue
 		}
 
@@ -728,6 +731,9 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 
 		if err != nil {
 			i++
+			if i >= len(dirEntries) {
+				return nil, nil
+			}
 			continue
 		}
 
@@ -736,10 +742,17 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 
 		if err != nil {
 			i++
+			if i >= len(dirEntries) {
+				return nil, nil
+			}
 			continue
 		}
 		if dataRecord != nil {
 			return dataRecord.Data, nil
+		}
+		i++
+		if i >= len(dirEntries) {
+			return nil, nil
 		}
 	}
 }
@@ -805,17 +818,12 @@ func ReadSummaryFromFile(mmapFile mmap.MMap, key string) (uint64, uint16, error)
 	serializedSummaryMin := mmapFile[keysStart : keysStart+summaryMinSize]
 	serializedSummaryMax := mmapFile[keysStart+summaryMinSize : keysStart+summaryMinSize+summaryMaxSize]
 
-	summaryMin, err := DeserializeIndexRecord(serializedSummaryMin)
-	if err != nil {
-		return 0, 0, err
-	}
-	summaryMax, err := DeserializeIndexRecord(serializedSummaryMax)
-	if err != nil {
-		return 0, 0, err
-	}
+	summaryMin := string(serializedSummaryMin)
+
+	summaryMax := string(serializedSummaryMax)
 
 	// check if key is in range of summary indexes
-	if key < summaryMin.Key || key > summaryMax.Key {
+	if key < summaryMin || key > summaryMax {
 		return 0, 0, errors.New("key not in range of summary index table")
 	}
 
