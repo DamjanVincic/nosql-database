@@ -17,20 +17,18 @@ import (
 )
 
 const (
-	CrcSize       = 4
 	TimestampSize = 8
 	TombstoneSize = 1
 	KeySizeSize   = 8
 	OffsetSize    = 8
 	ValueSizeSize = 8
 	//for dataRecord
-	CrcStart           = 0
-	TimestampStart     = CrcStart + CrcSize
+	TimestampStart     = 0
 	TombstoneStart     = TimestampStart + TimestampSize
 	DataKeySizeStart   = TombstoneStart + TombstoneSize
 	DataValueSizeStart = DataKeySizeStart + KeySizeSize
 	DataKeyStart       = DataValueSizeStart + ValueSizeSize
-	RecordHeaderSize   = CrcSize + TimestampSize + TombstoneSize + KeySizeSize + ValueSizeSize
+	RecordHeaderSize   = TimestampSize + TombstoneSize + KeySizeSize + ValueSizeSize
 	//for index and summary index thinning
 	IndexConst   = 5 //from config file
 	SummaryConst = 5 //from config file
@@ -92,7 +90,7 @@ type SSTable struct {
 }
 
 // we know which SSTable to create based on the singleFile variable, set in the configuration file
-func NewSSTable(memEntries []*MemEntry, singleFile bool) (*SSTable, error) {
+func NewSSTable(memEntries []*models.Data, singleFile bool) (*SSTable, error) {
 	// Create the ssTable directory (with all ssTable files) if it doesn't exist
 	dirEntries, err := os.ReadDir(Path)
 	if os.IsNotExist(err) {
@@ -257,7 +255,7 @@ func NewSSTable(memEntries []*MemEntry, singleFile bool) (*SSTable, error) {
 }
 
 // we distinguish implementations by the singleFile value (and the num of params, 1 for single, 6 for multi)
-func createFiles(memEntries []*MemEntry, singleFile bool, files ...*os.File) error {
+func createFiles(memEntries []*models.Data, singleFile bool, files ...*os.File) error {
 	// variables for storing serialized data
 	var data []byte
 	var dataRecords []byte
@@ -291,14 +289,14 @@ func createFiles(memEntries []*MemEntry, singleFile bool, files ...*os.File) err
 	countRecords := 0
 	countIndexRecords := 0
 
-	merkleDataRecords := []*wal.Record{}
+	merkleDataRecords := []*models.DataRecord{}
 	//create an empty bloom filter
 	filter := bloomfilter.CreateBloomFilter(len(memEntries), 0.001)
 	// proccess of adding entries
 	for _, entry := range memEntries {
 		//every entry is saved in data segment
 
-		dataRecord := *wal.NewRecord(entry.Key, entry.Value.Value, entry.Value.Tombstone)
+		dataRecord := *models.NewDataRecord(entry)
 		merkleDataRecords = append(merkleDataRecords, &dataRecord)
 		serializedRecord := dataRecord.Serialize()
 		sizeOfDR = uint64(len(serializedRecord))
@@ -331,7 +329,7 @@ func createFiles(memEntries []*MemEntry, singleFile bool, files ...*os.File) err
 		offset += sizeOfDR
 		countRecords++
 	}
-	merkle, err := CreateMerkleTree(merkleDataRecords, HashWithSeed{Seed: []byte{101, 182, 178, 156}})
+	merkle, err := CreateMerkleTree(merkleDataRecords, HashWithSeed{Seed: []byte{}})
 	if err != nil {
 		return err
 	}
@@ -417,7 +415,7 @@ func addToDataSegment(entry *MemEntry, result []byte, merkleDataRecords []*wal.R
 	return uint64(len(serializedRecord)), append(result, serializedRecord...)
 }
 
-func addToIndex(offset uint64, entry *MemEntry, result []byte) ([]byte, []byte) {
+func addToIndex(offset uint64, entry *models.Data, result []byte) ([]byte, []byte) {
 	indexRecord := NewIndexRecord(entry, offset)
 	serializedIndexRecord := indexRecord.SerializeIndexRecord()
 	return serializedIndexRecord, append(result, serializedIndexRecord...)
@@ -915,8 +913,8 @@ func ReadMerkle(mmapFile mmap.MMap) (*MerkleTree, error) {
 	}
 	return merkle, err
 }
-func GetAllMemEntries(mmapFile mmap.MMap) ([]*MemEntry, error) {
-	var entries []*MemEntry
+func GetAllMemEntries(mmapFile mmap.MMap) ([]*models.DataRecord, error) {
+	var entries []*models.DataRecord
 	mmapFileSize := len(mmapFile)
 	dataRecordSize := uint64(0)
 	offset := uint64(0)
@@ -927,12 +925,8 @@ func GetAllMemEntries(mmapFile mmap.MMap) ([]*MemEntry, error) {
 
 		// make sure to read complete data rec
 		dataRecordSize = RecordHeaderSize + keySize + valueSize
-		dataRecord, err := wal.Deserialize(mmapFile[offset : offset+dataRecordSize])
-		if err != nil {
-			return nil, errors.New("error deserializing index record")
-		}
-		data := &models.Data{Value: dataRecord.Value, Tombstone: dataRecord.Tombstone, Timestamp: dataRecord.Timestamp}
-		entries = append(entries, &MemEntry{Key: dataRecord.Key, Value: data})
+		dataRecord := models.Deserialize(mmapFile[offset : offset+dataRecordSize])
+		entries = append(entries, dataRecord)
 		offset += dataRecordSize
 		// when you get to the end it means there is no match
 	}
@@ -943,7 +937,7 @@ func compareMerkleTrees(mmapFileMeta, mmapFileData mmap.MMap) bool {
 	if err != nil {
 		return false
 	}
-	hashWithSeed := HashWithSeed{Seed: []byte{101, 182, 178, 156}}
+	hashWithSeed := merkle.HashWithSeed
 	entries, err := GetAllMemEntries(mmapFileData)
 	if err != nil {
 		return false

@@ -2,6 +2,7 @@ package sstable
 
 import (
 	"encoding/binary"
+	"github.com/DamjanVincic/key-value-engine/internal/models"
 )
 
 type IndexRecord struct {
@@ -10,7 +11,7 @@ type IndexRecord struct {
 	Offset  uint64
 }
 
-func NewIndexRecord(memEntry *MemEntry, offset uint64) *IndexRecord {
+func NewIndexRecord(memEntry *models.Data, offset uint64) *IndexRecord {
 	return &IndexRecord{
 		keySize: uint64(len([]byte(memEntry.Key))),
 		Key:     memEntry.Key,
