@@ -61,17 +61,16 @@ const (
 	Path = "sstable"
 	// Path to store the SimpleSStable file
 	// File naming constants for SSTable
-	Prefix       = "sst_"
-	DataSufix    = "_data"
-	IndexSufix   = "_index"
-	SummarySufix = "_summary"
-	FilterSufix  = "_filter"
-	MetaSufix    = "_meta"
-	TocSufix     = "_toc"
+	Prefix          = "sst_"
+	DataFileName    = "data"
+	IndexFileName   = "index"
+	SummaryFileName = "summary"
+	FilterFileName  = "filter"
+	MetaFileName    = "meta"
+	TocFileName     = "toc"
+	SingleFileName  = "single"
 	//for toc file header (contains lengths of filenames sizes)
 	FileNamesSizeSize = 8
-	// File naming constants for simpleSSTable
-	SimpleSufix = "_sss"
 )
 
 // format in which SSTable gets data from memTable
@@ -168,8 +167,8 @@ func (sstable *SSTable) Write(memEntries []*models.Data) error {
 	// creates files and save the data
 	if sstable.singleFile {
 		// create single file for ssTable
-		// name - sst_00000  - 5-digit num for index
-		filename := fmt.Sprintf("%s%05d.db", Prefix, index)
+		// name - single.db
+		filename := fmt.Sprintf("%s.db", SingleFileName)
 		file, err := os.OpenFile(filepath.Join(subdirPath, filename), os.O_CREATE|os.O_RDWR, 0644)
 		if err != nil {
 			return err
@@ -188,14 +187,14 @@ func (sstable *SSTable) Write(memEntries []*models.Data) error {
 		return nil
 
 	} else {
-		// Filename format: sst_00001_PART.db
+		// Filename format: PART.db, part = sstable element
 		// create names of new files
-		dataFilename = fmt.Sprintf("%s%05d%s.db", Prefix, index, DataSufix)
-		indexFilename = fmt.Sprintf("%s%05d%s.db", Prefix, index, IndexSufix)
-		summaryFilename = fmt.Sprintf("%s%05d%s.db", Prefix, index, SummarySufix)
-		filterFilename = fmt.Sprintf("%s%05d%s.db", Prefix, index, FilterSufix)
-		metadataFilename = fmt.Sprintf("%s%05d%s.db", Prefix, index, MetaSufix)
-		tocFilename = fmt.Sprintf("%s%05d%s.db", Prefix, index, TocSufix)
+		dataFilename = fmt.Sprintf("%s.db", DataFileName)
+		indexFilename = fmt.Sprintf("%s.db", IndexFileName)
+		summaryFilename = fmt.Sprintf("%s.db", SummaryFileName)
+		filterFilename = fmt.Sprintf("%s.db", FilterFileName)
+		metadataFilename = fmt.Sprintf("%s.db", MetaFileName)
+		tocFilename = fmt.Sprintf("%s.db", TocFileName)
 
 		//create files
 		dataFile, err := os.OpenFile(filepath.Join(subdirPath, dataFilename), os.O_CREATE|os.O_RDWR, 0644)
