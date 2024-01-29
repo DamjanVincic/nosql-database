@@ -3,6 +3,7 @@ package merkle
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"math"
 
 	"github.com/DamjanVincic/key-value-engine/internal/models"
@@ -18,7 +19,8 @@ const (
 
 type MerkleTree struct {
 	Root         *Node
-	HashWithSeed hash.HashWithSeed
+	HashWithSeed *hash.HashWithSeed
+	size         uint64
 }
 
 type Node struct {
@@ -46,16 +48,13 @@ since merkle tree is build from bottom up we need all data as leafs
 if number of leafs is not 2**n we need to add empty nodes
 there hash wont change anything
 */
-func CreateMerkleTree(allData []*models.DataRecord, hashFunc hash.HashWithSeed) (*MerkleTree, error) {
+func CreateMerkleTree(allData []*models.DataRecord, hashFunc *hash.HashWithSeed) (*MerkleTree, error) {
 	var nodes []*Node
 	var merkleTree MerkleTree
-	empty := hash.HashWithSeed{}
-	if bytes.Equal(empty.Seed, hashFunc.Seed) {
-		hashFunc = hash.CreateHashFunctions(1)[0]
+	if hashFunc == nil {
+		hashFunc = &hash.CreateHashFunctions(1)[0]
 	}
 	merkleTree.HashWithSeed = hashFunc
-
-	//merkleTree.HashWithSeed = hash.CreateHashFunctions(1)[0]
 
 	// creating all the end nodes
 	for _, data := range allData {
@@ -69,21 +68,21 @@ func CreateMerkleTree(allData []*models.DataRecord, hashFunc hash.HashWithSeed) 
 	// if number of nodes is not 2**n add empty nodes
 	n := math.Log2(float64(len(nodes)))
 	degree := math.Ceil(n)
-	if math.Mod(n, 1) != 0 { // check if hole number
-		targetSize := int(math.Pow(2, degree)) // ex. n is 2.3 then degree is 3 and we need 8 nodes since 2**3
-		for i := len(nodes); i < targetSize; i++ {
-			// add number of empty nodes that is needed
-			empty := &models.DataRecord{
-				Data:      &models.Data{Key: "", Value: []byte{}, Tombstone: false, Timestamp: 0},
-				KeySize:   0,
-				ValueSize: 0,
-			}
-			node, err := merkleTree.createNewNode(empty)
-			if err != nil {
-				return nil, err
-			}
-			nodes = append(nodes, node)
+	targetSize := uint64(math.Pow(2, degree)) // ex. n is 2.3 then degree is 3 and we need 8 nodes since 2**3
+	merkleTree.size = targetSize
+	for i := uint64(len(nodes)); i < targetSize; i++ {
+		// add number of empty nodes that is needed
+		empty := models.NewDataRecord(&models.Data{Key: "", Value: []byte{}, Tombstone: false, Timestamp: 0})
+		//empty := &models.DataRecord{
+		//	Data:      &models.Data{Key: "", Value: []byte{}, Tombstone: false, Timestamp: 0},
+		//	KeySize:   0,
+		//	ValueSize: 0,
+		//}
+		node, err := merkleTree.createNewNode(empty)
+		if err != nil {
+			return nil, err
 		}
+		nodes = append(nodes, node)
 	}
 
 	for len(nodes) > 1 {
@@ -112,15 +111,15 @@ func CreateMerkleTree(allData []*models.DataRecord, hashFunc hash.HashWithSeed) 
 	merkleTree.Root = nodes[len(nodes)-1]
 	return &merkleTree, nil
 }
-func (tree *MerkleTree) Serialize() []byte {
+func (merkleTree *MerkleTree) Serialize() []byte {
 	//add size of hashWithSeed to byte array
 	bytes := make([]byte, HashWithSeedSizeSize)
-	serializedHash := hash.Serialize([]hash.HashWithSeed{tree.HashWithSeed})
+	serializedHash := hash.Serialize([]hash.HashWithSeed{*merkleTree.HashWithSeed})
 	hashFuncSize := uint64(len(serializedHash))
 	binary.BigEndian.PutUint64(bytes[:HashWithSeedSizeSize], hashFuncSize)
 	//append hashWithSeed
 	bytes = append(bytes, serializedHash...)
-	bytes = append(bytes, MerkleBFS(tree.Root)...)
+	bytes = append(bytes, MerkleBFS(merkleTree.Root)...)
 	return bytes
 }
 
@@ -158,7 +157,7 @@ func DeserializeMerkle(data []byte) (*MerkleTree, error) {
 	root := binaryTree(nodes, 0)
 	return &MerkleTree{
 		Root:         root,
-		HashWithSeed: hashWithSeed,
+		HashWithSeed: &hashWithSeed,
 	}, nil
 }
 
@@ -178,42 +177,29 @@ func binaryTree(data []byte, index int) *Node {
 	return nil
 }
 
-func (merkleTree *MerkleTree) IsEqualTo(comparableTree *MerkleTree) ([]int, bool) {
-
-	//compare hash functions (must serialize them)
-	serializedHash := hash.Serialize([]hash.HashWithSeed{merkleTree.HashWithSeed})
-	serializedComparableHash := hash.Serialize([]hash.HashWithSeed{comparableTree.HashWithSeed})
-	if !bytes.Equal(serializedHash, serializedComparableHash) {
-		return nil, false
+func (merkleTree *MerkleTree) CompareTrees(otherMerkleTree *MerkleTree) ([]uint64, error) {
+	if merkleTree.size != otherMerkleTree.size {
+		return nil, errors.New("too many deleted entries")
 	}
 
-	// compare roots
-	root := merkleTree.Root.Data
-	comparableRoot := comparableTree.Root.Data
-
-	if !bytes.Equal(root, comparableRoot) {
-		problemNodes := []int{}
-		index := 0
-		merkleTree.Root.CompareTrees(comparableTree.Root, &problemNodes, index)
-		return problemNodes, false
-	}
-
-	return nil, true
+	var corruptedNodes []uint64
+	compareTrees(merkleTree.Root, otherMerkleTree.Root, &corruptedNodes, 0, merkleTree.size/2)
+	return corruptedNodes, nil
 }
-func (node1 *Node) CompareTrees(node2 *Node, corruptedNodes *[]int, index int) {
-	if node1 == nil && node2 == nil {
-		return
-	}
 
+func compareTrees(node1 *Node, node2 *Node, corruptedNodes *[]uint64, index uint64, tempSize uint64) {
 	// Compare the hash values of the nodes
 	if (node1 == nil || node2 == nil || !bytes.Equal(node1.Data, node2.Data)) && node1.left == nil && node1.right == nil && node2.right == nil && node2.left == nil {
 		// Nodes are different or one is nil, consider it corrupted
 		*corruptedNodes = append(*corruptedNodes, index)
-	} else if !bytes.Equal(node1.left.Data, node2.left.Data) {
-		index++
-		node1.left.CompareTrees(node2.left, corruptedNodes, index)
-	} else if !bytes.Equal(node1.right.Data, node2.right.Data) {
-		index += 2
-		node1.right.CompareTrees(node2.right, corruptedNodes, index)
+	} else {
+		if !bytes.Equal(node1.left.Data, node2.left.Data) {
+			//index++
+			compareTrees(node1.left, node2.left, corruptedNodes, index, tempSize/2)
+		}
+		if !bytes.Equal(node1.right.Data, node2.right.Data) {
+			index += tempSize
+			compareTrees(node1.right, node2.right, corruptedNodes, index, tempSize/2)
+		}
 	}
 }
