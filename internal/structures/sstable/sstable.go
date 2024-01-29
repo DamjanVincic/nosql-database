@@ -492,9 +492,12 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 
 	// search for the key from the newest to the oldest sstable
 	// i variable will be increment each time as long as its not equal to the len of dirEntries
-	i := 1
+	i := len(dirEntries) - 1
 	for {
-		subDirName := dirEntries[len(dirEntries)-i].Name()
+		if i < 0 {
+			return nil, errors.New("No subdir entries")
+		}
+		subDirName := dirEntries[i].Name()
 		subDirPath := filepath.Join(Path, subDirName)
 		subDirEntries, err := os.ReadDir(subDirPath)
 		if os.IsNotExist(err) {
@@ -684,11 +687,7 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 		}
 		// if its not found, check next sstable
 		if !found {
-			i++
-			// if there are no more sstables, return nil for value
-			if i >= len(dirEntries) {
-				return nil, nil
-			}
+			i--
 			continue
 		}
 
@@ -696,10 +695,7 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 		indexOffset, summaryThinningConst, err := ReadSummaryFromFile(mmapFileSummary, key)
 
 		if err != nil {
-			i++
-			if i >= len(dirEntries) {
-				return nil, nil
-			}
+			i--
 			continue
 		}
 
@@ -707,10 +703,7 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 		dataOffset, indexThinningConst, err := ReadIndexFromFile(mmapFileIndex, summaryThinningConst, key, indexOffset)
 
 		if err != nil {
-			i++
-			if i >= len(dirEntries) {
-				return nil, nil
-			}
+			i--
 			continue
 		}
 
@@ -718,19 +711,13 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 		dataRecord, err := ReadDataFromFile(mmapFileData, indexThinningConst, key, dataOffset)
 
 		if err != nil {
-			i++
-			if i >= len(dirEntries) {
-				return nil, nil
-			}
+			i--
 			continue
 		}
 		if dataRecord != nil {
 			return dataRecord.Data, nil
 		}
-		i++
-		if i >= len(dirEntries) {
-			return nil, nil
-		}
+		i--
 	}
 }
 
