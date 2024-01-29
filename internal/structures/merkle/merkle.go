@@ -222,13 +222,13 @@ func binaryTree(data []byte, index int) *Node {
 	return nil
 }
 
-func (merkleTree *MerkleTree) IsEqualTo(comparableTree *MerkleTree) bool {
+func (merkleTree *MerkleTree) IsEqualTo(comparableTree *MerkleTree) ([]*Node, bool) {
 
 	//compare hash functions (must serialize them)
 	serializedHash := hash.Serialize([]hash.HashWithSeed{merkleTree.HashWithSeed})
 	serializedComparableHash := hash.Serialize([]hash.HashWithSeed{comparableTree.HashWithSeed})
 	if !bytes.Equal(serializedHash, serializedComparableHash) {
-		return false
+		return nil, false
 	}
 
 	// compare roots
@@ -236,8 +236,25 @@ func (merkleTree *MerkleTree) IsEqualTo(comparableTree *MerkleTree) bool {
 	comparableRoot := comparableTree.Root.data
 
 	if !bytes.Equal(root, comparableRoot) {
-		return false
+		problemNodes := []*Node{}
+		merkleTree.Root.CompareTrees(comparableTree.Root, &problemNodes)
+		return problemNodes, false
 	}
 
-	return true
+	return nil, true
+}
+func (node1 *Node) CompareTrees(node2 *Node, corruptedNodes *[]*Node) {
+	if node1 == nil && node2 == nil {
+		return
+	}
+
+	// Compare the hash values of the nodes
+	if (node1 == nil || node2 == nil || !bytes.Equal(node1.data, node2.data)) && node1.left == nil && node1.right == nil && node2.right == nil && node2.left == nil {
+		// Nodes are different or one is nil, consider it corrupted
+		*corruptedNodes = append(*corruptedNodes, node1, node2)
+	}
+
+	// Recursively compare left and right subtrees
+	node1.left.CompareTrees(node2.left, corruptedNodes)
+	node1.right.CompareTrees(node2.right, corruptedNodes)
 }
