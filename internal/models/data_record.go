@@ -34,8 +34,6 @@ func NewDataRecord(data *Data) *DataRecord {
 	}
 }
 
-//rt
-
 func (dataRecord *DataRecord) Serialize() []byte {
 	bytes := make([]byte, RecordHeaderSize+dataRecord.KeySize+dataRecord.ValueSize)
 

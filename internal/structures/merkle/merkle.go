@@ -22,67 +22,23 @@ type MerkleTree struct {
 }
 
 type Node struct {
-	data  []byte
+	Data  []byte
 	left  *Node
 	right *Node
-}
-
-/*
-create data for node
-get binary value of value tombtone and timestamp
-append it to result and return serialized data
-*/
-func createDataForNode(data *models.DataRecord) []byte {
-	key := data.Data.Key
-	value := data.Data.Value
-	tombstone := data.Data.Tombstone
-	timestamp := data.Data.Timestamp
-	keySize := data.KeySize
-	valueSize := data.ValueSize
-
-	var tombstoneByte []byte
-	if tombstone {
-		tombstoneByte = []byte{1}
-	} else {
-		tombstoneByte = []byte{0}
-	}
-
-	// add size of the key
-	result := make([]byte, models.KeySizeSize+models.ValueSizeSize)
-	binary.BigEndian.PutUint64(result, keySize)
-
-	// add key
-	result = append(result, []byte(key)...)
-
-	// add size of the value
-	binary.BigEndian.PutUint64(result, valueSize)
-
-	// add value
-	result = append(result, value...)
-
-	// add tombstone
-	result = append(result, tombstoneByte...)
-
-	// add timestamp
-	timestampBytes := make([]byte, 8)
-	binary.BigEndian.PutUint64(timestampBytes, timestamp)
-	result = append(result, timestampBytes...)
-
-	return result
 }
 
 /*
 get binary data and hash function and return new node with no children and hashed values
 */
 func (merkleTree *MerkleTree) createNewNode(value *models.DataRecord) (*Node, error) {
-	newData := createDataForNode(value)
+	newData := value.Serialize()
 	values, err := merkleTree.HashWithSeed.Hash(newData)
 	if err != nil {
 		return nil, err
 	}
 	valuesBinary := make([]byte, 8)
 	binary.BigEndian.PutUint64(valuesBinary, values)
-	return &Node{left: nil, right: nil, data: valuesBinary}, nil
+	return &Node{left: nil, right: nil, Data: valuesBinary}, nil
 }
 
 /*
@@ -135,7 +91,7 @@ func CreateMerkleTree(allData []*models.DataRecord, hashFunc hash.HashWithSeed) 
 
 		for i := 0; i < len(nodes); i += 2 {
 			// add two array together and hash
-			values, err := merkleTree.HashWithSeed.Hash(append(nodes[i].data, nodes[i+1].data...))
+			values, err := merkleTree.HashWithSeed.Hash(append(nodes[i].Data, nodes[i+1].Data...))
 			if err != nil {
 				return nil, err
 			}
@@ -146,7 +102,7 @@ func CreateMerkleTree(allData []*models.DataRecord, hashFunc hash.HashWithSeed) 
 			newNode := &Node{
 				left:  nodes[i],
 				right: nodes[i+1],
-				data:  valuesBinary,
+				Data:  valuesBinary,
 			}
 			newLevel = append(newLevel, newNode)
 		}
@@ -178,7 +134,7 @@ func MerkleBFS(root *Node) []byte {
 	for len(nodes) > 0 {
 		current := nodes[0] // get next in line
 		nodes = nodes[1:]
-		result = append(result, current.data...)
+		result = append(result, current.Data...)
 		if current.left != nil {
 			nodes = append(nodes, current.left)
 		}
@@ -211,7 +167,7 @@ func DeserializeMerkle(data []byte) (*MerkleTree, error) {
 func binaryTree(data []byte, index int) *Node {
 	if index*HashedNodesSize+HashedNodesSize <= len(data) {
 		node := &Node{
-			data:  data[index*HashedNodesSize : index*HashedNodesSize+HashedNodesSize],
+			Data:  data[index*HashedNodesSize : index*HashedNodesSize+HashedNodesSize],
 			left:  nil,
 			right: nil,
 		}
@@ -222,7 +178,7 @@ func binaryTree(data []byte, index int) *Node {
 	return nil
 }
 
-func (merkleTree *MerkleTree) IsEqualTo(comparableTree *MerkleTree) ([]*Node, bool) {
+func (merkleTree *MerkleTree) IsEqualTo(comparableTree *MerkleTree) ([]int, bool) {
 
 	//compare hash functions (must serialize them)
 	serializedHash := hash.Serialize([]hash.HashWithSeed{merkleTree.HashWithSeed})
@@ -232,29 +188,32 @@ func (merkleTree *MerkleTree) IsEqualTo(comparableTree *MerkleTree) ([]*Node, bo
 	}
 
 	// compare roots
-	root := merkleTree.Root.data
-	comparableRoot := comparableTree.Root.data
+	root := merkleTree.Root.Data
+	comparableRoot := comparableTree.Root.Data
 
 	if !bytes.Equal(root, comparableRoot) {
-		problemNodes := []*Node{}
-		merkleTree.Root.CompareTrees(comparableTree.Root, &problemNodes)
+		problemNodes := []int{}
+		index := 0
+		merkleTree.Root.CompareTrees(comparableTree.Root, &problemNodes, index)
 		return problemNodes, false
 	}
 
 	return nil, true
 }
-func (node1 *Node) CompareTrees(node2 *Node, corruptedNodes *[]*Node) {
+func (node1 *Node) CompareTrees(node2 *Node, corruptedNodes *[]int, index int) {
 	if node1 == nil && node2 == nil {
 		return
 	}
 
 	// Compare the hash values of the nodes
-	if (node1 == nil || node2 == nil || !bytes.Equal(node1.data, node2.data)) && node1.left == nil && node1.right == nil && node2.right == nil && node2.left == nil {
+	if (node1 == nil || node2 == nil || !bytes.Equal(node1.Data, node2.Data)) && node1.left == nil && node1.right == nil && node2.right == nil && node2.left == nil {
 		// Nodes are different or one is nil, consider it corrupted
-		*corruptedNodes = append(*corruptedNodes, node1, node2)
+		*corruptedNodes = append(*corruptedNodes, index)
+	} else if !bytes.Equal(node1.left.Data, node2.left.Data) {
+		index++
+		node1.left.CompareTrees(node2.left, corruptedNodes, index)
+	} else if !bytes.Equal(node1.right.Data, node2.right.Data) {
+		index += 2
+		node1.right.CompareTrees(node2.right, corruptedNodes, index)
 	}
-
-	// Recursively compare left and right subtrees
-	node1.left.CompareTrees(node2.left, corruptedNodes)
-	node1.right.CompareTrees(node2.right, corruptedNodes)
 }
