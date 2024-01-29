@@ -693,7 +693,6 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 
 		//check if its in summary range (between min and max index)
 		indexOffset, summaryThinningConst, err := ReadSummaryFromFile(mmapFileSummary, key)
-
 		if err != nil {
 			i--
 			continue
@@ -701,7 +700,6 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 
 		//check if its in index
 		dataOffset, indexThinningConst, err := ReadIndexFromFile(mmapFileIndex, summaryThinningConst, key, indexOffset)
-
 		if err != nil {
 			i--
 			continue
@@ -709,11 +707,11 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 
 		//find it in data
 		dataRecord, err := ReadDataFromFile(mmapFileData, indexThinningConst, key, dataOffset)
-
 		if err != nil {
 			i--
 			continue
 		}
+
 		if dataRecord != nil {
 			return dataRecord.Data, nil
 		}
@@ -803,7 +801,7 @@ func ReadSummaryFromFile(mmapFile mmap.MMap, key string) (uint64, uint16, error)
 		serializedSummRec := mmapFile[offset : offset+summaryRecordSize]
 		summaryRecord, err := DeserializeIndexRecord(serializedSummRec)
 		if err != nil {
-			return 0, 0, errors.New("error deserializing index record")
+			return 0, 0, err
 		}
 		summaryRecords = append(summaryRecords, summaryRecord)
 
@@ -826,17 +824,13 @@ func ReadSummaryFromFile(mmapFile mmap.MMap, key string) (uint64, uint16, error)
 }
 
 // check if key is in index range, if it is return data record offset, if it is not return 0
-func ReadIndexFromFile(mmapFile mmap.MMap, summaryConst uint16, key string, offsetStart uint64) (uint64, uint16, error) {
+// we start reading summaryThinningConst number of index records from offset in index file
+func ReadIndexFromFile(mmapFile mmap.MMap, summaryConst uint16, key string, offset uint64) (uint64, uint16, error) {
 	var indexRecords []*IndexRecord
-	// 8 for size of key size
-	// key size for key
-	// 8 for offset
 	// make sure that the next thing we read is indeed index (/key size of the key of index)
 	indexThinningConst := binary.BigEndian.Uint16(mmapFile[:IndexConstSize])
-	mmapFile = mmapFile[offsetStart:]
 	mmapFileSize := uint64(len(mmapFile))
 	indexRecordSize := uint64(0)
-	offset := uint64(0)
 	//read SummaryConst number of index records
 	for i := uint16(0); i < summaryConst; i++ {
 		keySize := binary.BigEndian.Uint64(mmapFile[offset+KeySizeStart : offset+KeySizeSize])
@@ -844,7 +838,7 @@ func ReadIndexFromFile(mmapFile mmap.MMap, summaryConst uint16, key string, offs
 		indexRecordSize = keySize + KeySizeSize + OffsetSize
 		indexRecord, err := DeserializeIndexRecord(mmapFile[offset : offset+indexRecordSize])
 		if err != nil {
-			return 0, 0, errors.New("error deserializing index record")
+			return 0, 0, err
 		}
 		indexRecords = append(indexRecords, indexRecord)
 
@@ -871,10 +865,8 @@ func ReadIndexFromFile(mmapFile mmap.MMap, summaryConst uint16, key string, offs
 // param mmapFile - we do this instead passing the file or filename itself so we can use function for
 // both multi and single sile sstable, we do this for all reads
 func ReadDataFromFile(mmapFile mmap.MMap, indexThinningConst uint16, key string, offset uint64) (*models.DataRecord, error) {
-	mmapFile = mmapFile[offset:]
 	mmapFileSize := len(mmapFile)
 	dataRecordSize := uint64(0)
-	offset = 0
 	//read IndexConst number of data records
 	for i := uint16(0); i < indexThinningConst; i++ {
 		keySize := binary.BigEndian.Uint64(mmapFile[offset+DataKeySizeStart : offset+DataValueSizeStart])
