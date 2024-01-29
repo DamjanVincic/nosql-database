@@ -35,7 +35,7 @@ const (
 	//for indexRecord
 	KeySizeStart = 0
 	KeyStart     = KeySizeStart + KeySizeSize
-	//sizes of each block in file for SimpleSSTable and size of header which we will use for reading and positioning in file
+	//sizes of each block in file for single file SSTable and size of header which we will use for reading and positioning in file
 	//reason why we store offsets in uint64 (8 bytes) is because max value od unit32 is 0.0.00429497 TB
 	DataBlockSizeSize    = 8
 	IndexBlockSizeSize   = 8
@@ -59,7 +59,7 @@ const (
 	IndexConstSize = 2
 	// Path to store SSTable files
 	Path = "sstable"
-	// Path to store the SimpleSStable file
+	// Path to store the SStable single file
 	// File naming constants for SSTable
 	Prefix          = "sst_"
 	DataFileName    = "data"
@@ -411,14 +411,6 @@ func (sstable *SSTable) createFiles(memEntries []*models.Data, singleFile bool, 
 	return nil
 }
 
-// get serialized data
-// func addToDataSegment(entry *models.Data, result []byte, merkleDataRecords []*wal.Record) (uint64, []byte) {
-// 	dataRecord := *wal.NewRecord(entry.Key, entry.Value, entry.Tombstone)
-// 	merkleDataRecords = append(merkleDataRecords, &dataRecord)
-// 	serializedRecord := dataRecord.Serialize()
-// 	return uint64(len(serializedRecord)), append(result, serializedRecord...)
-// }
-
 func addToIndex(offset uint64, entry *models.Data, result []byte) ([]byte, []byte) {
 	indexRecord := NewIndexRecord(entry, offset)
 	serializedIndexRecord := indexRecord.SerializeIndexRecord()
@@ -512,17 +504,17 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 		// search the single file if len == 1, otherwise multi files
 		if len(subDirEntries) == 1 {
 			// get the data from single file sstable
-			simpleFilePath := filepath.Join(subDirPath, subDirEntries[0].Name())
-			simpleFile, err := os.OpenFile(simpleFilePath, os.O_RDWR, 0644)
+			singleFilePath := filepath.Join(subDirPath, subDirEntries[0].Name())
+			singleFile, err := os.OpenFile(singleFilePath, os.O_RDWR, 0644)
 			if err != nil {
 				return nil, err
 			}
-			mmapFileSimple, err := mmap.Map(simpleFile, mmap.RDWR, 0)
+			mmapFileSingle, err := mmap.Map(singleFile, mmap.RDWR, 0)
 			if err != nil {
 				return nil, err
 			}
-			//get sizes of each part of SimpleSSTable
-			header := mmapFileSimple[:HeaderSize]
+			//get sizes of each part of SSTable single file
+			header := mmapFileSingle[:HeaderSize]
 			datasize := uint64(binary.BigEndian.Uint64(header[:IndexBlockStart]))
 			indexsize := uint64(binary.BigEndian.Uint64(header[IndexBlockStart:SummaryBlockStart]))
 			summarysize := uint64(binary.BigEndian.Uint64(header[SummaryBlockStart:FilterBlockStart]))
@@ -536,32 +528,32 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 
 			// same as hole mmap file in multi file sstable
 			// copy data in new slices to prevent errors after Unmap()
-			mmapFileDataPart := mmapFileSimple[dataStart:indexStart]
+			mmapFileDataPart := mmapFileSingle[dataStart:indexStart]
 			mmapFileData = make([]byte, len(mmapFileDataPart))
 			copy(mmapFileData, mmapFileDataPart)
 
-			mmapFileIndexPart := mmapFileSimple[indexStart:summaryStart]
+			mmapFileIndexPart := mmapFileSingle[indexStart:summaryStart]
 			mmapFileIndex = make([]byte, len(mmapFileIndexPart))
 			copy(mmapFileIndex, mmapFileIndexPart)
 
-			mmapFileSummaryPart := mmapFileSimple[summaryStart:filterStart]
+			mmapFileSummaryPart := mmapFileSingle[summaryStart:filterStart]
 			mmapFileSummary = make([]byte, len(mmapFileSummaryPart))
 			copy(mmapFileSummary, mmapFileSummaryPart)
 
-			mmapFileFilterPart := mmapFileSimple[filterStart:metaStart]
+			mmapFileFilterPart := mmapFileSingle[filterStart:metaStart]
 			mmapFileFilter = make([]byte, len(mmapFileFilterPart))
 			copy(mmapFileFilter, mmapFileFilterPart)
 
-			mmapFileMetaPart := mmapFileSimple[metaStart:]
+			mmapFileMetaPart := mmapFileSingle[metaStart:]
 			mmapFileMeta = make([]byte, len(mmapFileMetaPart))
 			copy(mmapFileMeta, mmapFileMetaPart)
 
 			// close the file
-			err = mmapFileSimple.Unmap()
+			err = mmapFileSingle.Unmap()
 			if err != nil {
 				return nil, err
 			}
-			err = simpleFile.Close()
+			err = singleFile.Close()
 			if err != nil {
 				return nil, err
 			}
