@@ -15,6 +15,8 @@ const (
 	HashWithSeedSizeSize = 8
 	// number of bytes stored in Node data after hashing
 	HashedNodesSize = 8
+	// Size of the 'size' attribute in bytes
+	SizeSize = 8
 )
 
 type MerkleTree struct {
@@ -106,17 +108,6 @@ func CreateMerkleTree(allData []*models.DataRecord, hashFunc *hash.HashWithSeed)
 	merkleTree.Root = nodes[len(nodes)-1]
 	return &merkleTree, nil
 }
-func (merkleTree *MerkleTree) Serialize() []byte {
-	//add size of hashWithSeed to byte array
-	bytes := make([]byte, HashWithSeedSizeSize)
-	serializedHash := hash.Serialize([]hash.HashWithSeed{*merkleTree.HashWithSeed})
-	hashFuncSize := uint64(len(serializedHash))
-	binary.BigEndian.PutUint64(bytes[:HashWithSeedSizeSize], hashFuncSize)
-	//append hashWithSeed
-	bytes = append(bytes, serializedHash...)
-	bytes = append(bytes, MerkleBFS(merkleTree.Root)...)
-	return bytes
-}
 
 // BFS traversal on a binary tree; creates list of nodes
 func MerkleBFS(root *Node) []byte {
@@ -139,13 +130,27 @@ func MerkleBFS(root *Node) []byte {
 	return result
 }
 
+func (merkleTree *MerkleTree) Serialize() []byte {
+	//add size of `size` attribute and hashWithSeed size to byte array
+	bytes := make([]byte, SizeSize+HashWithSeedSizeSize)
+	binary.BigEndian.PutUint64(bytes[:SizeSize], merkleTree.size)
+	serializedHash := hash.Serialize([]hash.HashWithSeed{*merkleTree.HashWithSeed})
+	hashFuncSize := uint64(len(serializedHash))
+	binary.BigEndian.PutUint64(bytes[SizeSize:SizeSize+HashWithSeedSizeSize], hashFuncSize)
+	//append hashWithSeed
+	bytes = append(bytes, serializedHash...)
+	bytes = append(bytes, MerkleBFS(merkleTree.Root)...)
+	return bytes
+}
+
 func DeserializeMerkle(data []byte) *MerkleTree {
+	size := binary.BigEndian.Uint64(data[:SizeSize])
 	//deserialize hash func
-	hashWithSeedSize := binary.BigEndian.Uint64(data[:HashWithSeedSizeSize])
-	hashWithSeed := hash.Deserialize(data[HashWithSeedSizeSize : HashWithSeedSizeSize+hashWithSeedSize])[0]
+	hashWithSeedSize := binary.BigEndian.Uint64(data[SizeSize : SizeSize+HashWithSeedSizeSize])
+	hashWithSeed := hash.Deserialize(data[SizeSize+HashWithSeedSizeSize : SizeSize+HashWithSeedSizeSize+hashWithSeedSize])[0]
 	//deserialize nodes
 	var nodes []byte
-	for offset := HashWithSeedSizeSize + hashWithSeedSize; offset < uint64(len(data)); offset += HashedNodesSize {
+	for offset := SizeSize + HashWithSeedSizeSize + hashWithSeedSize; offset < uint64(len(data)); offset += HashedNodesSize {
 		nodes = append(nodes, data[offset:offset+HashedNodesSize]...)
 	}
 	//constructs merkle from list of nodes and returns root node
@@ -153,6 +158,7 @@ func DeserializeMerkle(data []byte) *MerkleTree {
 	return &MerkleTree{
 		Root:         root,
 		HashWithSeed: &hashWithSeed,
+		size:         size,
 	}
 }
 
