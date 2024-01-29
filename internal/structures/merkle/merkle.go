@@ -139,7 +139,7 @@ func MerkleBFS(root *Node) []byte {
 	return result
 }
 
-func DeserializeMerkle(data []byte) (*MerkleTree, error) {
+func DeserializeMerkle(data []byte) *MerkleTree {
 	//deserialize hash func
 	hashWithSeedSize := binary.BigEndian.Uint64(data[:HashWithSeedSizeSize])
 	hashWithSeed := hash.Deserialize(data[HashWithSeedSizeSize : HashWithSeedSizeSize+hashWithSeedSize])[0]
@@ -153,7 +153,7 @@ func DeserializeMerkle(data []byte) (*MerkleTree, error) {
 	return &MerkleTree{
 		Root:         root,
 		HashWithSeed: &hashWithSeed,
-	}, nil
+	}
 }
 
 // recursive function used to construct a binary tree from a given byte slice data and an initial index index

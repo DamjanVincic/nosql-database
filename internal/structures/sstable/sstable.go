@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/DamjanVincic/key-value-engine/internal/structures/merkle"
 	"os"
 	"path/filepath"
 	"sort"
@@ -339,14 +340,14 @@ func (sstable *SSTable) createFiles(memEntries []*models.Data, singleFile bool, 
 		offset += sizeOfDR
 		countRecords++
 	}
-	merkle, err := CreateMerkleTree(merkleDataRecords, HashWithSeed{Seed: []byte{}})
+	merkleTree, err := merkle.CreateMerkleTree(merkleDataRecords, nil)
 	if err != nil {
 		return err
 	}
 	//serialize filter and data
 	filterData := filter.Serialize()
 	filterBlockSize = uint64(len(filterData))
-	merkleData := merkle.Serialize()
+	merkleData := merkleTree.Serialize()
 
 	//creating summary index header
 	binary.BigEndian.PutUint16(summaryHeader[:SummaryMinSizestart], sstable.summaryConst)
@@ -693,8 +694,9 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 			// }
 		}
 
-		if !compareMerkleTrees(mmapFileMeta, mmapFileData) {
-			return nil, errors.New("CORRUPTED DATA")
+		_, err = compareMerkleTrees(mmapFileMeta, mmapFileData)
+		if err != nil {
+			return nil, err
 		}
 
 		// start process for getting the element
@@ -917,12 +919,9 @@ func ReadDataFromFile(mmapFile mmap.MMap, indexThinningConst uint16, key string,
 	return nil, nil
 }
 
-func ReadMerkle(mmapFile mmap.MMap) (*MerkleTree, error) {
-	merkle, err := DeserializeMerkle(mmapFile)
-	if err != nil {
-		return nil, err
-	}
-	return merkle, err
+func ReadMerkle(mmapFile mmap.MMap) *merkle.MerkleTree {
+	merkleTree := merkle.DeserializeMerkle(mmapFile)
+	return merkleTree
 }
 func GetAllMemEntries(mmapFile mmap.MMap) ([]*models.DataRecord, error) {
 	var entries []*models.DataRecord
@@ -943,19 +942,17 @@ func GetAllMemEntries(mmapFile mmap.MMap) ([]*models.DataRecord, error) {
 	}
 	return entries, nil
 }
-func compareMerkleTrees(mmapFileMeta, mmapFileData mmap.MMap) bool {
-	merkle, err := ReadMerkle(mmapFileMeta)
-	if err != nil {
-		return false
-	}
-	hashWithSeed := merkle.HashWithSeed
+func compareMerkleTrees(mmapFileMeta, mmapFileData mmap.MMap) ([]uint64, error) {
+	merkleTree := ReadMerkle(mmapFileMeta)
+
 	entries, err := GetAllMemEntries(mmapFileData)
 	if err != nil {
-		return false
+		return nil, err
 	}
-	newMerkle, err := CreateMerkleTree(entries, hashWithSeed)
+	newMerkle, err := merkle.CreateMerkleTree(entries, merkleTree.HashWithSeed)
 	if err != nil {
-		return false
+		return nil, err
 	}
-	return merkle.IsEqualTo(newMerkle)
+
+	return merkleTree.CompareTrees(newMerkle)
 }
