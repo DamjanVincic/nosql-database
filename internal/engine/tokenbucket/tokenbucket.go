@@ -6,7 +6,7 @@ import (
 )
 
 const (
-	refillPeriod = 60 //number of seconds between each token refill
+	refillPeriod = 10 //number of seconds between each token refill
 	maxTokens    = 3  //max number of tokens in each refillPeriod
 )
 
@@ -21,8 +21,10 @@ func NewTokenBucket() *TokenBucket {
 
 // refills tokens if needed, tries to remove one token, if possible returns true if not returns false
 func (tokenBucket *TokenBucket) UseToken() bool {
-	if uint64(time.Now().Unix())-tokenBucket.lastRefillTime > refillPeriod {
+	timeNow := uint64(time.Now().Unix())
+	if timeNow-tokenBucket.lastRefillTime > refillPeriod {
 		tokenBucket.tokenCount = maxTokens
+		tokenBucket.lastRefillTime = timeNow
 	}
 	if tokenBucket.tokenCount == 0 {
 		return false
