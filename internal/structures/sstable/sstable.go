@@ -4,11 +4,11 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"github.com/DamjanVincic/key-value-engine/internal/structures/merkle"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
+
+	"github.com/DamjanVincic/key-value-engine/internal/structures/merkle"
 
 	"github.com/DamjanVincic/key-value-engine/internal/models"
 	"github.com/DamjanVincic/key-value-engine/internal/structures/bloomfilter"
@@ -498,13 +498,6 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 	if os.IsNotExist(err) {
 		return nil, err
 	}
-
-	//sort in numerical order by indexes, it is returned in lexicographical
-	sort.Slice(dirEntries, func(i, j int) bool {
-		numI, _ := strconv.Atoi(dirEntries[i].Name()[11:])
-		numJ, _ := strconv.Atoi(dirEntries[j].Name()[11:])
-		return numI < numJ
-	})
 
 	// search for the key from the newest to the oldest sstable
 	// i variable will be increment each time as long as its not equal to the len of dirEntries
