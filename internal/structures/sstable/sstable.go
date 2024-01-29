@@ -147,14 +147,6 @@ func (sstable *SSTable) Write(memEntries []*models.Data, singleFile bool) error 
 			return err
 		}
 	} else {
-		// Get the last sstable (take the index from the last entered one)
-		// sort the entries in numerical order, because they are returned in lexicographical
-		sort.Slice(dirEntries, func(i, j int) bool {
-			numI, _ := strconv.Atoi(dirEntries[i].Name()[:])
-			numJ, _ := strconv.Atoi(dirEntries[j].Name()[:])
-			return numI < numJ
-		})
-
 		subdirName = dirEntries[len(dirEntries)-1].Name()
 		n, err := strconv.ParseUint(subdirName[11:], 10, 8)
 		if err != nil {
@@ -847,6 +839,9 @@ func ReadSummaryFromFile(mmapFile mmap.MMap, key string) (uint64, uint16, error)
 		if len(summaryRecords) >= 2 && summaryRecords[len(summaryRecords)-1].Key > key && summaryRecords[len(summaryRecords)-2].Key <= key {
 			return summaryRecords[len(summaryRecords)-2].Offset, summaryConst, nil
 		}
+		if len(summaryRecords) >= 2 {
+			summaryRecords = summaryRecords[1:]
+		}
 		offset += summaryRecordSize
 		// if we came to the end of the file return last one
 		// because if it passed all the way to here and it didnt return nil when we checked if its in the range in keys
@@ -884,6 +879,9 @@ func ReadIndexFromFile(mmapFile mmap.MMap, summaryConst uint16, key string, offs
 		// when you find the record which key is bigger, the result is the previous record which key is smaller
 		if len(indexRecords) >= 2 && indexRecords[len(indexRecords)-1].Key > key && indexRecords[len(indexRecords)-2].Key <= key {
 			return indexRecords[len(indexRecords)-2].Offset, indexThinningConst, nil
+		}
+		if len(indexRecords) >= 2 {
+			indexRecords = indexRecords[1:]
 		}
 		offset += indexRecordSize
 		// when you get to the end it means the result is the last one read
