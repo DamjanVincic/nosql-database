@@ -32,23 +32,38 @@ create data for node
 get binary value of value tombtone and timestamp
 append it to result and return serialized data
 */
-func createDataForNode(key string, data *models.Data) []byte {
-	value := data.Value
-	tombstone := data.Tombstone
-	timestamp := data.Timestamp
+func createDataForNode(data *models.DataRecord) []byte {
+	key := data.Data.Key
+	value := data.Data.Value
+	tombstone := data.Data.Tombstone
+	timestamp := data.Data.Timestamp
+	keySize := data.KeySize
+	valueSize := data.ValueSize
+
 	var tombstoneByte []byte
 	if tombstone {
 		tombstoneByte = []byte{1}
 	} else {
 		tombstoneByte = []byte{0}
 	}
-	keyBytes := []byte(key)
-	result := keyBytes
 
+	// add size of the key
+	result := make([]byte, models.KeySizeSize+models.ValueSizeSize)
+	binary.BigEndian.PutUint64(result, keySize)
+
+	// add key
+	result = append(result, []byte(key)...)
+
+	// add size of the value
+	binary.BigEndian.PutUint64(result, valueSize)
+
+	// add value
 	result = append(result, value...)
 
+	// add tombstone
 	result = append(result, tombstoneByte...)
 
+	// add timestamp
 	timestampBytes := make([]byte, 8)
 	binary.BigEndian.PutUint64(timestampBytes, timestamp)
 	result = append(result, timestampBytes...)
@@ -59,8 +74,8 @@ func createDataForNode(key string, data *models.Data) []byte {
 /*
 get binary data and hash function and return new node with no children and hashed values
 */
-func (merkleTree *MerkleTree) createNewNode(key string, value *models.Data) (*Node, error) {
-	newData := createDataForNode(key, value)
+func (merkleTree *MerkleTree) createNewNode(value *models.DataRecord) (*Node, error) {
+	newData := createDataForNode(value)
 	values, err := merkleTree.HashWithSeed.Hash(newData)
 	if err != nil {
 		return nil, err
@@ -75,17 +90,20 @@ since merkle tree is build from bottom up we need all data as leafs
 if number of leafs is not 2**n we need to add empty nodes
 there hash wont change anything
 */
-func CreateMerkleTree(allData map[string]*models.Data, hashFunc hash.HashWithSeed) (*MerkleTree, error) {
+func CreateMerkleTree(allData []*models.DataRecord, hashFunc hash.HashWithSeed) (*MerkleTree, error) {
 	var nodes []*Node
 	var merkleTree MerkleTree
-	// if hashFunc == nil {
-	// 	hashFunc = &hash.CreateHashFunctions(1)[0]
-	// }
-	merkleTree.HashWithSeed = hash.CreateHashFunctions(1)[0]
+	empty := hash.HashWithSeed{}
+	if bytes.Equal(empty.Seed, hashFunc.Seed) {
+		hashFunc = hash.CreateHashFunctions(1)[0]
+	}
+	merkleTree.HashWithSeed = hashFunc
+
+	//merkleTree.HashWithSeed = hash.CreateHashFunctions(1)[0]
 
 	// creating all the end nodes
-	for key, data := range allData {
-		node, err := merkleTree.createNewNode(key, data)
+	for _, data := range allData {
+		node, err := merkleTree.createNewNode(data)
 		if err != nil {
 			return nil, err
 		}
@@ -99,7 +117,12 @@ func CreateMerkleTree(allData map[string]*models.Data, hashFunc hash.HashWithSee
 		targetSize := int(math.Pow(2, degree)) // ex. n is 2.3 then degree is 3 and we need 8 nodes since 2**3
 		for i := len(nodes); i < targetSize; i++ {
 			// add number of empty nodes that is needed
-			node, err := merkleTree.createNewNode("", &models.Data{Value: []byte{}, Tombstone: false, Timestamp: 0})
+			empty := &models.DataRecord{
+				Data:      &models.Data{Key: "", Value: []byte{}, Tombstone: false, Timestamp: 0},
+				KeySize:   0,
+				ValueSize: 0,
+			}
+			node, err := merkleTree.createNewNode(empty)
 			if err != nil {
 				return nil, err
 			}
