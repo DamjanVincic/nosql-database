@@ -542,7 +542,10 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 				return nil, nil
 			}
 		}
-		dataRecord := ReadDataFromFile(data, indexThinningConst, key, dataOffset)
+		dataRecord, err := ReadDataFromFile(data, indexThinningConst, key, dataOffset)
+		if err != nil {
+			return nil, err
+		}
 
 		if dataRecord != nil {
 			return dataRecord.Data, nil
@@ -673,8 +676,7 @@ func ReadIndexFromFile(bytes []byte, summaryConst uint16, key string, offset uin
 // deserialization bytes between these to locations gives us the said record we are looking for
 // param mmapFile - we do this instead passing the file or filename itself so we can use function for
 // both multi and single sile sstable, we do this for all reads
-func ReadDataFromFile(bytes []byte, indexThinningConst uint16, key string, offset uint64) *models.DataRecord {
-	bytesSize := len(bytes)
+func ReadDataFromFile(bytes []byte, indexThinningConst uint16, key string, offset uint64) (*models.DataRecord, error) {
 	dataRecordSize := uint64(0)
 	//read IndexConst number of data records
 	for i := uint16(0); i < indexThinningConst; i++ {
@@ -683,7 +685,11 @@ func ReadDataFromFile(bytes []byte, indexThinningConst uint16, key string, offse
 
 		// make sure to read complete data rec
 		dataRecordSize = RecordHeaderSize + keySize + valueSize
-		dataRecord := models.Deserialize(bytes[offset : offset+dataRecordSize])
+		dataRecord, err := models.Deserialize(bytes[offset : offset+dataRecordSize])
+		if err != nil {
+			message := fmt.Sprintf("Data from offset %d has been changed", offset)
+			return nil, errors.New(message)
+		}
 
 		// keys must be equal
 		if dataRecord.Data.Key == key {
@@ -692,10 +698,10 @@ func ReadDataFromFile(bytes []byte, indexThinningConst uint16, key string, offse
 		offset += dataRecordSize
 		// when you get to the end it means there is no match
 		if bytesSize == int(offset) {
-			return nil
+			return nil, nil
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 func GetAllMemEntries(bytes []byte) ([]*models.DataRecord, error) {
