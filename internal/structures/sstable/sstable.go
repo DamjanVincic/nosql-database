@@ -425,12 +425,19 @@ func WriteToFile(file *os.File, data []byte) error {
 
 // go through every sstable until you find the key, when its found, return its value
 func (sstable *SSTable) Get(key string) (*models.Data, error) {
+	// A wrapper to store the pointers to a few byte arrays to make the code more readable
+	var groupedData = make([]*[]byte, 5)
 
-	var mmapFileData []byte
-	var mmapFileFilter []byte
-	var mmapFileSummary []byte
-	var mmapFileIndex []byte
-	var mmapFileMeta []byte
+	var data []byte
+	groupedData[0] = &data
+	var filter []byte
+	groupedData[1] = &filter
+	var index []byte
+	groupedData[2] = &index
+	var meta []byte
+	groupedData[3] = &meta
+	var summary []byte
+	groupedData[4] = &summary
 
 	// if there is no dir to read from return nil
 	dirEntries, err := os.ReadDir(Path)
@@ -466,38 +473,35 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 			}
 			//get sizes of each part of SSTable single file
 			header := mmapFileSingle[:HeaderSize]
-			dataSize := binary.BigEndian.Uint64(header[:IndexBlockStart])
-			indexSize := binary.BigEndian.Uint64(header[IndexBlockStart:SummaryBlockStart])
-			summarySize := binary.BigEndian.Uint64(header[SummaryBlockStart:FilterBlockStart])
-			filterSize := binary.BigEndian.Uint64(header[FilterBlockStart:])
 
-			dataStart := uint64(HeaderSize)
-			indexStart := dataStart + dataSize
-			summaryStart := indexStart + indexSize
-			filterStart := summaryStart + summarySize
-			metaStart := filterStart + filterSize
+			segmentSizes := make([]uint64, 4)
+			segmentSizes[0] = binary.BigEndian.Uint64(header[:IndexBlockStart])                   // dataSize
+			segmentSizes[1] = binary.BigEndian.Uint64(header[IndexBlockStart:SummaryBlockStart])  // indexSize
+			segmentSizes[2] = binary.BigEndian.Uint64(header[SummaryBlockStart:FilterBlockStart]) // summarySize
+			segmentSizes[3] = binary.BigEndian.Uint64(header[FilterBlockStart:])                  // filterSize
+
+			// a temporary array to store indexes of each segment in the groupedData array because they're in different order than in the single file
+			var tmpIndexes = []int{0, 2, 4, 1, 3}
+
+			var segmentOffsets = make([]uint64, 5)
+			segmentOffsets[0] = uint64(HeaderSize) // dataStart
+			for idx, segmentSize := range segmentSizes {
+				segmentOffsets[idx+1] = segmentOffsets[idx] + segmentSize // segmentStarts
+			}
 
 			// same as hole mmap file in multi file sstable
 			// copy data in new slices to prevent errors after Unmap()
-			mmapFileDataPart := mmapFileSingle[dataStart:indexStart]
-			mmapFileData = make([]byte, len(mmapFileDataPart))
-			copy(mmapFileData, mmapFileDataPart)
 
-			mmapFileIndexPart := mmapFileSingle[indexStart:summaryStart]
-			mmapFileIndex = make([]byte, len(mmapFileIndexPart))
-			copy(mmapFileIndex, mmapFileIndexPart)
-
-			mmapFileSummaryPart := mmapFileSingle[summaryStart:filterStart]
-			mmapFileSummary = make([]byte, len(mmapFileSummaryPart))
-			copy(mmapFileSummary, mmapFileSummaryPart)
-
-			mmapFileFilterPart := mmapFileSingle[filterStart:metaStart]
-			mmapFileFilter = make([]byte, len(mmapFileFilterPart))
-			copy(mmapFileFilter, mmapFileFilterPart)
-
-			mmapFileMetaPart := mmapFileSingle[metaStart:]
-			mmapFileMeta = make([]byte, len(mmapFileMetaPart))
-			copy(mmapFileMeta, mmapFileMetaPart)
+			var segmentBytes []byte
+			for idx, _ := range segmentOffsets {
+				if idx == len(segmentOffsets)-1 {
+					segmentBytes = mmapFileSingle[segmentOffsets[idx]:]
+				} else {
+					segmentBytes = mmapFileSingle[segmentOffsets[idx]:segmentOffsets[idx+1]]
+				}
+				*groupedData[tmpIndexes[idx]] = make([]byte, len(segmentBytes))
+				copy(*groupedData[tmpIndexes[idx]], segmentBytes)
+			}
 
 			// close the file
 			err = mmapFileSingle.Unmap()
@@ -509,103 +513,32 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 				return nil, err
 			}
 		} else {
-			// paths : sstable\\sstableN\\sst_00001_1_part.db
-			dataFilePath := filepath.Join(subDirPath, subDirEntries[0].Name())
-			filterFilePath := filepath.Join(subDirPath, subDirEntries[1].Name())
-			indexFilePath := filepath.Join(subDirPath, subDirEntries[2].Name())
-			metaFilePath := filepath.Join(subDirPath, subDirEntries[3].Name())
-			summaryFilePath := filepath.Join(subDirPath, subDirEntries[4].Name())
-			// tocFilePath := filepath.Join(subDirPath, subDirEntries[5].Name())
+			// paths : sstable\\01_sstable_00001\\part.db
 
 			// in the next part we are doing the copying in case mmap acts unexpectedly after file is closed
 			// get data file to read
-			dataFile, err := os.OpenFile(dataFilePath, os.O_RDWR, 0644)
-			if err != nil {
-				return nil, err
-			}
-			mmapFileDataPart, err := mmap.Map(dataFile, mmap.RDWR, 0)
-			if err != nil {
-				return nil, err
-			}
-			mmapFileData = make([]byte, len(mmapFileDataPart))
-			copy(mmapFileData, mmapFileDataPart)
-			if err = mmapFileDataPart.Unmap(); err != nil {
-				return nil, err
-			}
-			if err = dataFile.Close(); err != nil {
-				return nil, err
-			}
+			for idx, dirEntry := range subDirEntries {
+				// toc file - This should be removed along the TOC
+				if idx == len(subDirEntries)-1 {
+					break
+				}
 
-			// get filter to read
-			filterFile, err := os.OpenFile(filterFilePath, os.O_RDWR, 0644)
-			if err != nil {
-				return nil, err
-			}
-			mmapFileFilterPart, err := mmap.Map(filterFile, mmap.RDONLY, 0)
-			if err != nil {
-				return nil, err
-			}
-			mmapFileFilter = make([]byte, len(mmapFileFilterPart))
-			copy(mmapFileFilter, mmapFileFilterPart)
-			if err = mmapFileFilterPart.Unmap(); err != nil {
-				return nil, err
-			}
-			if err = filterFile.Close(); err != nil {
-				return nil, err
-			}
-
-			// get index file to read
-			indexFile, err := os.OpenFile(indexFilePath, os.O_RDWR, 0644)
-			if err != nil {
-				return nil, err
-			}
-			mmapFileIndexPart, err := mmap.Map(indexFile, mmap.RDWR, 0)
-			if err != nil {
-				return nil, err
-			}
-			mmapFileIndex = make([]byte, len(mmapFileIndexPart))
-			copy(mmapFileIndex, mmapFileIndexPart)
-			if err = mmapFileIndexPart.Unmap(); err != nil {
-				return nil, err
-			}
-			if err = indexFile.Close(); err != nil {
-				return nil, err
-			}
-
-			// get summary file to read
-			summaryFile, err := os.OpenFile(summaryFilePath, os.O_RDWR, 0644)
-			if err != nil {
-				return nil, err
-			}
-			mmapFileSummaryPart, err := mmap.Map(summaryFile, mmap.RDWR, 0)
-			if err != nil {
-				return nil, err
-			}
-			mmapFileSummary = make([]byte, len(mmapFileSummaryPart))
-			copy(mmapFileSummary, mmapFileSummaryPart)
-			if err = mmapFileSummaryPart.Unmap(); err != nil {
-				return nil, err
-			}
-			if err = summaryFile.Close(); err != nil {
-				return nil, err
-			}
-
-			// get metadata file to read
-			metaFile, err := os.OpenFile(metaFilePath, os.O_RDWR, 0644)
-			if err != nil {
-				return nil, err
-			}
-			mmapFileMetaPart, err := mmap.Map(metaFile, mmap.RDWR, 0)
-			if err != nil {
-				return nil, err
-			}
-			mmapFileMeta = make([]byte, len(mmapFileMetaPart))
-			copy(mmapFileMeta, mmapFileMetaPart)
-			if err = mmapFileMetaPart.Unmap(); err != nil {
-				return nil, err
-			}
-			if err = metaFile.Close(); err != nil {
-				return nil, err
+				file, err := os.OpenFile(filepath.Join(subDirPath, dirEntry.Name()), os.O_RDWR, 0644)
+				if err != nil {
+					return nil, err
+				}
+				mmapFile, err := mmap.Map(file, mmap.RDWR, 0)
+				if err != nil {
+					return nil, err
+				}
+				*groupedData[idx] = make([]byte, len(mmapFile))
+				copy(*groupedData[idx], mmapFile)
+				if err = mmapFile.Unmap(); err != nil {
+					return nil, err
+				}
+				if err = file.Close(); err != nil {
+					return nil, err
+				}
 			}
 
 			// tocFile, err := os.OpenFile(tocFilePath, os.O_RDWR, 0644)
@@ -616,14 +549,14 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 			// }
 		}
 
-		_, err = compareMerkleTrees(mmapFileMeta, mmapFileData)
+		_, err = compareMerkleTrees(meta, data)
 		if err != nil {
 			return nil, err
 		}
 
 		// start process for getting the element
 		// first we need to check if its in bloom filter
-		found, err := ReadBloomFilterFromFile(key, mmapFileFilter)
+		found, err := ReadBloomFilterFromFile(key, filter)
 		if err != nil {
 			return nil, err
 		}
@@ -634,17 +567,17 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 		}
 
 		//check if its in summary range (between min and max index)
-		indexOffset, summaryThinningConst, err := ReadSummaryFromFile(mmapFileSummary, key)
+		indexOffset, summaryThinningConst, err := ReadSummaryFromFile(summary, key)
 		if err != nil {
 			i--
 			continue
 		}
 
 		//check if its in index
-		dataOffset, indexThinningConst := ReadIndexFromFile(mmapFileIndex, summaryThinningConst, key, indexOffset)
+		dataOffset, indexThinningConst := ReadIndexFromFile(index, summaryThinningConst, key, indexOffset)
 
 		//find it in data
-		dataRecord := ReadDataFromFile(mmapFileData, indexThinningConst, key, dataOffset)
+		dataRecord := ReadDataFromFile(data, indexThinningConst, key, dataOffset)
 
 		if dataRecord != nil {
 			return dataRecord.Data, nil
