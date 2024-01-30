@@ -15,6 +15,7 @@ import (
 )
 
 const (
+	CrcSize       = 4
 	TimestampSize = 8
 	TombstoneSize = 1
 	KeySizeSize   = 8
@@ -22,12 +23,13 @@ const (
 	ValueSizeSize = 8
 
 	//for dataRecord
-	TimestampStart     = 0
+	CrcStart           = 0
+	TimestampStart     = CrcStart + CrcSize
 	TombstoneStart     = TimestampStart + TimestampSize
 	DataKeySizeStart   = TombstoneStart + TombstoneSize
 	DataValueSizeStart = DataKeySizeStart + KeySizeSize
 	DataKeyStart       = DataValueSizeStart + ValueSizeSize
-	RecordHeaderSize   = TimestampSize + TombstoneSize + KeySizeSize + ValueSizeSize
+	RecordHeaderSize   = CrcSize + TimestampSize + TombstoneSize + KeySizeSize + ValueSizeSize
 
 	//for indexRecord
 	KeySizeStart = 0
@@ -247,7 +249,7 @@ func (sstable *SSTable) createFiles(memEntries []*models.Data, singleFile bool, 
 
 		dataRecord := *models.NewDataRecord(entry)
 		merkleDataRecords = append(merkleDataRecords, &dataRecord)
-		serializedRecord := dataRecord.Serialize()
+		serializedRecord := dataRecord.Serialize(false)
 		sizeOfDR = uint64(len(serializedRecord))
 		dataRecords = append(dataRecords, serializedRecord...)
 
@@ -680,12 +682,21 @@ func ReadDataFromFile(bytes []byte, indexThinningConst uint16, key string, offse
 	dataRecordSize := uint64(0)
 	//read IndexConst number of data records
 	for i := uint16(0); i < indexThinningConst; i++ {
+		tombstone := bytes[offset+TombstoneStart] == 1
 		keySize := binary.BigEndian.Uint64(bytes[offset+DataKeySizeStart : offset+DataValueSizeStart])
-		valueSize := binary.BigEndian.Uint64(bytes[offset+DataValueSizeStart : offset+DataKeyStart])
+		var valueSize uint64
+		if !tombstone {
+			valueSize = binary.BigEndian.Uint64(bytes[offset+DataValueSizeStart : offset+DataKeyStart])
+		} else {
+			valueSize = 0
+		}
 
 		// make sure to read complete data rec
 		dataRecordSize = RecordHeaderSize + keySize + valueSize
-		dataRecord, err := models.Deserialize(bytes[offset : offset+dataRecordSize])
+		if tombstone {
+			dataRecordSize -= ValueSizeSize
+		}
+		dataRecord, err := models.Deserialize(bytes[offset:offset+dataRecordSize], false)
 		if err != nil {
 			message := fmt.Sprintf("Data from offset %d has been changed", offset)
 			return nil, errors.New(message)
@@ -693,11 +704,11 @@ func ReadDataFromFile(bytes []byte, indexThinningConst uint16, key string, offse
 
 		// keys must be equal
 		if dataRecord.Data.Key == key {
-			return dataRecord
+			return dataRecord, nil
 		}
 		offset += dataRecordSize
 		// when you get to the end it means there is no match
-		if bytesSize == int(offset) {
+		if len(bytes) == int(offset) {
 			return nil, nil
 		}
 	}
@@ -716,7 +727,11 @@ func GetAllMemEntries(bytes []byte) ([]*models.DataRecord, error) {
 
 		// make sure to read complete data rec
 		dataRecordSize = RecordHeaderSize + keySize + valueSize
-		dataRecord := models.Deserialize(bytes[offset : offset+dataRecordSize])
+		dataRecord, err := models.Deserialize(bytes[offset:offset+dataRecordSize], false)
+		if err != nil {
+			return nil, err
+		}
+
 		entries = append(entries, dataRecord)
 		offset += dataRecordSize
 		// when you get to the end it means there is no match
