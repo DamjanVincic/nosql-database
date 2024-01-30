@@ -68,7 +68,6 @@ const (
 	SummaryFileName = "summary"
 	FilterFileName  = "filter"
 	MetaFileName    = "meta"
-	TocFileName     = "toc"
 	SingleFileName  = "single"
 
 	//for toc file header (contains lengths of filenames sizes)
@@ -77,10 +76,9 @@ const (
 
 /*
 same struct for SSTable single and multi-file implementation
-
-	for single - filename is the name of the TOC file which contains filenames of data, index, summary, filter and meta file
-	for multi - filename is the name of the only file which contains data, index, summary, filter and meta blocks
-	there are same functions for both implementations, not separate ones
+  - indexConst and summaryConst are index and summary thinning constants
+  - single file is bool value from configuration file which tells which implementation user has picked
+    if singleFile==true then we create single SSTable file, otherwise multi
 */
 type SSTable struct {
 	indexConst   uint16
@@ -120,8 +118,6 @@ func (sstable *SSTable) Write(memEntries []*models.Data) error {
 	var summaryFilename string
 	var filterFilename string
 	var metadataFilename string
-	var tocFilename string
-	//var filename string
 
 	// temporarly the lsm index is set to 1
 	lsmIndex := uint8(1)
@@ -131,7 +127,7 @@ func (sstable *SSTable) Write(memEntries []*models.Data) error {
 	one subdir = one sstable
 	same names for both implementations, no difference
 	the difference is in the number of files in subdir
-	for multi - 6, for single - 1 */
+	for multi - 5, for single - 1 */
 	var subdirPath string
 	var subdirName string
 
@@ -183,16 +179,15 @@ func (sstable *SSTable) Write(memEntries []*models.Data) error {
 		summaryFilename = fmt.Sprintf("%s.db", SummaryFileName)
 		filterFilename = fmt.Sprintf("%s.db", FilterFileName)
 		metadataFilename = fmt.Sprintf("%s.db", MetaFileName)
-		tocFilename = fmt.Sprintf("%s.db", TocFileName)
 
-		fileNames := []string{dataFilename, indexFilename, summaryFilename, filterFilename, metadataFilename, tocFilename}
+		fileNames := []string{dataFilename, indexFilename, summaryFilename, filterFilename, metadataFilename}
 		var filePaths []string
 		for _, fileName := range fileNames {
 			filePaths = append(filePaths, filepath.Join(subdirPath, fileName))
 		}
 
 		//create files
-		err = sstable.createFiles(memEntries, sstable.singleFile, filePaths) //, tocFile)
+		err = sstable.createFiles(memEntries, sstable.singleFile, filePaths)
 		if err != nil {
 			return err
 		}
@@ -201,10 +196,10 @@ func (sstable *SSTable) Write(memEntries []*models.Data) error {
 	}
 }
 
-// we distinguish implementations by the singleFile value (and the num of params, 1 for single, 6 for multi)
+// we distinguish implementations by the singleFile value (and the num of params, 1 for single, 5 for multi)
 func (sstable *SSTable) createFiles(memEntries []*models.Data, singleFile bool, filePaths []string) error {
 	// Just a wrapper to store the pointers to a few byte arrays to make the code more readable
-	var groupedData = make([]*[]byte, 6)
+	var groupedData = make([]*[]byte, 5)
 
 	// variables for storing serialized data
 	var data []byte
@@ -213,8 +208,6 @@ func (sstable *SSTable) createFiles(memEntries []*models.Data, singleFile bool, 
 	var indexRecords = make([]byte, IndexConstSize)
 	groupedData[1] = &indexRecords
 	var summaryRecords []byte
-	var tocData []byte
-	groupedData[5] = &tocData
 	// append index thinning const to indexRecords data
 	binary.BigEndian.PutUint16(indexRecords[:IndexConstSize], sstable.indexConst)
 	// in summary header we have min and max index record (ranked by key)
@@ -342,10 +335,8 @@ func (sstable *SSTable) createFiles(memEntries []*models.Data, singleFile bool, 
 	} else {
 		/*
 			for multi file implementation
-			create TOC file data - names of all sstable files
 			write data to dataFile, indexData to indexFile... each block in a separate file
 		*/
-		tocData = createTocData(filePaths)
 		for idx, fileName := range filePaths {
 			file, err := os.OpenFile(fileName, os.O_CREATE|os.O_RDWR, 0644)
 			if err != nil {
@@ -371,27 +362,6 @@ func addToIndex(offset uint64, entry *models.Data, result *[]byte) []byte {
 	serializedIndexRecord := indexRecord.SerializeIndexRecord()
 	*result = append(*result, serializedIndexRecord...)
 	return serializedIndexRecord
-}
-
-// TOC file contains filenames of all sstable parts - data, index, summary, filter, metadata
-func createTocData(filePaths []string) []byte {
-	// reserve places for sizes of filenames
-	fileNameLength := make([]byte, FileNamesSizeSize)
-
-	var data []byte
-
-	// put sizes in created byte array
-	for _, filePath := range filePaths {
-		binary.BigEndian.PutUint64(fileNameLength, uint64(len(filepath.Base(filePath))))
-		data = append(data, fileNameLength...)
-	}
-
-	// add all data together
-	for _, filePath := range filePaths {
-		data = append(data, []byte(filepath.Base(filePath))...)
-	}
-
-	return data
 }
 
 // write data to file using mmap
@@ -519,8 +489,7 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 			// in the next part we are doing the copying in case mmap acts unexpectedly after file is closed
 			// get data file to read
 			for idx, dirEntry := range subDirEntries {
-				// toc file - This should be removed along the TOC
-				if idx == len(subDirEntries)-1 {
+				if idx == len(subDirEntries) {
 					break
 				}
 
@@ -541,13 +510,6 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 					return nil, err
 				}
 			}
-
-			// tocFile, err := os.OpenFile(tocFilePath, os.O_RDWR, 0644)
-
-			// err = tocFile.Close()
-			// if err != nil {
-			// 	return nil, err
-			// }
 		}
 
 		_, err = compareMerkleTrees(meta, data)
@@ -585,42 +547,6 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 		}
 		i--
 	}
-}
-
-// read filenames from TOC file
-func ReadFromToc(tocfile string) ([]string, error) {
-	tocFile, err := os.OpenFile(tocfile, os.O_RDWR, 0664)
-	if err != nil {
-		return nil, err
-	}
-	defer tocFile.Close()
-
-	mmapFile, err := mmap.Map(tocFile, mmap.RDWR, 0)
-	if err != nil {
-		return nil, err
-	}
-	defer mmapFile.Unmap()
-
-	// Read sizes
-	dataSize := binary.BigEndian.Uint64(mmapFile[:FileNamesSizeSize])
-	indexSize := binary.BigEndian.Uint64(mmapFile[FileNamesSizeSize : 2*FileNamesSizeSize])
-	summarySize := binary.BigEndian.Uint64(mmapFile[2*FileNamesSizeSize : 3*FileNamesSizeSize])
-	filterSize := binary.BigEndian.Uint64(mmapFile[3*FileNamesSizeSize : 4*FileNamesSizeSize])
-
-	dataStart := uint64(HeaderSize)
-	indexStart := dataStart + dataSize
-	summaryStart := indexStart + indexSize
-	filterStart := summaryStart + summarySize
-	metaStart := filterStart + filterSize
-
-	// read each filename
-	dataFile := string(mmapFile[dataStart:indexStart])
-	indexFile := string(mmapFile[indexStart:summaryStart])
-	summaryFile := string(mmapFile[summaryStart:filterStart])
-	filterFile := string(mmapFile[filterStart:metaStart])
-	metadataFile := string(mmapFile[metaStart:])
-
-	return []string{dataFile, indexFile, summaryFile, filterFile, metadataFile}, nil
 }
 
 // mmapFile in case of multi file sstable will be the hole file
