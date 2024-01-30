@@ -4,13 +4,14 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
+
 	"github.com/DamjanVincic/key-value-engine/internal/models"
 	"github.com/DamjanVincic/key-value-engine/internal/structures/bloomfilter"
 	"github.com/DamjanVincic/key-value-engine/internal/structures/merkle"
 	"github.com/edsrzf/mmap-go"
-	"os"
-	"path/filepath"
-	"strconv"
 )
 
 const (
@@ -130,7 +131,7 @@ func (sstable *SSTable) Write(memEntries []*models.Data) error {
 	one subdir = one sstable
 	same names for both implementations, no difference
 	the difference is in the number of files in subdir
-	for multi - 6, mor single - 1 */
+	for multi - 6, for single - 1 */
 	var subdirPath string
 	var subdirName string
 
@@ -269,13 +270,13 @@ func (sstable *SSTable) createFiles(memEntries []*models.Data, singleFile bool, 
 				sizeOfSR = uint64(len(serializedSummaryRecord))
 				summaryBlockSize += sizeOfSR
 				if summaryMin == "" {
-					summaryMin = dataRecord.Data.Key
+					summaryMin = entry.Key
 				}
 			}
 			indexOffset += sizeOfIR
 			countIndexRecords++
 		}
-		summaryMax = dataRecord.Data.Key
+		summaryMax = entry.Key
 		//add key to bf
 		err := filter.AddElement([]byte(entry.Key))
 		if err != nil {
@@ -493,7 +494,7 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 			// copy data in new slices to prevent errors after Unmap()
 
 			var segmentBytes []byte
-			for idx, _ := range segmentOffsets {
+			for idx := range segmentOffsets {
 				if idx == len(segmentOffsets)-1 {
 					segmentBytes = mmapFileSingle[segmentOffsets[idx]:]
 				} else {

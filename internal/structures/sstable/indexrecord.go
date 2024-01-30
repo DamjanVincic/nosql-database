@@ -2,6 +2,7 @@ package sstable
 
 import (
 	"encoding/binary"
+
 	"github.com/DamjanVincic/key-value-engine/internal/models"
 )
 
@@ -22,7 +23,7 @@ func NewIndexRecord(memEntry *models.Data, offset uint64) *IndexRecord {
 func (indexRecord *IndexRecord) SerializeIndexRecord() []byte {
 
 	// 8 bytes for Offset and Keysize
-	bytes := make([]byte, indexRecord.keySize+16)
+	bytes := make([]byte, KeySizeSize+indexRecord.keySize+OffsetSize)
 
 	// Serialize KeySize (8 bytes, BigEndian)
 	binary.BigEndian.PutUint64(bytes, indexRecord.keySize)
