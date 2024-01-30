@@ -399,15 +399,15 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 	// A wrapper to store the pointers to a few byte arrays to make the code more readable
 	var groupedData = make([]*[]byte, 5)
 
-	var data []byte
+	data := make([]byte, 0)
 	groupedData[0] = &data
-	var filter []byte
+	filter := make([]byte, 0)
 	groupedData[1] = &filter
-	var index []byte
+	index := make([]byte, 0)
 	groupedData[2] = &index
-	var meta []byte
+	meta := make([]byte, 0)
 	groupedData[3] = &meta
-	var summary []byte
+	summary := make([]byte, 0)
 	groupedData[4] = &summary
 
 	// if there is no dir to read from return nil
@@ -418,20 +418,28 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 
 	// search for the key from the newest to the oldest sstable
 	// i variable will be increment each time as long as its not equal to the len of dirEntries
-	i := len(dirEntries) - 1
+	dirSize := len(dirEntries) - 1
+	i := dirSize
 	for {
+		// if key is not found in first sstable, delete previous data in order to read multi-file implemented sstable correctly
+		if i != dirSize {
+			for idx := range groupedData {
+				*groupedData[idx] = make([]byte, 0)
+			}
+		}
 		if i < 0 {
 			return nil, errors.New("key not found")
 		}
 		subDirName := dirEntries[i].Name()
 		subDirPath := filepath.Join(Path, subDirName)
 		subDirEntries, err := os.ReadDir(subDirPath)
+		subDirSize := len(subDirEntries)
 		if os.IsNotExist(err) {
 			return nil, err
 		}
 
 		// search the single file if len == 1, otherwise multi files
-		if len(subDirEntries) == 1 {
+		if subDirSize == 1 {
 			// get the data from single file sstable
 			singleFilePath := filepath.Join(subDirPath, subDirEntries[0].Name())
 			singleFile, err := os.OpenFile(singleFilePath, os.O_RDWR, 0644)
@@ -483,42 +491,17 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 			if err != nil {
 				return nil, err
 			}
-		} else {
-			// paths : sstable\\01_sstable_00001\\part.db
-
-			// in the next part we are doing the copying in case mmap acts unexpectedly after file is closed
-			// get data file to read
-			for idx, dirEntry := range subDirEntries {
-				if idx == len(subDirEntries) {
-					break
-				}
-
-				file, err := os.OpenFile(filepath.Join(subDirPath, dirEntry.Name()), os.O_RDWR, 0644)
-				if err != nil {
-					return nil, err
-				}
-				mmapFile, err := mmap.Map(file, mmap.RDWR, 0)
-				if err != nil {
-					return nil, err
-				}
-				*groupedData[idx] = make([]byte, len(mmapFile))
-				copy(*groupedData[idx], mmapFile)
-				if err = mmapFile.Unmap(); err != nil {
-					return nil, err
-				}
-				if err = file.Close(); err != nil {
-					return nil, err
-				}
-			}
-		}
-
-		_, err = compareMerkleTrees(meta, data)
-		if err != nil {
-			return nil, err
 		}
 
 		// start process for getting the element
+		//if its not singleFile we need to read multifiles one by one
 		// first we need to check if its in bloom filter
+		if subDirSize != 1 {
+			*groupedData[1], err = ReadMultiFilePart(filepath.Join(subDirPath, subDirEntries[1].Name()))
+			if err != nil {
+				return nil, nil
+			}
+		}
 		found, err := ReadBloomFilterFromFile(key, filter)
 		if err != nil {
 			return nil, err
@@ -530,6 +513,13 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 		}
 
 		//check if its in summary range (between min and max index)
+		if subDirSize != 1 {
+			*groupedData[4], err = ReadMultiFilePart(filepath.Join(subDirPath, subDirEntries[4].Name()))
+			if err != nil {
+				return nil, nil
+			}
+		}
+
 		indexOffset, summaryThinningConst, err := ReadSummaryFromFile(summary, key)
 		if err != nil {
 			i--
@@ -537,9 +527,21 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 		}
 
 		//check if its in index
+		if subDirSize != 1 {
+			*groupedData[2], err = ReadMultiFilePart(filepath.Join(subDirPath, subDirEntries[2].Name()))
+			if err != nil {
+				return nil, nil
+			}
+		}
 		dataOffset, indexThinningConst := ReadIndexFromFile(index, summaryThinningConst, key, indexOffset)
 
 		//find it in data
+		if subDirSize != 1 {
+			*groupedData[0], err = ReadMultiFilePart(filepath.Join(subDirPath, subDirEntries[0].Name()))
+			if err != nil {
+				return nil, nil
+			}
+		}
 		dataRecord := ReadDataFromFile(data, indexThinningConst, key, dataOffset)
 
 		if dataRecord != nil {
@@ -547,6 +549,26 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 		}
 		i--
 	}
+}
+
+func ReadMultiFilePart(filepath string) ([]byte, error) {
+	file, err := os.OpenFile(filepath, os.O_RDWR, 0644)
+	if err != nil {
+		return nil, err
+	}
+	mmapFile, err := mmap.Map(file, mmap.RDWR, 0)
+	if err != nil {
+		return nil, err
+	}
+	bytes := make([]byte, len(mmapFile))
+	copy(bytes, mmapFile)
+	if err = mmapFile.Unmap(); err != nil {
+		return nil, err
+	}
+	if err = file.Close(); err != nil {
+		return nil, err
+	}
+	return bytes, nil
 }
 
 // mmapFile in case of multi file sstable will be the hole file
