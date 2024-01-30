@@ -36,7 +36,7 @@ func (indexRecord *IndexRecord) SerializeIndexRecord() []byte {
 	return bytes
 }
 
-func DeserializeIndexRecord(bytes []byte) (*IndexRecord, error) {
+func DeserializeIndexRecord(bytes []byte) *IndexRecord {
 	// Deserialize KeySize (8 bytes, BigEndian)
 	keySize := binary.BigEndian.Uint64(bytes[KeySizeStart:KeySizeSize])
 
@@ -50,5 +50,5 @@ func DeserializeIndexRecord(bytes []byte) (*IndexRecord, error) {
 		Key:     key,
 		keySize: keySize,
 		Offset:  offset,
-	}, nil
+	}
 }
