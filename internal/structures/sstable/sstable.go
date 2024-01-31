@@ -245,7 +245,7 @@ func (sstable *SSTable) createFiles(memEntries []*models.Data, singleFile bool, 
 
 		dataRecord := *models.NewDataRecord(entry)
 		merkleDataRecords = append(merkleDataRecords, &dataRecord)
-		serializedRecord := dataRecord.Serialize(false)
+		serializedRecord := dataRecord.Serialize()
 		sizeOfDR = uint64(len(serializedRecord))
 		dataRecords = append(dataRecords, serializedRecord...)
 
@@ -743,7 +743,7 @@ func readDataFromFile(mmapFile mmap.MMap, indexThinningConst uint16, key string,
 		if tombstone {
 			dataRecordSize -= ValueSizeSize
 		}
-		dataRecord, err := models.Deserialize(mmapFile[offset:offset+dataRecordSize], false)
+		dataRecord, err := models.Deserialize(mmapFile[offset : offset+dataRecordSize])
 		if err != nil {
 			return nil, err
 		}
@@ -779,7 +779,7 @@ func getAllMemEntries(mmapFile mmap.MMap) ([]*models.DataRecord, error) {
 		if tombstone {
 			dataRecordSize -= ValueSizeSize
 		}
-		dataRecord, _ := models.Deserialize(mmapFile[offset:offset+dataRecordSize], false)
+		dataRecord, _ := models.Deserialize(mmapFile[offset : offset+dataRecordSize])
 		// ignore for merkle
 		//if err != nil {
 		//	return nil, err

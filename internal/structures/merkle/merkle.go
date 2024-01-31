@@ -35,7 +35,7 @@ type Node struct {
 get binary data and hash function and return new node with no children and hashed values
 */
 func (merkleTree *MerkleTree) createNewNode(value *models.DataRecord) (*Node, error) {
-	newData := value.Serialize(false)
+	newData := value.Serialize()
 	values, err := merkleTree.HashWithSeed.Hash(newData)
 	if err != nil {
 		return nil, err
