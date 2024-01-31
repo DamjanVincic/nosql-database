@@ -796,6 +796,21 @@ func readMetaFromFile(mmapFile mmap.MMap) *merkle.MerkleTree {
 	return merkle.DeserializeMerkle(mmapFile)
 }
 
+func RemoveSSTable(filenames []string) error {
+	for i := range filenames {
+		err := os.Chmod(filenames[i], 0777) // Change permissions to allow deletion
+		if err != nil {
+			return err
+		}
+
+		err = os.RemoveAll(filenames[i])
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Frdr testing rikvajrd
 // subDirName - 01_sstable_00001
 func (sstable *SSTable) CheckDataValidity(subDirName string) ([]*models.Data, error) {
