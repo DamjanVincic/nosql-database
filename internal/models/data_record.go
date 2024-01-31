@@ -255,7 +255,7 @@ func DeserializeWithCompression(bytes []byte, encoder key_encoder.KeyEncoder) (r
 		copy(value, bytes[offset:])
 	}
 
-	dataRecord := &DataRecord{
+	record = &DataRecord{
 		Data: &Data{
 			Key:       key,
 			Value:     value,
@@ -266,12 +266,13 @@ func DeserializeWithCompression(bytes []byte, encoder key_encoder.KeyEncoder) (r
 		KeySize:   keySize,
 		ValueSize: valueSize,
 	}
+	//check implementation of crc creation!
 
-	// Check if the CRC matches
-	if uint32(crc) != crc32.ChecksumIEEE(bytes[TimestampStart:]) {
-		// return dataRecord anyway for merkle
-		return dataRecord, errors.New("CRC does not match")
-	} else {
-		return dataRecord, nil
-	}
+	//// Check if the CRC matches
+	//if uint32(crc) != crc32.ChecksumIEEE(bytes[TimestampStart:]) {
+	//	// return dataRecord anyway for merkle
+	//	return dataRecord, errors.New("CRC does not match")
+	//} else {
+	//	return dataRecord, nil
+	//}
 }
