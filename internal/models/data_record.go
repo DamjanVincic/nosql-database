@@ -133,7 +133,7 @@ func (dataRecord *DataRecord) SerializeWithCompression(encoder *key_encoder.KeyE
 	timestampBytesSize = binary.PutUvarint(timestampBytes, dataRecord.Data.Timestamp)
 
 	// encode Key and serialize encoded value
-	keyBytesSize = binary.PutUvarint(keyBytes, encoder.GetKey(dataRecord.Data.Key))
+	keyBytesSize = binary.PutUvarint(keyBytes, encoder.GetEncoded(dataRecord.Data.Key))
 
 	if !dataRecord.Data.Tombstone {
 		valueSizeBytes = make([]byte, binary.MaxVarintLen64)
@@ -209,6 +209,66 @@ func Deserialize(bytes []byte) (*DataRecord, error) {
 
 	// Check if the CRC matches
 	if crc != crc32.ChecksumIEEE(bytes[TimestampStart:]) {
+		// return dataRecord anyway for merkle
+		return dataRecord, errors.New("CRC does not match")
+	} else {
+		return dataRecord, nil
+	}
+}
+
+func DeserializeWithCompression(bytes []byte, encoder key_encoder.KeyEncoder) (record *DataRecord, err error) {
+	record = nil
+	err = nil
+
+	var crc uint64
+	var timestamp uint64
+	var encodedKey uint64
+	var valueSize uint64
+	var keySize uint64
+	var value []byte
+
+	var offsetStep int //used for storing number of bytes read when reading variant-encoded values
+	offset := 0
+
+	crc, offsetStep = binary.Uvarint(bytes[offset:])
+	offset += offsetStep
+
+	timestamp, offsetStep = binary.Uvarint(bytes[offset:])
+	offset += offsetStep
+
+	tombstone := bytes[offset] == 1
+	offset++
+
+	encodedKey, offsetStep = binary.Uvarint(bytes[offset:])
+	offset += offsetStep
+
+	key, err := encoder.GetKey(encodedKey)
+	if err != nil {
+		return
+	}
+
+	if !tombstone {
+		valueSize, offsetStep = binary.Uvarint(bytes[offset:])
+		offset += offsetStep
+
+		value = make([]byte, valueSize)
+		copy(value, bytes[offset:])
+	}
+
+	dataRecord := &DataRecord{
+		Data: &Data{
+			Key:       key,
+			Value:     value,
+			Tombstone: tombstone,
+			Timestamp: timestamp,
+		},
+		Crc:       uint32(crc),
+		KeySize:   keySize,
+		ValueSize: valueSize,
+	}
+
+	// Check if the CRC matches
+	if uint32(crc) != crc32.ChecksumIEEE(bytes[TimestampStart:]) {
 		// return dataRecord anyway for merkle
 		return dataRecord, errors.New("CRC does not match")
 	} else {
