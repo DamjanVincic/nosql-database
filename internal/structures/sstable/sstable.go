@@ -412,6 +412,16 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 	var summary []byte
 	groupedData[4] = &summary
 
+	// Storage for offsets in case of single file
+	var dataStart uint64
+	var indexStart uint64
+	var summaryStart uint64
+	var filterStart uint64
+	var metaStart uint64
+
+	var singleFile *os.File
+	var mmapSingleFile mmap.MMap
+
 	// if there is no dir to read from return nil
 	dirEntries, err := os.ReadDir(Path)
 	if os.IsNotExist(err) {
@@ -423,7 +433,6 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 	dirSize := len(dirEntries) - 1
 	i := dirSize
 	for {
-		// if key is not found in first sstable, delete previous data in order to read multi-file implemented sstable correctly
 		if i < 0 {
 			return nil, errors.New("key not found")
 		}
@@ -439,107 +448,108 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 		if subDirSize == 1 {
 			// get the data from single file sstable
 			singleFilePath := filepath.Join(subDirPath, subDirEntries[0].Name())
-			singleFile, err := os.OpenFile(singleFilePath, os.O_RDWR, 0644)
+			singleFile, err = os.OpenFile(singleFilePath, os.O_RDWR, 0644)
 			if err != nil {
 				return nil, err
 			}
-			mmapFileSingle, err := mmap.Map(singleFile, mmap.RDWR, 0)
+			mmapSingleFile, err = mmap.Map(singleFile, mmap.RDWR, 0)
 			if err != nil {
 				return nil, err
 			}
+
 			//get sizes of each part of SSTable single file
-			header := mmapFileSingle[:HeaderSize]
+			header := mmapSingleFile[:HeaderSize]
 
-			segmentSizes := make([]uint64, 4)
-			segmentSizes[0] = binary.BigEndian.Uint64(header[:IndexBlockStart])                   // dataSize
-			segmentSizes[1] = binary.BigEndian.Uint64(header[IndexBlockStart:SummaryBlockStart])  // indexSize
-			segmentSizes[2] = binary.BigEndian.Uint64(header[SummaryBlockStart:FilterBlockStart]) // summarySize
-			segmentSizes[3] = binary.BigEndian.Uint64(header[FilterBlockStart:])                  // filterSize
+			dataSize := binary.BigEndian.Uint64(header[:IndexBlockStart])                      // dataSize
+			indexSize := binary.BigEndian.Uint64(header[IndexBlockStart:SummaryBlockStart])    // indexSize
+			summarySize := binary.BigEndian.Uint64(header[SummaryBlockStart:FilterBlockStart]) // summarySize
+			filterSize := binary.BigEndian.Uint64(header[FilterBlockStart:])                   // filterSize
 
-			// a temporary array to store indexes of each segment in the groupedData array because they're in different order than in the single file
-			var tmpIndexes = []int{0, 2, 4, 1, 3}
-
-			var segmentOffsets = make([]uint64, 5)
-			segmentOffsets[0] = uint64(HeaderSize) // dataStart
-			for idx, segmentSize := range segmentSizes {
-				segmentOffsets[idx+1] = segmentOffsets[idx] + segmentSize // segmentStarts
-			}
-
-			// same as hole mmap file in multi file sstable
-			// copy data in new slices to prevent errors after Unmap()
-
-			var segmentBytes []byte
-			for idx := range segmentOffsets {
-				if idx == len(segmentOffsets)-1 {
-					segmentBytes = mmapFileSingle[segmentOffsets[idx]:]
-				} else {
-					segmentBytes = mmapFileSingle[segmentOffsets[idx]:segmentOffsets[idx+1]]
-				}
-				*groupedData[tmpIndexes[idx]] = make([]byte, len(segmentBytes))
-				copy(*groupedData[tmpIndexes[idx]], segmentBytes)
-			}
-
-			// close the file
-			err = mmapFileSingle.Unmap()
-			if err != nil {
-				return nil, err
-			}
-			err = singleFile.Close()
-			if err != nil {
-				return nil, err
-			}
+			dataStart = uint64(HeaderSize)
+			indexStart = dataStart + dataSize
+			summaryStart = indexStart + indexSize
+			filterStart = summaryStart + summarySize
+			metaStart = filterStart + filterSize
 		}
 
 		// start process for getting the element
 		//if its not singleFile we need to read multifiles one by one
 		// first we need to check if its in bloom filter
-		if subDirSize != 1 {
-			*groupedData[1], err = readMultiFilePart(filepath.Join(subDirPath, subDirEntries[1].Name()))
+		if subDirSize == 1 {
+			filter = mmapSingleFile[filterStart:metaStart]
+		} else {
+			filter, err = readMultiFilePart(filepath.Join(subDirPath, subDirEntries[1].Name()))
 			if err != nil {
 				return nil, nil
 			}
 		}
-		found, err := readBloomFilterFromFile(key, filter)
+		found, err := readBloomFilterFromBytes(key, filter)
 		if err != nil {
 			return nil, err
 		}
 		// if its not found, check next sstable
 		if !found {
 			i--
+			if subDirSize == 1 {
+				err = mmapSingleFile.Unmap()
+				if err != nil {
+					return nil, err
+				}
+				err = singleFile.Close()
+				if err != nil {
+					return nil, err
+				}
+			}
 			continue
 		}
 
 		//check if its in summary range (between min and max index)
-		if subDirSize != 1 {
-			*groupedData[4], err = readMultiFilePart(filepath.Join(subDirPath, subDirEntries[4].Name()))
+		if subDirSize == 1 {
+			summary = mmapSingleFile[summaryStart:filterStart]
+		} else {
+			summary, err = readMultiFilePart(filepath.Join(subDirPath, subDirEntries[4].Name()))
 			if err != nil {
 				return nil, nil
 			}
 		}
 
-		indexOffset, summaryThinningConst, err := readSummaryFromFile(summary, key)
+		indexOffset, summaryThinningConst, err := readSummaryFromBytes(summary, key)
 		if err != nil {
 			i--
+			if subDirSize == 1 {
+				err = mmapSingleFile.Unmap()
+				if err != nil {
+					return nil, err
+				}
+				err = singleFile.Close()
+				if err != nil {
+					return nil, err
+				}
+			}
 			continue
 		}
 
 		//check if its in index
-		if subDirSize != 1 {
-			*groupedData[2], err = readMultiFilePart(filepath.Join(subDirPath, subDirEntries[2].Name()))
+		if subDirSize == 1 {
+			index = mmapSingleFile[indexStart:summaryStart]
+		} else {
+			index, err = readMultiFilePart(filepath.Join(subDirPath, subDirEntries[2].Name()))
 			if err != nil {
 				return nil, nil
 			}
 		}
-		dataOffset, indexThinningConst := readIndexFromFile(index, summaryThinningConst, key, indexOffset)
+		dataOffset, indexThinningConst := readIndexFromBytes(index, summaryThinningConst, key, indexOffset)
 
 		//find it in data
-		if subDirSize != 1 {
-			*groupedData[0], err = readMultiFilePart(filepath.Join(subDirPath, subDirEntries[0].Name()))
+		if subDirSize == 1 {
+			data = mmapSingleFile[dataStart:indexStart]
+		} else {
+			data, err = readMultiFilePart(filepath.Join(subDirPath, subDirEntries[0].Name()))
 			if err != nil {
 				return nil, nil
 			}
 		}
-		dataRecord, err := readDataFromFile(data, indexThinningConst, key, dataOffset)
+		dataRecord, err := readDataFromBytes(data, indexThinningConst, key, dataOffset)
 		if err != nil {
 			return nil, err
 		}
@@ -548,6 +558,17 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 			return dataRecord.Data, nil
 		}
 		i--
+
+		if subDirSize == 1 {
+			err = mmapSingleFile.Unmap()
+			if err != nil {
+				return nil, err
+			}
+			err = singleFile.Close()
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
 }
 
@@ -573,7 +594,7 @@ func readMultiFilePart(filepath string) ([]byte, error) {
 
 // mmapFile in case of multi file sstable will be the hole file
 // in the case of single file sstable it will only be part that is bloom filter
-func readBloomFilterFromFile(key string, bytes []byte) (bool, error) {
+func readBloomFilterFromBytes(key string, bytes []byte) (bool, error) {
 	filter := bloomfilter.Deserialize(bytes)
 	found, err := filter.ContainsElement([]byte(key))
 	if err != nil {
@@ -583,7 +604,7 @@ func readBloomFilterFromFile(key string, bytes []byte) (bool, error) {
 }
 
 // check if key is in summary range, if it is return index record offset, if it is not return 0
-func readSummaryFromFile(bytes []byte, key string) (uint64, uint16, error) {
+func readSummaryFromBytes(bytes []byte, key string) (uint64, uint16, error) {
 
 	// first, we get sizes of summary min and max and summary thinning const
 	summaryConst := binary.BigEndian.Uint16(bytes[SummaryConstStart:SummaryMinSizeStart])
@@ -637,7 +658,7 @@ func readSummaryFromFile(bytes []byte, key string) (uint64, uint16, error) {
 
 // check if key is in index range, if it is return data record offset, if it is not return 0
 // we start reading summaryThinningConst number of index records from offset in index file
-func readIndexFromFile(bytes []byte, summaryConst uint16, key string, offset uint64) (uint64, uint16) {
+func readIndexFromBytes(bytes []byte, summaryConst uint16, key string, offset uint64) (uint64, uint16) {
 	var indexRecords []*IndexRecord
 	// make sure that the next thing we read is indeed index (/key size of the key of index)
 	indexThinningConst := binary.BigEndian.Uint16(bytes[:IndexConstSize])
@@ -673,7 +694,7 @@ func readIndexFromFile(bytes []byte, summaryConst uint16, key string, offset uin
 // deserialization bytes between these to locations gives us the said record we are looking for
 // param mmapFile - we do this instead passing the file or filename itself so we can use function for
 // both multi and single sile sstable, we do this for all reads
-func readDataFromFile(bytes []byte, indexThinningConst uint16, key string, offset uint64) (*models.DataRecord, error) {
+func readDataFromBytes(bytes []byte, indexThinningConst uint16, key string, offset uint64) (*models.DataRecord, error) {
 	dataRecordSize := uint64(0)
 	//read IndexConst number of data records
 	for i := uint16(0); i < indexThinningConst; i++ {
