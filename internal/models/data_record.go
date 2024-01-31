@@ -3,6 +3,7 @@ package models
 import (
 	"encoding/binary"
 	"errors"
+	key_encoder "github.com/DamjanVincic/key-value-engine/internal/structures/key-encoder"
 	"hash/crc32"
 )
 
@@ -107,6 +108,70 @@ func (dataRecord *DataRecord) Serialize() []byte {
 	} else {
 		// Append the Key
 		copy(bytes[ValueSizeStart:ValueSizeStart+dataRecord.KeySize], dataRecord.Data.Key)
+	}
+
+	return bytes
+}
+
+func (dataRecord *DataRecord) SerializeWithCompression(encoder *key_encoder.KeyEncoder) []byte {
+	var bytes []byte
+
+	//temporary storage for 32 and 64 integers and number of used bytes in them
+	crcBytes := make([]byte, binary.MaxVarintLen32)
+	var crcBytesSize int
+	timestampBytes := make([]byte, binary.MaxVarintLen64)
+	var timestampBytesSize int
+	keyBytes := make([]byte, binary.MaxVarintLen64)
+	var keyBytesSize int
+	var valueSizeBytes []byte
+	var valueSizeBytesSize int
+
+	// serialize CRC
+	crcBytesSize = binary.PutUvarint(crcBytes, uint64(dataRecord.Crc))
+
+	// serialize Timestamp
+	timestampBytesSize = binary.PutUvarint(timestampBytes, dataRecord.Data.Timestamp)
+
+	// encode Key and serialize encoded value
+	keyBytesSize = binary.PutUvarint(keyBytes, encoder.GetKey(dataRecord.Data.Key))
+
+	if !dataRecord.Data.Tombstone {
+		valueSizeBytes = make([]byte, binary.MaxVarintLen64)
+
+		// serialize ValueSize
+		valueSizeBytesSize = binary.PutUvarint(valueSizeBytes, dataRecord.ValueSize)
+
+		//calculate size of serialized  record and make bytes
+		bytes = make([]byte, uint64(crcBytesSize+timestampBytesSize+keyBytesSize+1)+dataRecord.ValueSize)
+	} else {
+		//calculate size of serialized  record and make bytes
+		bytes = make([]byte, crcBytesSize+timestampBytesSize+keyBytesSize+1)
+	}
+	offset := 0
+
+	//append Crc
+	copy(bytes[offset:offset+crcBytesSize], crcBytes[:crcBytesSize])
+	offset += crcBytesSize
+
+	//append Timestamp
+	copy(bytes[offset:offset+timestampBytesSize], timestampBytes[:timestampBytesSize])
+	offset += timestampBytesSize
+
+	//append Tombstone
+	bytes[offset] = 1
+	offset++
+
+	//append Key
+	copy(bytes[offset:offset+keyBytesSize], keyBytes[:keyBytesSize])
+	offset += keyBytesSize
+
+	if !(dataRecord.Data.Tombstone) {
+		//append ValueSize
+		copy(bytes[offset:offset+valueSizeBytesSize], valueSizeBytes[:valueSizeBytesSize])
+		offset += valueSizeBytesSize
+
+		//append Value
+		copy(bytes[offset:], dataRecord.Data.Value)
 	}
 
 	return bytes
