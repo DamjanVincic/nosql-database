@@ -324,7 +324,7 @@ func (sstable *SSTable) createFiles(memEntries []*models.Data, singleFile bool, 
 			return err
 		}
 
-		err = WriteToFile(file, data)
+		err = writeToFile(file, data)
 		if err != nil {
 			return err
 		}
@@ -345,7 +345,7 @@ func (sstable *SSTable) createFiles(memEntries []*models.Data, singleFile bool, 
 				return err
 			}
 
-			err = WriteToFile(file, *groupedData[idx])
+			err = writeToFile(file, *groupedData[idx])
 			if err != nil {
 				return err
 			}
@@ -367,7 +367,7 @@ func addToIndex(offset uint64, entry *models.Data, result *[]byte) []byte {
 }
 
 // write data to file using mmap
-func WriteToFile(file *os.File, data []byte) error {
+func writeToFile(file *os.File, data []byte) error {
 	// make sure it has enough space
 	totalBytes := int64(len(data))
 
@@ -401,15 +401,15 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 	// A wrapper to store the pointers to a few byte arrays to make the code more readable
 	var groupedData = make([]*[]byte, 5)
 
-	data := make([]byte, 0)
+	var data []byte
 	groupedData[0] = &data
-	filter := make([]byte, 0)
+	var filter []byte
 	groupedData[1] = &filter
-	index := make([]byte, 0)
+	var index []byte
 	groupedData[2] = &index
-	meta := make([]byte, 0)
+	var meta []byte
 	groupedData[3] = &meta
-	summary := make([]byte, 0)
+	var summary []byte
 	groupedData[4] = &summary
 
 	// if there is no dir to read from return nil
@@ -424,11 +424,6 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 	i := dirSize
 	for {
 		// if key is not found in first sstable, delete previous data in order to read multi-file implemented sstable correctly
-		if i != dirSize {
-			for idx := range groupedData {
-				*groupedData[idx] = make([]byte, 0)
-			}
-		}
 		if i < 0 {
 			return nil, errors.New("key not found")
 		}
@@ -499,12 +494,12 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 		//if its not singleFile we need to read multifiles one by one
 		// first we need to check if its in bloom filter
 		if subDirSize != 1 {
-			*groupedData[1], err = ReadMultiFilePart(filepath.Join(subDirPath, subDirEntries[1].Name()))
+			*groupedData[1], err = readMultiFilePart(filepath.Join(subDirPath, subDirEntries[1].Name()))
 			if err != nil {
 				return nil, nil
 			}
 		}
-		found, err := ReadBloomFilterFromFile(key, filter)
+		found, err := readBloomFilterFromFile(key, filter)
 		if err != nil {
 			return nil, err
 		}
@@ -516,13 +511,13 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 
 		//check if its in summary range (between min and max index)
 		if subDirSize != 1 {
-			*groupedData[4], err = ReadMultiFilePart(filepath.Join(subDirPath, subDirEntries[4].Name()))
+			*groupedData[4], err = readMultiFilePart(filepath.Join(subDirPath, subDirEntries[4].Name()))
 			if err != nil {
 				return nil, nil
 			}
 		}
 
-		indexOffset, summaryThinningConst, err := ReadSummaryFromFile(summary, key)
+		indexOffset, summaryThinningConst, err := readSummaryFromFile(summary, key)
 		if err != nil {
 			i--
 			continue
@@ -530,21 +525,21 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 
 		//check if its in index
 		if subDirSize != 1 {
-			*groupedData[2], err = ReadMultiFilePart(filepath.Join(subDirPath, subDirEntries[2].Name()))
+			*groupedData[2], err = readMultiFilePart(filepath.Join(subDirPath, subDirEntries[2].Name()))
 			if err != nil {
 				return nil, nil
 			}
 		}
-		dataOffset, indexThinningConst := ReadIndexFromFile(index, summaryThinningConst, key, indexOffset)
+		dataOffset, indexThinningConst := readIndexFromFile(index, summaryThinningConst, key, indexOffset)
 
 		//find it in data
 		if subDirSize != 1 {
-			*groupedData[0], err = ReadMultiFilePart(filepath.Join(subDirPath, subDirEntries[0].Name()))
+			*groupedData[0], err = readMultiFilePart(filepath.Join(subDirPath, subDirEntries[0].Name()))
 			if err != nil {
 				return nil, nil
 			}
 		}
-		dataRecord, err := ReadDataFromFile(data, indexThinningConst, key, dataOffset)
+		dataRecord, err := readDataFromFile(data, indexThinningConst, key, dataOffset)
 		if err != nil {
 			return nil, err
 		}
@@ -556,7 +551,7 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 	}
 }
 
-func ReadMultiFilePart(filepath string) ([]byte, error) {
+func readMultiFilePart(filepath string) ([]byte, error) {
 	file, err := os.OpenFile(filepath, os.O_RDWR, 0644)
 	if err != nil {
 		return nil, err
@@ -578,7 +573,7 @@ func ReadMultiFilePart(filepath string) ([]byte, error) {
 
 // mmapFile in case of multi file sstable will be the hole file
 // in the case of single file sstable it will only be part that is bloom filter
-func ReadBloomFilterFromFile(key string, bytes []byte) (bool, error) {
+func readBloomFilterFromFile(key string, bytes []byte) (bool, error) {
 	filter := bloomfilter.Deserialize(bytes)
 	found, err := filter.ContainsElement([]byte(key))
 	if err != nil {
@@ -588,7 +583,7 @@ func ReadBloomFilterFromFile(key string, bytes []byte) (bool, error) {
 }
 
 // check if key is in summary range, if it is return index record offset, if it is not return 0
-func ReadSummaryFromFile(bytes []byte, key string) (uint64, uint16, error) {
+func readSummaryFromFile(bytes []byte, key string) (uint64, uint16, error) {
 
 	// first, we get sizes of summary min and max and summary thinning const
 	summaryConst := binary.BigEndian.Uint16(bytes[SummaryConstStart:SummaryMinSizeStart])
@@ -642,7 +637,7 @@ func ReadSummaryFromFile(bytes []byte, key string) (uint64, uint16, error) {
 
 // check if key is in index range, if it is return data record offset, if it is not return 0
 // we start reading summaryThinningConst number of index records from offset in index file
-func ReadIndexFromFile(bytes []byte, summaryConst uint16, key string, offset uint64) (uint64, uint16) {
+func readIndexFromFile(bytes []byte, summaryConst uint16, key string, offset uint64) (uint64, uint16) {
 	var indexRecords []*IndexRecord
 	// make sure that the next thing we read is indeed index (/key size of the key of index)
 	indexThinningConst := binary.BigEndian.Uint16(bytes[:IndexConstSize])
@@ -678,7 +673,7 @@ func ReadIndexFromFile(bytes []byte, summaryConst uint16, key string, offset uin
 // deserialization bytes between these to locations gives us the said record we are looking for
 // param mmapFile - we do this instead passing the file or filename itself so we can use function for
 // both multi and single sile sstable, we do this for all reads
-func ReadDataFromFile(bytes []byte, indexThinningConst uint16, key string, offset uint64) (*models.DataRecord, error) {
+func readDataFromFile(bytes []byte, indexThinningConst uint16, key string, offset uint64) (*models.DataRecord, error) {
 	dataRecordSize := uint64(0)
 	//read IndexConst number of data records
 	for i := uint16(0); i < indexThinningConst; i++ {
@@ -698,8 +693,7 @@ func ReadDataFromFile(bytes []byte, indexThinningConst uint16, key string, offse
 		}
 		dataRecord, err := models.Deserialize(bytes[offset:offset+dataRecordSize], false)
 		if err != nil {
-			message := fmt.Sprintf("Data from offset %d has been changed", offset)
-			return nil, errors.New(message)
+			return nil, err
 		}
 
 		// keys must be equal
@@ -715,7 +709,7 @@ func ReadDataFromFile(bytes []byte, indexThinningConst uint16, key string, offse
 	return nil, nil
 }
 
-func GetAllMemEntries(bytes []byte) ([]*models.DataRecord, error) {
+func getAllMemEntries(bytes []byte) ([]*models.DataRecord, error) {
 	var entries []*models.DataRecord
 	bytesSize := len(bytes)
 	dataRecordSize := uint64(0)
@@ -742,7 +736,7 @@ func GetAllMemEntries(bytes []byte) ([]*models.DataRecord, error) {
 func compareMerkleTrees(bytes, mmapFileData []byte) ([]uint64, error) {
 	merkleTree := merkle.DeserializeMerkle(bytes)
 
-	entries, err := GetAllMemEntries(mmapFileData)
+	entries, err := getAllMemEntries(mmapFileData)
 	if err != nil {
 		return nil, err
 	}
