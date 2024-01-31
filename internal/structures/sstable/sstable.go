@@ -398,19 +398,11 @@ func writeToFile(file *os.File, data []byte) error {
 
 // go through every sstable until you find the key, when its found, return its value
 func (sstable *SSTable) Get(key string) (*models.Data, error) {
-	// A wrapper to store the pointers to a few byte arrays to make the code more readable
-	var groupedData = make([]*[]byte, 5)
-
-	var data []byte
-	groupedData[0] = &data
-	var filter []byte
-	groupedData[1] = &filter
-	var index []byte
-	groupedData[2] = &index
-	var meta []byte
-	groupedData[3] = &meta
-	var summary []byte
-	groupedData[4] = &summary
+	var data mmap.MMap
+	var filter mmap.MMap
+	var index mmap.MMap
+	//var meta mmap.MMap
+	var summary mmap.MMap
 
 	// Storage for offsets in case of single file
 	var dataStart uint64
@@ -419,7 +411,7 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 	var filterStart uint64
 	var metaStart uint64
 
-	var singleFile *os.File
+	var currentFile *os.File
 	var mmapSingleFile mmap.MMap
 
 	// if there is no dir to read from return nil
@@ -448,11 +440,12 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 		if subDirSize == 1 {
 			// get the data from single file sstable
 			singleFilePath := filepath.Join(subDirPath, subDirEntries[0].Name())
-			singleFile, err = os.OpenFile(singleFilePath, os.O_RDWR, 0644)
+			currentFile, err = os.OpenFile(singleFilePath, os.O_RDWR, 0644)
 			if err != nil {
 				return nil, err
 			}
-			mmapSingleFile, err = mmap.Map(singleFile, mmap.RDWR, 0)
+
+			mmapSingleFile, err = mmap.Map(currentFile, mmap.RDWR, 0)
 			if err != nil {
 				return nil, err
 			}
@@ -478,15 +471,32 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 		if subDirSize == 1 {
 			filter = mmapSingleFile[filterStart:metaStart]
 		} else {
-			filter, err = readMultiFilePart(filepath.Join(subDirPath, subDirEntries[1].Name()))
+			currentFile, err = os.OpenFile(filepath.Join(subDirPath, subDirEntries[1].Name()), os.O_RDWR, 0644)
 			if err != nil {
-				return nil, nil
+				return nil, err
+			}
+			filter, err = mmap.Map(currentFile, mmap.RDWR, 0)
+			if err != nil {
+				return nil, err
 			}
 		}
-		found, err := readBloomFilterFromBytes(key, filter)
+		found, err := readBloomFilterFromFile(key, filter)
 		if err != nil {
 			return nil, err
 		}
+
+		// Unmap the memory and close the file
+		if subDirSize != 1 {
+			err = filter.Unmap()
+			if err != nil {
+				return nil, err
+			}
+			err = currentFile.Close()
+			if err != nil {
+				return nil, err
+			}
+		}
+
 		// if its not found, check next sstable
 		if !found {
 			i--
@@ -495,7 +505,7 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 				if err != nil {
 					return nil, err
 				}
-				err = singleFile.Close()
+				err = currentFile.Close()
 				if err != nil {
 					return nil, err
 				}
@@ -507,13 +517,29 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 		if subDirSize == 1 {
 			summary = mmapSingleFile[summaryStart:filterStart]
 		} else {
-			summary, err = readMultiFilePart(filepath.Join(subDirPath, subDirEntries[4].Name()))
+			currentFile, err = os.OpenFile(filepath.Join(subDirPath, subDirEntries[4].Name()), os.O_RDWR, 0644)
 			if err != nil {
-				return nil, nil
+				return nil, err
+			}
+			summary, err = mmap.Map(currentFile, mmap.RDWR, 0)
+			if err != nil {
+				return nil, err
 			}
 		}
 
-		indexOffset, summaryThinningConst, err := readSummaryFromBytes(summary, key)
+		indexOffset, summaryThinningConst, err := readSummaryFromFile(summary, key)
+
+		if subDirSize != 1 {
+			err = summary.Unmap()
+			if err != nil {
+				return nil, err
+			}
+			err = currentFile.Close()
+			if err != nil {
+				return nil, err
+			}
+		}
+
 		if err != nil {
 			i--
 			if subDirSize == 1 {
@@ -521,7 +547,7 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 				if err != nil {
 					return nil, err
 				}
-				err = singleFile.Close()
+				err = currentFile.Close()
 				if err != nil {
 					return nil, err
 				}
@@ -533,25 +559,56 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 		if subDirSize == 1 {
 			index = mmapSingleFile[indexStart:summaryStart]
 		} else {
-			index, err = readMultiFilePart(filepath.Join(subDirPath, subDirEntries[2].Name()))
+			currentFile, err = os.OpenFile(filepath.Join(subDirPath, subDirEntries[2].Name()), os.O_RDWR, 0644)
 			if err != nil {
-				return nil, nil
+				return nil, err
+			}
+			index, err = mmap.Map(currentFile, mmap.RDWR, 0)
+			if err != nil {
+				return nil, err
 			}
 		}
-		dataOffset, indexThinningConst := readIndexFromBytes(index, summaryThinningConst, key, indexOffset)
+
+		dataOffset, indexThinningConst := readIndexFromFile(index, summaryThinningConst, key, indexOffset)
+
+		if subDirSize != 1 {
+			err = index.Unmap()
+			if err != nil {
+				return nil, err
+			}
+			err = currentFile.Close()
+			if err != nil {
+				return nil, err
+			}
+		}
 
 		//find it in data
 		if subDirSize == 1 {
 			data = mmapSingleFile[dataStart:indexStart]
 		} else {
-			data, err = readMultiFilePart(filepath.Join(subDirPath, subDirEntries[0].Name()))
+			currentFile, err = os.OpenFile(filepath.Join(subDirPath, subDirEntries[0].Name()), os.O_RDWR, 0644)
 			if err != nil {
-				return nil, nil
+				return nil, err
+			}
+			data, err = mmap.Map(currentFile, mmap.RDWR, 0)
+			if err != nil {
+				return nil, err
 			}
 		}
-		dataRecord, err := readDataFromBytes(data, indexThinningConst, key, dataOffset)
+		dataRecord, err := readDataFromFile(data, indexThinningConst, key, dataOffset)
 		if err != nil {
 			return nil, err
+		}
+
+		if subDirSize != 1 {
+			err = data.Unmap()
+			if err != nil {
+				return nil, err
+			}
+			err = currentFile.Close()
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		if dataRecord != nil {
@@ -564,7 +621,7 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 			if err != nil {
 				return nil, err
 			}
-			err = singleFile.Close()
+			err = currentFile.Close()
 			if err != nil {
 				return nil, err
 			}
@@ -572,30 +629,10 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 	}
 }
 
-func readMultiFilePart(filepath string) ([]byte, error) {
-	file, err := os.OpenFile(filepath, os.O_RDWR, 0644)
-	if err != nil {
-		return nil, err
-	}
-	mmapFile, err := mmap.Map(file, mmap.RDWR, 0)
-	if err != nil {
-		return nil, err
-	}
-	bytes := make([]byte, len(mmapFile))
-	copy(bytes, mmapFile)
-	if err = mmapFile.Unmap(); err != nil {
-		return nil, err
-	}
-	if err = file.Close(); err != nil {
-		return nil, err
-	}
-	return bytes, nil
-}
-
 // mmapFile in case of multi file sstable will be the hole file
 // in the case of single file sstable it will only be part that is bloom filter
-func readBloomFilterFromBytes(key string, bytes []byte) (bool, error) {
-	filter := bloomfilter.Deserialize(bytes)
+func readBloomFilterFromFile(key string, mmapFile mmap.MMap) (bool, error) {
+	filter := bloomfilter.Deserialize(mmapFile)
 	found, err := filter.ContainsElement([]byte(key))
 	if err != nil {
 		return false, err
@@ -604,18 +641,18 @@ func readBloomFilterFromBytes(key string, bytes []byte) (bool, error) {
 }
 
 // check if key is in summary range, if it is return index record offset, if it is not return 0
-func readSummaryFromBytes(bytes []byte, key string) (uint64, uint16, error) {
+func readSummaryFromFile(mmapFile mmap.MMap, key string) (uint64, uint16, error) {
 
 	// first, we get sizes of summary min and max and summary thinning const
-	summaryConst := binary.BigEndian.Uint16(bytes[SummaryConstStart:SummaryMinSizeStart])
+	summaryConst := binary.BigEndian.Uint16(mmapFile[SummaryConstStart:SummaryMinSizeStart])
 
-	summaryMinSize := binary.BigEndian.Uint64(bytes[SummaryMinSizeStart:SummaryMaxSizeStart])
-	summaryMaxSize := binary.BigEndian.Uint64(bytes[SummaryMaxSizeStart : SummaryMaxSizeStart+SummaryMaxSizeSize])
+	summaryMinSize := binary.BigEndian.Uint64(mmapFile[SummaryMinSizeStart:SummaryMaxSizeStart])
+	summaryMaxSize := binary.BigEndian.Uint64(mmapFile[SummaryMaxSizeStart : SummaryMaxSizeStart+SummaryMaxSizeSize])
 
 	// then read them and deserialize to get index records
 	keysStart := uint64(SummaryMaxSizeStart + SummaryMaxSizeSize)
-	serializedSummaryMin := bytes[keysStart : keysStart+summaryMinSize]
-	serializedSummaryMax := bytes[keysStart+summaryMinSize : keysStart+summaryMinSize+summaryMaxSize]
+	serializedSummaryMin := mmapFile[keysStart : keysStart+summaryMinSize]
+	serializedSummaryMax := mmapFile[keysStart+summaryMinSize : keysStart+summaryMinSize+summaryMaxSize]
 
 	summaryMin := string(serializedSummaryMin)
 	summaryMax := string(serializedSummaryMax)
@@ -625,21 +662,20 @@ func readSummaryFromBytes(bytes []byte, key string) (uint64, uint16, error) {
 		return 0, 0, errors.New("key not in range of summary index table")
 	}
 
-	// bytes = only summary records
-	bytes = bytes[keysStart+summaryMinSize+summaryMaxSize:]
-	var bytesSize = uint64(len(bytes))
+	// mmapFile = only summary records
+	mmapFile = mmapFile[keysStart+summaryMinSize+summaryMaxSize:]
 	var summaryRecords []*IndexRecord
 	var offset uint64
 	for {
 		// each summary record has keySize, key and offset
-		keySize := binary.BigEndian.Uint64(bytes[offset+KeySizeStart : offset+KeySizeSize])
+		keySize := binary.BigEndian.Uint64(mmapFile[offset+KeySizeStart : offset+KeySizeSize])
 		summaryRecordSize := KeySizeSize + keySize + OffsetSize
-		serializedSummRec := bytes[offset : offset+summaryRecordSize]
-		summaryRecord := DeserializeIndexRecord(serializedSummRec)
+		summaryRecord := DeserializeIndexRecord(mmapFile[offset : offset+summaryRecordSize])
 		summaryRecords = append(summaryRecords, summaryRecord)
 
 		// return second to last if we found the place of the key
 		if len(summaryRecords) >= 2 {
+			// no need for the part after && ?
 			if summaryRecords[len(summaryRecords)-1].Key > key && summaryRecords[len(summaryRecords)-2].Key <= key {
 				return summaryRecords[len(summaryRecords)-2].Offset, summaryConst, nil
 			}
@@ -649,7 +685,7 @@ func readSummaryFromBytes(bytes []byte, key string) (uint64, uint16, error) {
 		// if we came to the end of the file return last one
 		// because if it passed all the way to here and it didnt return nil when we checked if its in the range in keys
 		// then it has to be somewhere near the end after the last summary index
-		if bytesSize == offset {
+		if uint64(len(mmapFile)) == offset {
 			return summaryRecord.Offset, summaryConst, nil
 		}
 
@@ -658,22 +694,23 @@ func readSummaryFromBytes(bytes []byte, key string) (uint64, uint16, error) {
 
 // check if key is in index range, if it is return data record offset, if it is not return 0
 // we start reading summaryThinningConst number of index records from offset in index file
-func readIndexFromBytes(bytes []byte, summaryConst uint16, key string, offset uint64) (uint64, uint16) {
+func readIndexFromFile(mmapFile mmap.MMap, summaryConst uint16, key string, offset uint64) (uint64, uint16) {
 	var indexRecords []*IndexRecord
 	// make sure that the next thing we read is indeed index (/key size of the key of index)
-	indexThinningConst := binary.BigEndian.Uint16(bytes[:IndexConstSize])
-	bytesSize := uint64(len(bytes))
+	indexThinningConst := binary.BigEndian.Uint16(mmapFile[:IndexConstSize])
+	//bytesSize := uint64(len(mmapFile))
 	indexRecordSize := uint64(0)
 	//read SummaryConst number of index records
 	for i := uint16(0); i < summaryConst; i++ {
-		keySize := binary.BigEndian.Uint64(bytes[offset+KeySizeStart : offset+KeySizeSize])
+		keySize := binary.BigEndian.Uint64(mmapFile[offset+KeySizeStart : offset+KeySizeSize])
 		// this could be const as well, we know all offsets are uint64
 		indexRecordSize = keySize + KeySizeSize + OffsetSize
-		indexRecord := DeserializeIndexRecord(bytes[offset : offset+indexRecordSize])
+		indexRecord := DeserializeIndexRecord(mmapFile[offset : offset+indexRecordSize])
 		indexRecords = append(indexRecords, indexRecord)
 
 		// when you find the record which key is bigger, the result is the previous record which key is smaller
 		if len(indexRecords) >= 2 {
+			// part after the && can be removed? since it's sorted
 			if indexRecords[len(indexRecords)-1].Key > key && indexRecords[len(indexRecords)-2].Key <= key {
 				return indexRecords[len(indexRecords)-2].Offset, indexThinningConst
 			}
@@ -681,7 +718,7 @@ func readIndexFromBytes(bytes []byte, summaryConst uint16, key string, offset ui
 		}
 		offset += indexRecordSize
 		// when you get to the end it means the result is the last one read
-		if bytesSize == offset {
+		if uint64(len(mmapFile)) == offset {
 			return indexRecord.Offset, indexThinningConst
 		}
 	}
@@ -694,17 +731,15 @@ func readIndexFromBytes(bytes []byte, summaryConst uint16, key string, offset ui
 // deserialization bytes between these to locations gives us the said record we are looking for
 // param mmapFile - we do this instead passing the file or filename itself so we can use function for
 // both multi and single sile sstable, we do this for all reads
-func readDataFromBytes(bytes []byte, indexThinningConst uint16, key string, offset uint64) (*models.DataRecord, error) {
+func readDataFromFile(mmapFile mmap.MMap, indexThinningConst uint16, key string, offset uint64) (*models.DataRecord, error) {
 	dataRecordSize := uint64(0)
 	//read IndexConst number of data records
 	for i := uint16(0); i < indexThinningConst; i++ {
-		tombstone := bytes[offset+TombstoneStart] == 1
-		keySize := binary.BigEndian.Uint64(bytes[offset+DataKeySizeStart : offset+DataValueSizeStart])
+		tombstone := mmapFile[offset+TombstoneStart] == 1
+		keySize := binary.BigEndian.Uint64(mmapFile[offset+DataKeySizeStart : offset+DataValueSizeStart])
 		var valueSize uint64
 		if !tombstone {
-			valueSize = binary.BigEndian.Uint64(bytes[offset+DataValueSizeStart : offset+DataKeyStart])
-		} else {
-			valueSize = 0
+			valueSize = binary.BigEndian.Uint64(mmapFile[offset+DataValueSizeStart : offset+DataKeyStart])
 		}
 
 		// make sure to read complete data rec
@@ -712,7 +747,7 @@ func readDataFromBytes(bytes []byte, indexThinningConst uint16, key string, offs
 		if tombstone {
 			dataRecordSize -= ValueSizeSize
 		}
-		dataRecord, err := models.Deserialize(bytes[offset:offset+dataRecordSize], false)
+		dataRecord, err := models.Deserialize(mmapFile[offset:offset+dataRecordSize], false)
 		if err != nil {
 			return nil, err
 		}
@@ -723,26 +758,32 @@ func readDataFromBytes(bytes []byte, indexThinningConst uint16, key string, offs
 		}
 		offset += dataRecordSize
 		// when you get to the end it means there is no match
-		if len(bytes) == int(offset) {
+		if len(mmapFile) == int(offset) {
 			return nil, nil
 		}
 	}
 	return nil, nil
 }
 
-func getAllMemEntries(bytes []byte) ([]*models.DataRecord, error) {
+func getAllMemEntries(mmapFile mmap.MMap) ([]*models.DataRecord, error) {
 	var entries []*models.DataRecord
-	bytesSize := len(bytes)
 	dataRecordSize := uint64(0)
 	offset := uint64(0)
 	//read IndexConst number of data records
-	for bytesSize != int(offset) {
-		keySize := binary.BigEndian.Uint64(bytes[offset+DataKeySizeStart : offset+DataValueSizeStart])
-		valueSize := binary.BigEndian.Uint64(bytes[offset+DataValueSizeStart : offset+DataKeyStart])
+	for len(mmapFile) != int(offset) {
+		tombstone := mmapFile[offset+TombstoneStart] == 1
+		keySize := binary.BigEndian.Uint64(mmapFile[offset+DataKeySizeStart : offset+DataValueSizeStart])
+		var valueSize uint64
+		if !tombstone {
+			valueSize = binary.BigEndian.Uint64(mmapFile[offset+DataValueSizeStart : offset+DataKeyStart])
+		}
 
 		// make sure to read complete data rec
 		dataRecordSize = RecordHeaderSize + keySize + valueSize
-		dataRecord, err := models.Deserialize(bytes[offset:offset+dataRecordSize], false)
+		if tombstone {
+			dataRecordSize -= ValueSizeSize
+		}
+		dataRecord, err := models.Deserialize(mmapFile[offset:offset+dataRecordSize], false)
 		if err != nil {
 			return nil, err
 		}
