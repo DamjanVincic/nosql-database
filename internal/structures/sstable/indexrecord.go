@@ -60,9 +60,10 @@ func (indexRecord *IndexRecord) SerializeIndexRecord(compression bool, encoder *
 	return bytes
 }
 
-func DeserializeIndexRecord(bytes []byte, compression bool, encoder *key_encoder.KeyEncoder) (indexRecord *IndexRecord, err error) {
+func DeserializeIndexRecord(bytes []byte, compression bool, encoder *key_encoder.KeyEncoder) (indexRecord *IndexRecord, recordLength uint64, err error) {
 	indexRecord = nil
 	err = nil
+	recordLength = 0
 
 	var key string
 	var offset uint64
@@ -70,6 +71,7 @@ func DeserializeIndexRecord(bytes []byte, compression bool, encoder *key_encoder
 	if compression {
 		//deserialize encoded uint64 value of key and get number of bytes read
 		encodedKey, bytesRead := binary.Uvarint(bytes)
+		recordLength += uint64(bytesRead)
 
 		//get string key from encoded value
 		key, err = encoder.GetKey(encodedKey)
@@ -78,7 +80,8 @@ func DeserializeIndexRecord(bytes []byte, compression bool, encoder *key_encoder
 		}
 
 		//deserialize offset
-		offset, _ = binary.Uvarint(bytes[bytesRead:])
+		offset, bytesRead = binary.Uvarint(bytes[bytesRead:])
+		recordLength += uint64(bytesRead)
 
 	} else {
 		// Deserialize KeySize (8 bytes, BigEndian)
