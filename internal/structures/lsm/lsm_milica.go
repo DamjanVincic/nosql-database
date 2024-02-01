@@ -47,6 +47,9 @@ func combineSSTables(sstables []mmap.MMap) ([]*models.Data, error) {
 	// we know that the index we return is the sstable we read next (or multiple)
 	for len(sstables) > 0 {
 		smallestKey := findSmallestKey(current)
+		if smallestKey == nil {
+			break
+		}
 		var minRecord *models.Data
 		for _, keyIndex := range smallestKey {
 			if minRecord == nil {
@@ -62,9 +65,6 @@ func combineSSTables(sstables []mmap.MMap) ([]*models.Data, error) {
 			if dataRecord != nil {
 				// set offsets for next
 				offsets[keyIndex] += uint64(len(dataRecord.Data.Key) + CrcSize + KeySizeSize + ValueSizeSize + len(dataRecord.Data.Value) + TombstoneSize + TimestampSize)
-				if uint64(len(sstables[keyIndex])) == offsets[keyIndex] {
-					current[keyIndex] = nil
-				}
 			}
 			current[keyIndex] = dataRecord
 		}
@@ -167,7 +167,7 @@ const (
 func readDataFromFile(mmapFile mmap.MMap, offset uint64) (*models.DataRecord, error) {
 	dataRecordSize := uint64(0)
 	//read IndexConst number of data records
-	if offset > uint64(len(mmapFile)) {
+	if offset >= uint64(len(mmapFile)) {
 		return nil, nil
 	}
 	tombstone := mmapFile[offset+TombstoneStart] == 1
