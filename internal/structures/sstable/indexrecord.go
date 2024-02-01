@@ -39,7 +39,7 @@ func (indexRecord *IndexRecord) SerializeIndexRecord(compression bool, encoder *
 		//make bytes and append serialized key and offset
 		bytes = make([]byte, keyBytesSize+offsetBytesSize)
 		copy(bytes[:keyBytesSize], keyBytes[:keyBytesSize])
-		copy(bytes[:offsetBytesSize], offsetBytes[:offsetBytesSize])
+		copy(bytes[keyBytesSize:], offsetBytes[:offsetBytesSize])
 
 	} else {
 		keySize := uint64(len([]byte(indexRecord.Key)))

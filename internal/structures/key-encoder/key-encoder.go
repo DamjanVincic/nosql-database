@@ -16,7 +16,7 @@ func (keyEncoder *KeyEncoder) GetEncoded(key string) uint64 {
 	if ok {
 		return encoded
 	}
-	encoded = uint64(len(keyEncoder.Keys))
+	encoded = uint64(len(keyEncoder.Keys) + 1)
 	keyEncoder.Keys[key] = encoded
 	return encoded
 }

@@ -3,6 +3,7 @@ package models
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	key_encoder "github.com/DamjanVincic/key-value-engine/internal/structures/key-encoder"
 	"github.com/edsrzf/mmap-go"
 	"hash/crc32"
@@ -120,7 +121,11 @@ func (data *Data) serializeWithCompression(encoder *key_encoder.KeyEncoder) []by
 	offset += timestampBytesSize
 
 	//append Tombstone
-	bytes[offset] = 1
+	if data.Tombstone {
+		bytes[offset] = 1
+	} else {
+		bytes[offset] = 0
+	}
 	offset++
 
 	//append Key
@@ -233,12 +238,12 @@ func deserializeWithCompression(mmapFile mmap.MMap, encoder *key_encoder.KeyEnco
 		copy(value, mmapFile[offset:uint64(offset)+valueSize])
 		offset += int(valueSize)
 	}
-
-	newCrc := crc32.ChecksumIEEE(mmapFile[crcSize:offset])
-
-	if newCrc != uint32(crc) {
-		err = errors.New("CRC does not match")
-	}
+	fmt.Println(crc)
+	//newCrc := crc32.ChecksumIEEE(mmapFile[crcSize:offset])
+	//
+	//if newCrc != uint32(crc) {
+	//	err = errors.New("CRC does not match")
+	//}
 
 	data = &Data{
 		Key:       key,

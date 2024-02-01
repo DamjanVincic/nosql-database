@@ -108,6 +108,7 @@ func NewSSTable(indexSparseConst uint16, summarySparseConst uint16, singleFile b
 		summaryConst: summarySparseConst,
 		singleFile:   singleFile,
 		compression:  compression,
+		encoder:      key_encoder.NewKeyEncoder(),
 	}, nil
 }
 
@@ -281,7 +282,7 @@ func (sstable *SSTable) createFiles(memEntries []*models.Data, singleFile bool, 
 		offset += sizeOfDR
 		countRecords++
 	}
-	merkleTree, err := merkle.CreateMerkleTree(merkleDataRecords, nil)
+	merkleTree, err := merkle.CreateMerkleTree(merkleDataRecords, nil, sstable.compression, sstable.encoder)
 	if err != nil {
 		return err
 	}
@@ -721,6 +722,10 @@ func readSummaryFromFile(mmapFile mmap.MMap, key string, compression bool, encod
 			return 0, 0, err
 		}
 
+		if currentSummaryRecord.Key == key {
+			return currentSummaryRecord.Offset, summaryConst, nil
+		}
+
 		if currentSummaryRecord.Key > key {
 			if previousSummaryRecord == nil {
 				return 0, 0, errors.New("first record in summary smaller than summary min")
@@ -794,7 +799,7 @@ func readSummaryHeader(mmapFile mmap.MMap, compression bool, encoder *key_encode
 func readNextIndex(mmapFile mmap.MMap, offset uint64, compression bool, encoder *key_encoder.KeyEncoder) (indexRecord *IndexRecord, recordLength uint64, err error) {
 	err = nil
 	if compression {
-		indexRecord, recordLength, err = DeserializeIndexRecord(mmapFile[offset:offset+CompressedIndexRecordMaxSize], compression, encoder)
+		indexRecord, recordLength, err = DeserializeIndexRecord(mmapFile[offset:], compression, encoder)
 	} else {
 		// each record has keySize, key and offset
 		keySize := binary.BigEndian.Uint64(mmapFile[offset+KeySizeStart : offset+KeySizeSize])
@@ -819,6 +824,11 @@ func readIndexFromFile(mmapFile mmap.MMap, summaryConst uint16, key string, offs
 		if err != nil {
 			return 0, 0, err
 		}
+
+		if currentRecord.Key == key {
+			return currentRecord.Offset, indexThinningConst, nil
+		}
+
 		// when you find the record which key is bigger, the result is the previous record which key is smaller
 		if currentRecord.Key > key {
 			if previousRecord == nil {
