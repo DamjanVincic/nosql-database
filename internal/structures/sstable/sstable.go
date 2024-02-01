@@ -168,7 +168,6 @@ func (sstable *SSTable) Write(memEntries []*models.Data) error {
 			return err
 		}
 
-		return nil
 	} else {
 		// Filename format: PART.db, part = sstable element
 		// create names of new files
@@ -190,8 +189,9 @@ func (sstable *SSTable) Write(memEntries []*models.Data) error {
 			return err
 		}
 
-		return nil
 	}
+	//proveri kompakciju - nivo,
+	return nil
 }
 
 // we distinguish implementations by the singleFile value (and the num of params, 1 for single, 5 for multi)
@@ -736,7 +736,7 @@ func readIndexFromFile(mmapFile mmap.MMap, summaryConst uint16, key string, offs
 func readDataFromFile(mmapFile mmap.MMap, indexThinningConst uint16, key string, offset uint64) (*models.DataRecord, error) {
 	dataRecordSize := uint64(0)
 	if offset >= uint64(len(mmapFile)) {
-		return nil, nil
+		return nil, errors.New("Key not found")
 	}
 	//read IndexConst number of data records
 	for i := uint16(0); i < indexThinningConst; i++ {
@@ -764,10 +764,10 @@ func readDataFromFile(mmapFile mmap.MMap, indexThinningConst uint16, key string,
 		offset += dataRecordSize
 		// when you get to the end it means there is no match
 		if len(mmapFile) == int(offset) {
-			return nil, nil
+			return nil, errors.New("Key not found")
 		}
 	}
-	return nil, nil
+	return nil, errors.New("Key not found")
 }
 
 func getAllMemEntries(mmapFile mmap.MMap) ([]*models.DataRecord, error) {
@@ -940,24 +940,12 @@ func (sstable *SSTable) CheckDataValidity(subDirName string) ([]*models.Data, er
 	}
 
 	corruptedIndexes, err := merkleTree.CompareTrees(merkleTree2)
+	if err != nil {
+		return nil, err
+	}
 	for _, index := range corruptedIndexes {
 		corruptedData = append(corruptedData, entries[index].Data)
 	}
 
 	return corruptedData, nil
 }
-
-//func compareMerkleTrees(bytes, mmapFileData []byte) ([]uint64, error) {
-//	merkleTree := merkle.DeserializeMerkle(bytes)
-//
-//	entries, err := getAllMemEntries(mmapFileData)
-//	if err != nil {
-//		return nil, err
-//	}
-//	newMerkle, err := merkle.CreateMerkleTree(entries, merkleTree.HashWithSeed)
-//	if err != nil {
-//		return nil, err
-//	}
-//
-//	return merkleTree.CompareTrees(newMerkle)
-//}
