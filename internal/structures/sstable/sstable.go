@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	key_encoder "github.com/DamjanVincic/key-value-engine/internal/structures/key-encoder"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -82,9 +83,11 @@ type SSTable struct {
 	indexConst   uint16
 	summaryConst uint16
 	singleFile   bool
+	compression  bool
+	encoder      *key_encoder.KeyEncoder
 }
 
-func NewSSTable(indexSparseConst uint16, summarySparseConst uint16, singleFile bool) (*SSTable, error) {
+func NewSSTable(indexSparseConst uint16, summarySparseConst uint16, singleFile bool, compression bool) (*SSTable, error) {
 	//check if sstable dir exists, if not create it
 	// _ = dirEntries, now its like this bc we dont use it anywhere (Mijat)
 	_, err := os.ReadDir(Path)
@@ -94,10 +97,14 @@ func NewSSTable(indexSparseConst uint16, summarySparseConst uint16, singleFile b
 			return nil, err
 		}
 	}
+
+	//add reading encoder!!
+
 	return &SSTable{
 		indexConst:   indexSparseConst,
 		summaryConst: summarySparseConst,
 		singleFile:   singleFile,
+		compression:  compression,
 	}, nil
 }
 
@@ -203,21 +210,17 @@ func (sstable *SSTable) createFiles(memEntries []*models.Data, singleFile bool, 
 	var data []byte
 	var dataRecords []byte
 	groupedData[0] = &dataRecords
-	var indexRecords = make([]byte, IndexConstSize)
+	indexRecords := initializeIndexRecords(sstable.indexConst, sstable.compression)
 	groupedData[1] = &indexRecords
 	var summaryRecords []byte
-	// append index thinning const to indexRecords data
-	binary.BigEndian.PutUint16(indexRecords[:IndexConstSize], sstable.indexConst)
-	// in summary header we have min and max index record (ranked by key)
-	var summaryHeader = make([]byte, SummaryMinSizeSize+SummaryMaxSizeSize+SummaryConstSize)
-	groupedData[2] = &summaryHeader
+	//// in summary header we have min and max index record (ranked by key)
 	var summaryMin string
 	var summaryMax string
 	var serializedIndexRecord []byte
 	var serializedSummaryRecord []byte
 	// for single file header
 	var dataBlockSize uint64
-	var indexBlockSize uint64 = IndexConstSize
+	indexBlockSize := uint64(len(*groupedData[1]))
 	var summaryBlockSize uint64
 	var filterBlockSize uint64
 
@@ -230,7 +233,7 @@ func (sstable *SSTable) createFiles(memEntries []*models.Data, singleFile bool, 
 	//if its single file implementation we will take blocks from the single file and consider them as multi files
 	var offset uint64
 	//for summary index
-	var indexOffset uint64 = IndexConstSize
+	indexOffset := indexBlockSize
 
 	// counter for index and index summary, for every n index records add one to summary
 	var countRecords uint16
@@ -239,7 +242,7 @@ func (sstable *SSTable) createFiles(memEntries []*models.Data, singleFile bool, 
 	var merkleDataRecords []*models.DataRecord
 	//create an empty bloom filter
 	filter := bloomfilter.CreateBloomFilter(len(memEntries), 0.001)
-	// proccess of adding entries
+	// process of adding entries
 	for _, entry := range memEntries {
 		//every entry is saved in data segment
 
@@ -252,12 +255,12 @@ func (sstable *SSTable) createFiles(memEntries []*models.Data, singleFile bool, 
 		dataBlockSize += sizeOfDR
 		// every Nth one is saved in the index (key, offset of dataRec)
 		if countRecords%sstable.indexConst == 0 {
-			serializedIndexRecord = addToIndex(offset, entry, &indexRecords)
+			serializedIndexRecord = addToIndex(offset, entry, &indexRecords, sstable.compression, sstable.encoder)
 			sizeOfIR = uint64(len(serializedIndexRecord))
 			indexBlockSize += sizeOfIR
 			// every Nth one is saved in the summary index (key, offset of indexRec)
 			if countIndexRecords%sstable.summaryConst == 0 {
-				serializedSummaryRecord = addToIndex(indexOffset, entry, &summaryRecords)
+				serializedSummaryRecord = addToIndex(indexOffset, entry, &summaryRecords, sstable.compression, sstable.encoder)
 				sizeOfSR = uint64(len(serializedSummaryRecord))
 				summaryBlockSize += sizeOfSR
 				if summaryMin == "" {
@@ -288,15 +291,10 @@ func (sstable *SSTable) createFiles(memEntries []*models.Data, singleFile bool, 
 	groupedData[4] = &merkleData
 
 	//creating summary index header
-	binary.BigEndian.PutUint16(summaryHeader[:SummaryMinSizeStart], sstable.summaryConst)
-	binary.BigEndian.PutUint64(summaryHeader[SummaryMinSizeStart:SummaryMaxSizeStart], uint64(len([]byte(summaryMin))))
-	binary.BigEndian.PutUint64(summaryHeader[SummaryMaxSizeStart:SummaryMaxSizeStart+SummaryMaxSizeSize], uint64(len([]byte(summaryMax))))
-	summaryHeaderSize := SummaryConstSize + SummaryMinSizeSize + SummaryMaxSizeSize + uint64(len([]byte(summaryMin))) + uint64(len([]byte(summaryMax)))
-	//append all summary index records
-	summaryHeader = append(summaryHeader, []byte(summaryMin)...)
-	summaryHeader = append(summaryHeader, []byte(summaryMax)...)
+	summaryHeader := createSummaryHeader(sstable.summaryConst, summaryMin, summaryMax, sstable.compression, sstable.encoder)
+	summaryBlockSize += uint64(len(summaryHeader))
 	summaryHeader = append(summaryHeader, summaryRecords...)
-	summaryBlockSize += summaryHeaderSize
+	groupedData[2] = &summaryHeader
 
 	/*
 		for single file implementation
@@ -355,9 +353,65 @@ func (sstable *SSTable) createFiles(memEntries []*models.Data, singleFile bool, 
 	return nil
 }
 
-func addToIndex(offset uint64, entry *models.Data, result *[]byte) []byte {
+// serializes index const and returns resulting bytes
+func initializeIndexRecords(indexConst uint16, compression bool) []byte {
+	var indexRecords []byte
+	if compression {
+		tempBytes := make([]byte, binary.MaxVarintLen16)
+		bytesWritten := binary.PutUvarint(tempBytes, uint64(indexConst))
+		indexRecords = make([]byte, bytesWritten)
+		copy(indexRecords, tempBytes[:bytesWritten])
+	} else {
+		indexRecords = make([]byte, IndexConstSize)
+		// append index thinning const to indexRecords data
+		binary.BigEndian.PutUint16(indexRecords[:IndexConstSize], indexConst)
+	}
+	return indexRecords
+}
+
+func createSummaryHeader(summaryConst uint16, summaryMin string, summaryMax string, compression bool, encoder *key_encoder.KeyEncoder) []byte {
+	var summaryHeader []byte
+	if compression {
+		//temporary storage for 16 and 64-bit integers and used bytes in them
+		summaryConstBytes := make([]byte, binary.MaxVarintLen16)
+		var summaryConstBytesSize int
+		summaryMinBytes := make([]byte, binary.MaxVarintLen64)
+		var summaryMinBytesSize int
+		summaryMaxBytes := make([]byte, binary.MaxVarintLen64)
+		var summaryMaxBytesSize int
+
+		//get uint64 encoded value od min and max keys
+		encodedMin := encoder.GetEncoded(summaryMin)
+		encodedMax := encoder.GetEncoded(summaryMax)
+
+		//serialize all values and get number of bytes used
+		summaryConstBytesSize = binary.PutUvarint(summaryConstBytes, uint64(summaryConst))
+		summaryMinBytesSize = binary.PutUvarint(summaryMinBytes, encodedMin)
+		summaryMaxBytesSize = binary.PutUvarint(summaryMaxBytes, encodedMax)
+
+		//make bytes and append serialized values
+		summaryHeader = make([]byte, summaryConstBytesSize+summaryMinBytesSize+summaryMaxBytesSize)
+		bytesWritten := 0
+		copy(summaryHeader[bytesWritten:bytesWritten+summaryConstBytesSize], summaryConstBytes[:summaryConstBytesSize])
+		bytesWritten += summaryConstBytesSize
+		copy(summaryHeader[bytesWritten:bytesWritten+summaryMinBytesSize], summaryMinBytes[:summaryMinBytesSize])
+		bytesWritten += summaryMinBytesSize
+		copy(summaryHeader[bytesWritten:bytesWritten+summaryMaxBytesSize], summaryMaxBytes[:summaryMaxBytesSize])
+
+	} else {
+		summaryHeader = make([]byte, SummaryMinSizeSize+SummaryMaxSizeSize+SummaryConstSize)
+		binary.BigEndian.PutUint16(summaryHeader[:SummaryMinSizeStart], summaryConst)
+		binary.BigEndian.PutUint64(summaryHeader[SummaryMinSizeStart:SummaryMaxSizeStart], uint64(len([]byte(summaryMin))))
+		binary.BigEndian.PutUint64(summaryHeader[SummaryMaxSizeStart:SummaryMaxSizeStart+SummaryMaxSizeSize], uint64(len([]byte(summaryMax))))
+		summaryHeader = append(summaryHeader, []byte(summaryMin)...)
+		summaryHeader = append(summaryHeader, []byte(summaryMax)...)
+	}
+	return summaryHeader
+}
+
+func addToIndex(offset uint64, entry *models.Data, result *[]byte, compression bool, encoder *key_encoder.KeyEncoder) []byte {
 	indexRecord := NewIndexRecord(entry, offset)
-	serializedIndexRecord := indexRecord.SerializeIndexRecord()
+	serializedIndexRecord := indexRecord.SerializeIndexRecord(compression, encoder)
 	*result = append(*result, serializedIndexRecord...)
 	return serializedIndexRecord
 }
@@ -523,7 +577,7 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 			}
 		}
 
-		indexOffset, summaryThinningConst, err := readSummaryFromFile(summary, key)
+		indexOffset, summaryThinningConst, err := sstable.readSummaryFromFile(summary, key)
 
 		if subDirSize != 1 {
 			err = summary.Unmap()
@@ -637,7 +691,7 @@ func readBloomFilterFromFile(key string, mmapFile mmap.MMap) (bool, error) {
 }
 
 // check if key is in summary range, if it is return index record offset, if it is not return 0
-func readSummaryFromFile(mmapFile mmap.MMap, key string) (uint64, uint16, error) {
+func (sstable *SSTable) readSummaryFromFile(mmapFile mmap.MMap, key string) (uint64, uint16, error) {
 
 	// first, we get sizes of summary min and max and summary thinning const
 	summaryConst := binary.BigEndian.Uint16(mmapFile[SummaryConstStart:SummaryMinSizeStart])
