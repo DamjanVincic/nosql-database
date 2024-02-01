@@ -729,6 +729,9 @@ func readIndexFromFile(mmapFile mmap.MMap, summaryConst uint16, key string, offs
 // both multi and single sile sstable, we do this for all reads
 func readDataFromFile(mmapFile mmap.MMap, indexThinningConst uint16, key string, offset uint64) (*models.DataRecord, error) {
 	dataRecordSize := uint64(0)
+	if offset >= uint64(len(mmapFile)) {
+		return nil, nil
+	}
 	//read IndexConst number of data records
 	for i := uint16(0); i < indexThinningConst; i++ {
 		tombstone := mmapFile[offset+TombstoneStart] == 1
@@ -749,7 +752,7 @@ func readDataFromFile(mmapFile mmap.MMap, indexThinningConst uint16, key string,
 		}
 
 		// keys must be equal
-		if dataRecord.Data.Key == key {
+		if dataRecord.Data.Key == key || key == "" {
 			return dataRecord, nil
 		}
 		offset += dataRecordSize
