@@ -2,9 +2,18 @@ package lsm
 
 import (
 	"encoding/binary"
+	"fmt"
 	"github.com/DamjanVincic/key-value-engine/internal/models"
 	"github.com/edsrzf/mmap-go"
 	"os"
+	"path/filepath"
+	"strconv"
+)
+
+const (
+	MULTIPLIER    = 2
+	LEVEL_ONE_MAX = 2
+	MAX_LEVELS    = 3
 )
 
 func Compact(sstables []string) ([]*models.Data, error) {
@@ -187,4 +196,53 @@ func readDataFromFile(mmapFile mmap.MMap, offset uint64) (*models.DataRecord, er
 		return nil, err
 	}
 	return dataRecord, nil
+}
+func createNewLevelDir() (uint8, error) {
+	lsmIndex := uint8(1)
+	var subdirPath string
+	var subdirName string
+	// if there is no directory sstable, create one
+	dirEntries, err := os.ReadDir(Path)
+	if os.IsNotExist(err) {
+		err := os.Mkdir(Path, os.ModePerm)
+		if err != nil {
+			return 0, err
+		}
+	}
+	maxTables := uint8(LEVEL_ONE_MAX)
+	// lsm index is 1 at default, we change it if there is already existing levels
+	if len(dirEntries) != 0 {
+		subdirName = dirEntries[len(dirEntries)-1].Name()
+		n, err := strconv.ParseUint(subdirName[10:], 10, 8)
+		if err != nil {
+			return 0, err
+		}
+		lsmIndex = uint8(n)
+		if err != nil {
+			return 0, err
+		}
+		maxTables = uint8(MULTIPLIER*LEVEL_ONE_MAX) * lsmIndex
+	}
+	subdirName = fmt.Sprintf("lsm_level_%02d", lsmIndex)
+	subdirPath = filepath.Join(Path, subdirName)
+	subDirEntries, err := os.ReadDir(subdirPath)
+	if err != nil {
+		return 0, err
+	}
+	// if current level if full create new one
+	if uint8(len(subDirEntries)) >= maxTables {
+		lsmIndex++
+		subdirName = fmt.Sprintf("lsm_level_%02d", lsmIndex)
+		subdirPath = filepath.Join(Path, subdirName)
+		err = os.Mkdir(subdirPath, os.ModePerm)
+		if err != nil {
+			return 0, err
+		}
+	}
+
+	return lsmIndex, nil
+}
+func Write() {
+	//
+	createNewLevelDir()
 }
