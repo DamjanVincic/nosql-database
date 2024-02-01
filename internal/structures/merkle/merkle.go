@@ -47,6 +47,17 @@ func (merkle *MerkleTree) CreateNodeData(data *models.DataRecord) ([]byte, error
 	return valuesBinary, nil
 }
 
+func (merkle *MerkleTree) CreateAllLeavesData(data []*models.DataRecord) (hashed []byte, err error) {
+	for _, entry := range data {
+		hashedData, err := merkle.CreateNodeData(entry)
+		if err != nil {
+			return nil, err
+		}
+		hashed = append(hashed, hashedData...)
+	}
+	return hashed, err
+}
+
 /*
 get binary data and hash function and return new node with no children and hashed values
 */

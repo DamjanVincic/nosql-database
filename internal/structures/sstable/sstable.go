@@ -236,15 +236,21 @@ func (sstable *SSTable) createFiles(memEntries []*models.Data, singleFile bool, 
 	var countRecords uint16
 	var countIndexRecords uint16
 
-	var merkleDataRecords []*models.DataRecord
+	var merkleHashedRecords []byte
 	//create an empty bloom filter
 	filter := bloomfilter.CreateBloomFilter(len(memEntries), 0.001)
+	//create an new merkle tree with new hashfunc and without nodes
+	merkleTree := merkle.NewMerkle(nil)
 	// proccess of adding entries
 	for _, entry := range memEntries {
 		//every entry is saved in data segment
 
 		dataRecord := *models.NewDataRecord(entry)
-		merkleDataRecords = append(merkleDataRecords, &dataRecord)
+		hashedData, err := merkleTree.CreateNodeData(&dataRecord)
+		if err != nil {
+			return err
+		}
+		merkleHashedRecords = append(merkleHashedRecords, hashedData...)
 		serializedRecord := dataRecord.Serialize()
 		sizeOfDR = uint64(len(serializedRecord))
 		dataRecords = append(dataRecords, serializedRecord...)
@@ -269,14 +275,14 @@ func (sstable *SSTable) createFiles(memEntries []*models.Data, singleFile bool, 
 		}
 		summaryMax = entry.Key
 		//add key to bf
-		err := filter.AddElement([]byte(entry.Key))
+		err = filter.AddElement([]byte(entry.Key))
 		if err != nil {
 			return err
 		}
 		offset += sizeOfDR
 		countRecords++
 	}
-	merkleTree, err := merkle.CreateMerkleTree(merkleDataRecords, nil)
+	err := merkleTree.CreateMerkleTree(merkleHashedRecords)
 	if err != nil {
 		return err
 	}
@@ -765,7 +771,6 @@ func getAllMemEntries(mmapFile mmap.MMap) ([]*models.DataRecord, error) {
 	var entries []*models.DataRecord
 	dataRecordSize := uint64(0)
 	offset := uint64(0)
-	//read IndexConst number of data records
 	for len(mmapFile) != int(offset) {
 		tombstone := mmapFile[offset+TombstoneStart] == 1
 		keySize := binary.BigEndian.Uint64(mmapFile[offset+DataKeySizeStart : offset+DataValueSizeStart])
@@ -866,7 +871,12 @@ func (sstable *SSTable) CheckDataValidity(subDirName string) ([]*models.Data, er
 		}
 
 		merkleTree = merkle.DeserializeMerkle(metaMMap)
-		merkleTree2, err = merkle.CreateMerkleTree(entries, merkleTree.HashWithSeed)
+		merkleTree2 = merkle.NewMerkle(merkleTree.HashWithSeed)
+		merkle2Data, err := merkleTree2.CreateAllLeavesData(entries)
+		if err != nil {
+			return nil, err
+		}
+		merkleTree2.CreateMerkleTree(merkle2Data)
 		if err != nil {
 			return nil, err
 		}
@@ -915,7 +925,12 @@ func (sstable *SSTable) CheckDataValidity(subDirName string) ([]*models.Data, er
 		}
 
 		merkleTree = merkle.DeserializeMerkle(metaMMap)
-		merkleTree2, err = merkle.CreateMerkleTree(entries, merkleTree.HashWithSeed)
+		merkleTree2 = merkle.NewMerkle(merkleTree.HashWithSeed)
+		merkle2Data, err := merkleTree2.CreateAllLeavesData(entries)
+		if err != nil {
+			return nil, err
+		}
+		merkleTree2.CreateMerkleTree(merkle2Data)
 		if err != nil {
 			return nil, err
 		}
