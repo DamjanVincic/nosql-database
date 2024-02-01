@@ -60,20 +60,37 @@ func (indexRecord *IndexRecord) SerializeIndexRecord(compression bool, encoder *
 	return bytes
 }
 
-func DeserializeIndexRecord(bytes []byte) *IndexRecord {
-	// Deserialize K
-	//
-	// eySize (8 bytes, BigEndian)
-	keySize := binary.BigEndian.Uint64(bytes[KeySizeStart:KeySizeSize])
+func DeserializeIndexRecord(bytes []byte, compression bool, encoder *key_encoder.KeyEncoder) (indexRecord *IndexRecord, err error) {
+	indexRecord = nil
+	err = nil
 
-	// Deserialize Key (variable size)
-	key := string(bytes[KeyStart : KeyStart+int(keySize)])
+	var key string
+	var offset uint64
 
-	// Deserialize Offset (8 bytes, BigEndian)
-	offset := binary.BigEndian.Uint64(bytes[KeyStart+int(keySize):])
+	if compression {
+		//deserialize encoded uint64 value of key and get number of bytes read
+		encodedKey, bytesRead := binary.Uvarint(bytes)
 
-	return &IndexRecord{
-		Key:    key,
-		Offset: offset,
+		//get string key from encoded value
+		key, err = encoder.GetKey(encodedKey)
+		if err != nil {
+			return
+		}
+
+		//deserialize offset
+		offset, _ = binary.Uvarint(bytes[bytesRead:])
+
+	} else {
+		// Deserialize KeySize (8 bytes, BigEndian)
+		keySize := binary.BigEndian.Uint64(bytes[KeySizeStart:KeySizeSize])
+
+		// Deserialize Key (variable size)
+		key = string(bytes[KeyStart : KeyStart+int(keySize)])
+
+		// Deserialize Offset (8 bytes, BigEndian)
+		offset = binary.BigEndian.Uint64(bytes[KeyStart+int(keySize):])
 	}
+
+	indexRecord = &IndexRecord{Key: key, Offset: offset}
+	return
 }
