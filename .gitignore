@@ -30,3 +30,11 @@ go.work
 # WAL folder
 wal/
 !internal/structures/wal/
+
+# SSTABLE folder
+sstable/
+!internal/structures/sstable/
+
+# keyencoder folder
+keyencoder/
+!internal/structures/keyencoder
