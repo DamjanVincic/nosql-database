@@ -4,6 +4,8 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/DamjanVincic/key-value-engine/internal/models"
+	"github.com/DamjanVincic/key-value-engine/internal/structures/memtable"
 	"github.com/edsrzf/mmap-go"
 	"os"
 	"path/filepath"
@@ -37,10 +39,19 @@ const (
 	ValueSizeStart = KeySizeStart + KeySizeSize
 	KeyStart       = ValueSizeStart + ValueSizeSize
 
-	// RecordHeaderSize The size of the record header
+	// The size of the record header
 	RecordHeaderSize = CrcSize + TimestampSize + TombstoneSize + KeySizeSize + ValueSizeSize
+
+	// The size of bytes in the header to store where the records start from after deleting previous segments
+	BeginningOffsetSize = 8
+	// The size of bytes in the header to store the amount of bytes overflowed from the previous file
+	BytesOverflowOffsetSize = 8
+
+	BeginningOffsetStart     = 0
+	BytesOverflowOffsetStart = BeginningOffsetStart + BeginningOffsetSize
+
 	// HeaderSize File header size, to store the amount of bytes overflowed from the previous file
-	HeaderSize = 8
+	HeaderSize = BeginningOffsetSize + BytesOverflowOffsetSize
 
 	// Path to store the Write Ahead Log files
 	Path = "wal"
@@ -227,7 +238,7 @@ func (wal *WAL) writeRecordBytes(file *os.File, recordBytes []byte, idx uint64) 
 		}
 
 		// If the record bytes are bigger than the segment size, they will take up the entire new segment
-		binary.BigEndian.PutUint64(newSegmentMmap[:HeaderSize], min(recordSize-(idx+remainingBytes), wal.segmentSize))
+		binary.BigEndian.PutUint64(newSegmentMmap[BytesOverflowOffsetStart:HeaderSize], min(recordSize-(idx+remainingBytes), wal.segmentSize))
 		err = newSegmentMmap.Unmap()
 		if err != nil {
 			return 0, err
@@ -239,7 +250,6 @@ func (wal *WAL) writeRecordBytes(file *os.File, recordBytes []byte, idx uint64) 
 		}
 	} else {
 		// If the record can fit in the current file
-
 		remainingBytes = recordSize - idx // To return the amount of bytes written in the last part of the byte array
 
 		err := wal.writeBytes(file, recordBytes[idx:], fileSize)
@@ -252,7 +262,7 @@ func (wal *WAL) writeRecordBytes(file *os.File, recordBytes []byte, idx uint64) 
 }
 
 // AddRecord Add a new record to the Write Ahead Log
-func (wal *WAL) AddRecord(key string, value []byte, tombstone bool) error {
+func (wal *WAL) AddRecord(key string, value []byte, tombstone bool) (*models.Data, error) {
 	var record = NewRecord(key, value, tombstone)
 	var recordBytes = record.Serialize()
 	var recordSize = uint64(len(recordBytes))
@@ -262,56 +272,73 @@ func (wal *WAL) AddRecord(key string, value []byte, tombstone bool) error {
 	for idx < recordSize {
 		file, err := os.OpenFile(filepath.Join(Path, wal.currentFilename), os.O_RDWR, 0644)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		bytesWritten, err := wal.writeRecordBytes(file, recordBytes, idx)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		err = file.Close()
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		idx += bytesWritten
 	}
 
-	return nil
+	return &models.Data{
+		Key:       record.Key,
+		Value:     record.Value,
+		Tombstone: record.Tombstone,
+		Timestamp: record.Timestamp,
+	}, nil
 }
 
 /*
-Read records from a file
-Return records and a buffer with the remaining bytes whose other part is in another file
+Read records from a file, insert them into memtable or return the offset where the record with higher timestamp starts from.
+Return offset in a file, a buffer with the remaining bytes whose other part is in another file, boolean if the record bytes overflowed from the previous file, and error
 */
-func (wal *WAL) readRecordsFromFile(fileName string, buffer []byte) ([]*Record, []byte, error) {
-	records := make([]*Record, 0)
-
+func (wal *WAL) readRecordsFromFile(fileName string, buffer []byte, memtable *memtable.Memtable, timestamp uint64, previousOffset int) (int, []byte, bool, error) {
 	file, err := os.OpenFile(filepath.Join(Path, fileName), os.O_RDONLY, 0644)
 	if err != nil {
-		return nil, nil, err
+		return 0, nil, false, err
 	}
 
 	mmapFile, err := mmap.Map(file, mmap.RDONLY, 0)
 	if err != nil {
-		return nil, nil, err
+		return 0, nil, false, err
 	}
 
-	// Offset where the record from previous file ends
-	var offset = int(binary.BigEndian.Uint64(mmapFile[:HeaderSize])) + HeaderSize
+	// Offset from where to start reading in case segments are deleted because of memtable flush
+	var offset = int(binary.BigEndian.Uint64(mmapFile[BeginningOffsetStart:BytesOverflowOffsetStart]))
+	if offset == 0 {
+		// Offset where the record from previous file ends
+		offset = int(binary.BigEndian.Uint64(mmapFile[BytesOverflowOffsetStart:HeaderSize])) + HeaderSize
+	} else {
+		// If the offset is not 0, it means that the previous file got deleted because of memtable flush
+		buffer = []byte{}
+	}
 
 	// If the last record got deleted based on low watermark, we will ignore the record's remaining bytes
 	if len(buffer) != 0 {
 		buffer = append(buffer, mmapFile[HeaderSize:offset]...)
 
 		// If the record bytes overflow the current file, we won't deserialize them yet
-		if binary.BigEndian.Uint64(mmapFile[:HeaderSize]) != uint64(len(mmapFile))-HeaderSize {
+		if offset != len(mmapFile) {
 			record, err := Deserialize(buffer)
+
 			if err != nil {
-				return nil, nil, err
+				return 0, nil, false, err
 			}
-			records = append(records, record)
+			if memtable != nil {
+				memtable.Put(record.Key, record.Value, record.Timestamp, record.Tombstone)
+			} else {
+				if record.Timestamp > timestamp {
+					return previousOffset, nil, true, nil
+				}
+			}
 			buffer = []byte{}
 		}
 	}
@@ -334,9 +361,17 @@ func (wal *WAL) readRecordsFromFile(fileName string, buffer []byte) ([]*Record, 
 		// If the whole record is in this file, we deserialize it
 		record, err := Deserialize(mmapFile[i : uint64(i)+RecordHeaderSize+keySize+valueSize])
 		if err != nil {
-			return nil, nil, err
+			return 0, nil, false, err
 		}
-		records = append(records, record)
+
+		if memtable != nil {
+			memtable.Put(record.Key, record.Value, record.Timestamp, record.Tombstone)
+		} else {
+			if record.Timestamp > timestamp {
+				return i, nil, false, nil
+			}
+		}
+
 		i += RecordHeaderSize + int(record.KeySize+record.ValueSize)
 	}
 
@@ -345,34 +380,35 @@ func (wal *WAL) readRecordsFromFile(fileName string, buffer []byte) ([]*Record, 
 
 	err = mmapFile.Unmap()
 	if err != nil {
-		return nil, nil, err
+		return 0, nil, false, err
 	}
 
 	err = file.Close()
 	if err != nil {
-		return nil, nil, err
+		return 0, nil, false, err
 	}
 
-	return records, buffer, nil
+	if len(buffer) != 0 {
+		return i, buffer, true, nil
+	}
+	return 0, buffer, false, nil
 }
 
-// GetRecords Get all records from the Write Ahead Log
-func (wal *WAL) GetRecords() ([]*Record, error) {
+// ReadRecords Read all records from the Write Ahead Log
+func (wal *WAL) ReadRecords(memtable *memtable.Memtable) error {
 	files, err := os.ReadDir(Path)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	records := make([]*Record, 0)
 	// Buffer for the remaining bytes from the previous file
 	var buffer = make([]byte, 0)
 	for idx, file := range files {
-		readRecords, newBuffer, err := wal.readRecordsFromFile(file.Name(), buffer)
+		_, newBuffer, _, err := wal.readRecordsFromFile(file.Name(), buffer, memtable, 0, 0)
 		if err != nil {
-			return nil, err
+			return err
 		}
 
-		records = append(records, readRecords...)
 		buffer = newBuffer
 
 		// If there are no more files and the buffer isn't empty, deserialize the last record
@@ -380,28 +416,31 @@ func (wal *WAL) GetRecords() ([]*Record, error) {
 		if len(buffer) != 0 && idx == len(files)-1 {
 			record, err := Deserialize(buffer)
 			if err != nil {
-				return nil, err
+				return err
 			}
-			records = append(records, record)
+
+			memtable.Put(record.Key, record.Value, record.Timestamp, record.Tombstone)
 		}
 	}
 
-	return records, nil
+	return nil
 }
 
 // findTimestampSegment Find a segment that has a record with the given timestamp, or a newer one (for low watermark)
-func (wal *WAL) findTimestampSegment(rec *Record) (uint64, error) {
+// Returns file index, and offset inside the file where the record with the higher timestamp starts from
+func (wal *WAL) findTimestampSegment(timestamp uint64) (int, int, error) {
 	files, err := os.ReadDir(Path)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 
 	// Buffer for the remaining bytes from the previous file
 	var buffer = make([]byte, 0)
+	var offset int
 	for idx, file := range files {
-		records, newBuffer, err := wal.readRecordsFromFile(file.Name(), buffer)
+		offset, newBuffer, previousFile, err := wal.readRecordsFromFile(file.Name(), buffer, nil, timestamp, offset)
 		if err != nil {
-			return 0, err
+			return 0, 0, err
 		}
 
 		buffer = newBuffer
@@ -411,31 +450,58 @@ func (wal *WAL) findTimestampSegment(rec *Record) (uint64, error) {
 		if len(buffer) != 0 && idx == len(files)-1 {
 			record, err := Deserialize(buffer)
 			if err != nil {
-				return 0, err
+				return 0, 0, err
 			}
 
-			records = append(records, record)
+			if record.Timestamp > timestamp {
+				return idx, offset, nil
+			}
 		}
 
-		for _, record := range records {
-			if record.Timestamp >= rec.Timestamp {
-				return uint64(idx), nil
+		if offset != 0 && len(buffer) == 0 {
+			if previousFile {
+				return idx - 1, offset, nil
+			} else {
+				return idx, offset, nil
 			}
 		}
 	}
 
-	return 0, errors.New("no segment found")
+	return 0, 0, errors.New("no segment found")
 }
 
 // MoveLowWatermark Move the low watermark to the segment that has a record with the given timestamp
-func (wal *WAL) MoveLowWatermark(record *Record) error {
+func (wal *WAL) MoveLowWatermark(timestamp uint64) error {
 	// Find the segment that has a record with the given or a newer timestamp
-	idx, err := wal.findTimestampSegment(record)
+	idx, offset, err := wal.findTimestampSegment(timestamp)
 	if err != nil {
 		return err
 	}
 
 	files, err := os.ReadDir(Path)
+	if err != nil {
+		return err
+	}
+
+	// Put the offset in the file header
+	file, err := os.OpenFile(filepath.Join(Path, files[idx].Name()), os.O_RDWR, 0644)
+	if err != nil {
+		return err
+	}
+
+	mmapFile, err := mmap.Map(file, mmap.RDWR, 0)
+	if err != nil {
+		return err
+	}
+
+	binary.BigEndian.PutUint64(mmapFile[BeginningOffsetStart:BytesOverflowOffsetStart], uint64(offset))
+
+	err = mmapFile.Unmap()
+	if err != nil {
+		return err
+	}
+
+	err = file.Close()
 	if err != nil {
 		return err
 	}
@@ -448,7 +514,7 @@ func (wal *WAL) MoveLowWatermark(record *Record) error {
 		}
 
 		// If the new file is the same as the old one, don't do anything
-		if fileIndex == int(idx) {
+		if fileIndex == idx {
 			return nil
 		}
 
