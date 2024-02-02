@@ -2,6 +2,9 @@ package sstable
 
 import (
 	"encoding/binary"
+	"github.com/DamjanVincic/key-value-engine/internal/models"
+	"github.com/DamjanVincic/key-value-engine/internal/structures/keyencoder"
+	"github.com/DamjanVincic/key-value-engine/internal/structures/memtable"
 	"github.com/edsrzf/mmap-go"
 	"os"
 	"path/filepath"
@@ -138,4 +141,125 @@ func (sstable *SSTable) getDataFilesWithPrefix(prefix string) (files []mmap.MMap
 	return
 
 	//ne treba da ih zatvaramo!!
+}
+
+func findFirstWithPrefix(prefix string, mmapFile mmap.MMap, compression bool, encoder *keyencoder.KeyEncoder) (mmap.MMap, error) {
+	var offset uint64
+	for {
+		record, recordSize, err := models.Deserialize(mmapFile[offset:], compression, encoder)
+		if err != nil {
+			return nil, err
+		}
+		if strings.HasPrefix(record.Key, prefix) {
+			return mmapFile[offset:], nil
+		}
+		offset += recordSize
+		if uint64(len(mmapFile)) <= offset {
+			return nil, nil
+		}
+	}
+}
+
+type ScanningCandidate struct {
+	key        string
+	file       *ScannerFile
+	offset     uint64
+	recordSize uint64
+	timestamp  uint64
+}
+
+type ScannerFile struct {
+	file   mmap.MMap
+	offset uint64
+}
+
+func (sstable *SSTable) PrefixScan(prefix string, pageNumber uint64, pageSize uint64, memtable *memtable.Memtable) ([]*models.Data, error) {
+	memKeys := memtable.GetKeysWithPrefix(prefix)
+	candidates := make([]*ScanningCandidate, 0)
+	found := make([]*ScanningCandidate, 0)
+	var minCandidate *ScanningCandidate
+
+	recordsNeeded := pageNumber * pageSize
+
+	files, err := sstable.getDataFilesWithPrefix(prefix)
+	if err != nil {
+		return nil, err
+	}
+
+	scannerFiles := make([]*ScannerFile, len(files))
+	for i, file := range files {
+		scannerFiles[i] = &ScannerFile{file, 0}
+	}
+
+	for {
+		if len(memKeys) > 0 {
+			minCandidate = &ScanningCandidate{memKeys[0], nil, 0, 0, 0}
+		}
+		for _, scannerFile := range scannerFiles {
+			record, recordSize, err := models.Deserialize(scannerFile.file[scannerFile.offset:], sstable.compression, sstable.encoder)
+			if err != nil {
+				return nil, err
+			}
+			if minCandidate == nil {
+				minCandidate = &ScanningCandidate{record.Key, scannerFile, scannerFile.offset, recordSize, record.Timestamp}
+				continue
+			}
+			if minCandidate.key > record.Key {
+				minCandidate = &ScanningCandidate{record.Key, scannerFile, scannerFile.offset, recordSize, record.Timestamp}
+				continue
+			}
+			if minCandidate.key == record.Key {
+				if minCandidate.timestamp < record.Timestamp && minCandidate.file != nil {
+					candidates = append(candidates, minCandidate)
+					minCandidate = &ScanningCandidate{record.Key, scannerFile, scannerFile.offset, recordSize, record.Timestamp}
+				} else {
+					candidates = append(candidates, &ScanningCandidate{record.Key, scannerFile, scannerFile.offset, recordSize, record.Timestamp})
+				}
+			}
+		}
+		if minCandidate == nil || uint64(len(found)) >= recordsNeeded {
+			break
+		}
+
+		found = append(found, minCandidate)
+
+		if minCandidate.file == nil {
+			memKeys = memKeys[1:]
+		} else {
+			minCandidate.file.offset += minCandidate.recordSize
+			if uint64(len(minCandidate.file.file)) <= minCandidate.file.offset {
+				scannerFiles = remove(scannerFiles, minCandidate.file)
+			}
+			for _, candidate := range candidates {
+				candidate.file.offset += candidate.recordSize
+				if uint64(len(candidate.file.file)) <= candidate.file.offset {
+					scannerFiles = remove(scannerFiles, candidate.file)
+				}
+			}
+		}
+		minCandidate = nil
+	}
+
+	if uint64(len(found)) < (pageNumber-1)*pageSize {
+		return nil, nil
+		//zatvori fajlove!
+	}
+	records := make([]*models.Data, 0)
+	for i := (pageNumber - 1) * pageSize; i < uint64(len(found)); i++ {
+		record, _, err := models.Deserialize(found[i].file.file[found[i].offset:], sstable.compression, sstable.encoder)
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	return records, nil
+}
+
+func remove(l []*ScannerFile, item *ScannerFile) []*ScannerFile {
+	for i, other := range l {
+		if other == item {
+			return append(l[:i], l[i+1:]...)
+		}
+	}
+	return nil
 }
