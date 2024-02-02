@@ -4,15 +4,15 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/DamjanVincic/key-value-engine/internal/models"
+	"github.com/DamjanVincic/key-value-engine/internal/structures/bloomfilter"
 	"github.com/DamjanVincic/key-value-engine/internal/structures/keyencoder"
+	"github.com/DamjanVincic/key-value-engine/internal/structures/merkle"
+	"github.com/edsrzf/mmap-go"
 	"os"
 	"path/filepath"
 	"strconv"
-
-	"github.com/DamjanVincic/key-value-engine/internal/models"
-	"github.com/DamjanVincic/key-value-engine/internal/structures/bloomfilter"
-	"github.com/DamjanVincic/key-value-engine/internal/structures/merkle"
-	"github.com/edsrzf/mmap-go"
+	"strings"
 )
 
 const (
@@ -922,6 +922,28 @@ func readDataFromFile(mmapFile mmap.MMap, indexThinningConst uint16, key string,
 	return nil, errors.New("key not found")
 }
 
+//// returns mmapFile with data records, first one being min key with given prefix
+//func positionToFirstKeyWithPrefix(mmapFile mmap.MMap, indexThinningConst uint16, prefix string, offset uint64, compression bool, encoder *keyencoder.KeyEncoder) (mmap.MMap, error) {
+//	//read IndexConst number of data records
+//	for i := uint16(0); i < indexThinningConst; i++ {
+//		dataRecord, dataRecordSize, err := models.Deserialize(mmapFile[offset:], compression, encoder)
+//
+//		if err != nil {
+//			return nil, err
+//		}
+//		// keys must be equal
+//		if strings.HasPrefix(dataRecord.Key, prefix) {
+//			return mmapFile[offset:], nil
+//		}
+//		offset += dataRecordSize
+//		// when you get to the end it means there is no match
+//		if len(mmapFile) <= int(offset) {
+//			return nil, nil
+//		}
+//	}
+//	return nil, nil
+//}
+
 func RemoveSSTable(filenames []string) error {
 	for i := range filenames {
 		err := os.Chmod(filenames[i], 0777) // Change permissions to allow deletion
@@ -1094,4 +1116,151 @@ func (sstable *SSTable) CheckDataValidity(subDirName string) ([]*models.Data, er
 	}
 
 	return corruptedData, nil
+}
+
+func (sstable *SSTable) getDataFilesWithPrefix(prefix string) (files []mmap.MMap, err error) {
+	files = make([]mmap.MMap, 0)
+	err = nil
+
+	var data mmap.MMap
+	var summary mmap.MMap
+
+	// Storage for offsets in case of single file
+	var dataStart uint64
+	var indexStart uint64
+	var summaryStart uint64
+	var filterStart uint64
+
+	var currentFile *os.File
+	var mmapSingleFile mmap.MMap
+
+	// if there is no dir to read from return nil
+	dirEntries, err := os.ReadDir(Path)
+	if os.IsNotExist(err) {
+		return nil, err
+	}
+
+	// i variable will be increment each time as long as its not equal to the len of dirEntries
+	dirSize := len(dirEntries) - 1
+	i := dirSize
+	for i >= 0 {
+		subDirName := dirEntries[i].Name()
+		subDirPath := filepath.Join(Path, subDirName)
+		subDirEntries, err := os.ReadDir(subDirPath)
+		if os.IsNotExist(err) {
+			return nil, err
+		}
+		subDirSize := len(subDirEntries)
+
+		// search the single file if len == 1, otherwise multi files
+		if subDirSize == 1 {
+			// get the data from single file sstable
+			singleFilePath := filepath.Join(subDirPath, subDirEntries[0].Name())
+			currentFile, err = os.OpenFile(singleFilePath, os.O_RDWR, 0644)
+			if err != nil {
+				return nil, err
+			}
+
+			mmapSingleFile, err = mmap.Map(currentFile, mmap.RDWR, 0)
+			if err != nil {
+				return nil, err
+			}
+
+			//get sizes of each part of SSTable single file
+			header := mmapSingleFile[:HeaderSize]
+
+			dataSize := binary.BigEndian.Uint64(header[:IndexBlockStart])                   // dataSize
+			indexSize := binary.BigEndian.Uint64(header[IndexBlockStart:SummaryBlockStart]) // indexSize
+
+			dataStart = uint64(HeaderSize)
+			indexStart = dataStart + dataSize
+			summaryStart = indexStart + indexSize
+		}
+		//check if its in summary range (between min and max index)
+		if subDirSize == 1 {
+			summary = mmapSingleFile[summaryStart:filterStart]
+		} else {
+			currentFile, err = os.OpenFile(filepath.Join(subDirPath, subDirEntries[4].Name()), os.O_RDWR, 0644)
+			if err != nil {
+				return nil, err
+			}
+			summary, err = mmap.Map(currentFile, mmap.RDWR, 0)
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		var minKey string
+		var maxKey string
+
+		_, minKey, maxKey, _, err = readSummaryHeader(summary, sstable.compression, sstable.encoder)
+		if err != nil {
+			return
+		}
+
+		if (minKey > prefix && !strings.HasPrefix(minKey, prefix)) || (maxKey < prefix) {
+			i--
+			if subDirSize == 1 {
+				err = mmapSingleFile.Unmap()
+				if err != nil {
+					return nil, err
+				}
+				err = currentFile.Close()
+				if err != nil {
+					return nil, err
+				}
+			}
+			continue
+		}
+
+		if subDirSize != 1 {
+			err = summary.Unmap()
+			if err != nil {
+				return nil, err
+			}
+			err = currentFile.Close()
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		var positionedFile mmap.MMap
+		positionedFile, err = findFirstWithPrefix(prefix, data, sstable.compression, sstable.encoder)
+		if err != nil {
+			return nil, err
+		}
+		if positionedFile != nil {
+			files = append(files, positionedFile)
+		}
+
+		if subDirSize == 1 {
+			err = mmapSingleFile.Unmap()
+			if err != nil {
+				return nil, err
+			}
+			err = currentFile.Close()
+			if err != nil {
+				return nil, err
+			}
+		}
+		i--
+	}
+	return
+}
+
+func findFirstWithPrefix(prefix string, mmapFile mmap.MMap, compression bool, encoder *keyencoder.KeyEncoder) (mmap.MMap, error) {
+	var offset uint64
+	for {
+		record, recordSize, err := models.Deserialize(mmapFile[offset:], compression, encoder)
+		if err != nil {
+			return nil, err
+		}
+		if strings.HasPrefix(record.Key, prefix) {
+			return mmapFile[offset:], nil
+		}
+		offset += recordSize
+		if uint64(len(mmapFile)) <= offset {
+			return nil, nil
+		}
+	}
 }
