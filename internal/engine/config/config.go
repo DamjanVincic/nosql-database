@@ -79,29 +79,28 @@ var config = &Config{
 }
 
 // return default if an error is thrown while loading config
-func LoadConfig() (*Config, error) {
+func LoadConfig() *Config {
 	file, err := os.ReadFile(ConfigFile)
 	if err != nil {
 		fmt.Println("Error while reading config file, using default config")
-		return config, err
+		return config
 	}
 
 	var fileConfig = &Config{}
 
 	if err = yaml.Unmarshal(file, fileConfig); err != nil {
 		fmt.Println("Error while unmarshalling config, using default config")
-		return config, err
+		return config
 	}
 
 	validate := validator.New(validator.WithRequiredStructEnabled())
 	if err = validate.Struct(fileConfig); err != nil {
-		//return nil, err
 		fmt.Println("Error while validating config, using default config")
 	} else {
 		config = fileConfig
 	}
 
-	return config, nil
+	return config
 }
 
 func (config *Config) WriteConfig() error {
