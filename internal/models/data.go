@@ -34,6 +34,15 @@ type Data struct {
 	Timestamp uint64
 }
 
+func NewData(key string, value []byte, tombstone bool, timestamp uint64) *Data {
+	return &Data{
+		Key:       key,
+		Value:     value,
+		Tombstone: tombstone,
+		Timestamp: timestamp,
+	}
+}
+
 func (data *Data) Serialize(compression bool, encoder *keyencoder.KeyEncoder) []byte {
 	if compression {
 		return data.serializeWithCompression(encoder)

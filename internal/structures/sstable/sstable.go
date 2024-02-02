@@ -248,14 +248,20 @@ func (sstable *SSTable) createFiles(memEntries []*models.Data, singleFile bool, 
 	var countRecords uint16
 	var countIndexRecords uint16
 
-	var merkleDataRecords []*models.Data
+	var merkleHashedRecords []byte
 	//create an empty bloom filter
-	filter := bloomfilter.CreateBloomFilter(len(memEntries), 0.001)
+	filter := bloomfilter.CreateBloomFilter(len(memEntries), 0.00001)
+	//create an new merkle tree with new hashfunc and without nodes
+	merkleTree := merkle.NewMerkle(nil)
 	// process of adding entries
 	for _, dataRecord := range memEntries {
 		//every entry is saved in data segment
 
-		merkleDataRecords = append(merkleDataRecords, dataRecord)
+		hashedData, err := merkleTree.CreateNodeData(dataRecord, sstable.compression, sstable.encoder)
+		if err != nil {
+			return err
+		}
+		merkleHashedRecords = append(merkleHashedRecords, hashedData...)
 		serializedRecord := dataRecord.Serialize(sstable.compression, sstable.encoder)
 		sizeOfDR = uint64(len(serializedRecord))
 		dataRecords = append(dataRecords, serializedRecord...)
@@ -280,14 +286,14 @@ func (sstable *SSTable) createFiles(memEntries []*models.Data, singleFile bool, 
 		}
 		summaryMax = dataRecord.Key
 		//add key to bf
-		err := filter.AddElement([]byte(dataRecord.Key))
+		err = filter.AddElement([]byte(dataRecord.Key))
 		if err != nil {
 			return err
 		}
 		offset += sizeOfDR
 		countRecords++
 	}
-	merkleTree, err := merkle.CreateMerkleTree(merkleDataRecords, nil, sstable.compression, sstable.encoder)
+	err := merkleTree.CreateMerkleTree(merkleHashedRecords, sstable.compression, sstable.encoder)
 	if err != nil {
 		return err
 	}
@@ -658,6 +664,10 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 		}
 		dataRecord, err := readDataFromFile(data, indexThinningConst, key, dataOffset, sstable.compression, sstable.encoder)
 		if err != nil {
+			if err.Error() == "key not found" {
+				i--
+				continue
+			}
 			return nil, err
 		}
 
@@ -673,6 +683,17 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 		}
 
 		if dataRecord != nil {
+			if subDirSize == 1 {
+				err = mmapSingleFile.Unmap()
+				if err != nil {
+					return nil, err
+				}
+				err = currentFile.Close()
+				if err != nil {
+					return nil, err
+				}
+			}
+
 			return dataRecord, nil
 		}
 		i--
@@ -722,7 +743,7 @@ func readSummaryFromFile(mmapFile mmap.MMap, key string, compression bool, encod
 	var recordLength uint64
 	var offset uint64
 	for {
-		currentSummaryRecord, recordLength, err = readNextIndex(mmapFile, offset, compression, encoder)
+		currentSummaryRecord, recordLength, err = readNextIndexRecord(mmapFile, offset, compression, encoder)
 		if err != nil {
 			return 0, 0, err
 		}
@@ -813,7 +834,7 @@ func readSummaryHeader(mmapFile mmap.MMap, compression bool, encoder *keyencoder
 	return
 }
 
-func readNextIndex(mmapFile mmap.MMap, offset uint64, compression bool, encoder *keyencoder.KeyEncoder) (indexRecord *IndexRecord, recordLength uint64, err error) {
+func readNextIndexRecord(mmapFile mmap.MMap, offset uint64, compression bool, encoder *keyencoder.KeyEncoder) (indexRecord *IndexRecord, recordLength uint64, err error) {
 	err = nil
 	if compression {
 		if len(mmapFile[offset:]) < CompressedIndexRecordMaxSize {
@@ -841,7 +862,7 @@ func readIndexFromFile(mmapFile mmap.MMap, summaryConst uint16, key string, offs
 	indexRecordSize := uint64(0)
 	//read SummaryConst number of index records
 	for i := uint16(0); i < summaryConst; i++ {
-		currentRecord, indexRecordSize, err = readNextIndex(mmapFile, offset, compression, encoder)
+		currentRecord, indexRecordSize, err = readNextIndexRecord(mmapFile, offset, compression, encoder)
 		if err != nil {
 			return 0, 0, err
 		}
@@ -889,151 +910,188 @@ func readDataFromFile(mmapFile mmap.MMap, indexThinningConst uint16, key string,
 			return dataRecord, err
 		}
 		// keys must be equal
-		if dataRecord.Key == key {
+		if dataRecord.Key == key || key == "" {
 			return dataRecord, nil
 		}
 		offset += dataRecordSize
 		// when you get to the end it means there is no match
 		if len(mmapFile) <= int(offset) {
-			return nil, nil
+			return nil, errors.New("key not found")
 		}
 	}
-	return nil, nil
+	return nil, errors.New("key not found")
 }
 
-func readMetaFromFile(mmapFile mmap.MMap) *merkle.MerkleTree {
-	return merkle.DeserializeMerkle(mmapFile)
+func RemoveSSTable(filenames []string) error {
+	for i := range filenames {
+		err := os.Chmod(filenames[i], 0777) // Change permissions to allow deletion
+		if err != nil {
+			return err
+		}
+
+		err = os.RemoveAll(filenames[i])
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Frdr testing rikvajrd
 // subDirName - 01_sstable_00001
-//func (sstable *SSTable) CheckDataValidity(subDirName string) ([]*models.Data, error) {
-//	var corruptedData []*models.Data
-//	var metaMMap mmap.MMap
-//	var dataMMap mmap.MMap
-//
-//	var entries []*models.DataRecord
-//	var merkleTree *merkle.MerkleTree
-//	var merkleTree2 *merkle.MerkleTree
-//
-//	subDirPath := filepath.Join(Path, subDirName)
-//	subDirEntries, err := os.ReadDir(subDirPath)
-//	if os.IsNotExist(err) {
-//		return nil, err
-//	}
-//	subDirSize := len(subDirEntries)
-//
-//	// search the single file if len == 1, otherwise multi files
-//	if subDirSize == 1 {
-//		// get the data from single file sstable
-//		singleFilePath := filepath.Join(subDirPath, subDirEntries[0].Name())
-//		currentFile, err := os.OpenFile(singleFilePath, os.O_RDWR, 0644)
-//		if err != nil {
-//			return nil, err
-//		}
-//
-//		currentFileMMap, err := mmap.Map(currentFile, mmap.RDWR, 0)
-//		if err != nil {
-//			return nil, err
-//		}
-//
-//		//get sizes of each part of SSTable single file
-//		header := currentFileMMap[:HeaderSize]
-//
-//		dataSize := binary.BigEndian.Uint64(header[:IndexBlockStart])                      // dataSize
-//		indexSize := binary.BigEndian.Uint64(header[IndexBlockStart:SummaryBlockStart])    // indexSize
-//		summarySize := binary.BigEndian.Uint64(header[SummaryBlockStart:FilterBlockStart]) // summarySize
-//		filterSize := binary.BigEndian.Uint64(header[FilterBlockStart:])                   // filterSize
-//
-//		dataStart := uint64(HeaderSize)
-//		indexStart := dataStart + dataSize
-//		summaryStart := indexStart + indexSize
-//		filterStart := summaryStart + summarySize
-//		metaStart := filterStart + filterSize
-//
-//		dataMMap = currentFileMMap[dataStart:indexStart]
-//		metaMMap = currentFileMMap[metaStart:]
-//
-//		entries, err = getAllMemEntries(dataMMap)
-//		if err != nil {
-//			return nil, err
-//		}
-//
-//		merkleTree = merkle.DeserializeMerkle(metaMMap)
-//		merkleTree2, err = merkle.CreateMerkleTree(entries, merkleTree.HashWithSeed)
-//		if err != nil {
-//			return nil, err
-//		}
-//
-//		err = currentFileMMap.Unmap()
-//		if err != nil {
-//			return nil, err
-//		}
-//
-//		err = currentFile.Close()
-//		if err != nil {
-//			return nil, err
-//		}
-//	} else {
-//		currentFile, err := os.OpenFile(filepath.Join(subDirPath, subDirEntries[0].Name()), os.O_RDWR, 0644)
-//		if err != nil {
-//			return nil, err
-//		}
-//		dataMMap, err = mmap.Map(currentFile, mmap.RDWR, 0)
-//		if err != nil {
-//			return nil, err
-//		}
-//
-//		entries, err = getAllMemEntries(dataMMap)
-//		if err != nil {
-//			return nil, err
-//		}
-//
-//		err = dataMMap.Unmap()
-//		if err != nil {
-//			return nil, err
-//		}
-//		err = currentFile.Close()
-//		if err != nil {
-//			return nil, err
-//		}
-//
-//		currentFile, err = os.OpenFile(filepath.Join(subDirPath, subDirEntries[3].Name()), os.O_RDWR, 0644)
-//		if err != nil {
-//			return nil, err
-//		}
-//
-//		metaMMap, err = mmap.Map(currentFile, mmap.RDWR, 0)
-//		if err != nil {
-//			return nil, err
-//		}
-//
-//		merkleTree = merkle.DeserializeMerkle(metaMMap)
-//		merkleTree2, err = merkle.CreateMerkleTree(entries, merkleTree.HashWithSeed)
-//		if err != nil {
-//			return nil, err
-//		}
-//	}
-//
-//	corruptedIndexes, err := merkleTree.CompareTrees(merkleTree2)
-//	for _, index := range corruptedIndexes {
-//		corruptedData = append(corruptedData, entries[index].Data)
-//	}
-//
-//	return corruptedData, nil
-//}
+func (sstable *SSTable) CheckDataValidity(subDirName string) ([]*models.Data, error) {
+	var corruptedData []*models.Data
+	var metaMMap mmap.MMap
+	var dataMMap mmap.MMap
 
-//func compareMerkleTrees(bytes, mmapFileData []byte) ([]uint64, error) {
-//	merkleTree := merkle.DeserializeMerkle(bytes)
-//
-//	entries, err := getAllMemEntries(mmapFileData)
-//	if err != nil {
-//		return nil, err
-//	}
-//	newMerkle, err := merkle.CreateMerkleTree(entries, merkleTree.HashWithSeed)
-//	if err != nil {
-//		return nil, err
-//	}
-//
-//	return merkleTree.CompareTrees(newMerkle)
-//}
+	var merkleTree *merkle.MerkleTree
+	var merkleTree2 *merkle.MerkleTree
+
+	subDirPath := filepath.Join(Path, subDirName)
+	subDirEntries, err := os.ReadDir(subDirPath)
+	if os.IsNotExist(err) {
+		return nil, err
+	}
+	subDirSize := len(subDirEntries)
+
+	offset := uint64(0)
+	// search the single file if len == 1, otherwise multi files
+	if subDirSize == 1 {
+		// get the data from single file sstable
+		singleFilePath := filepath.Join(subDirPath, subDirEntries[0].Name())
+		currentFile, err := os.OpenFile(singleFilePath, os.O_RDWR, 0644)
+		if err != nil {
+			return nil, err
+		}
+
+		currentFileMMap, err := mmap.Map(currentFile, mmap.RDWR, 0)
+		if err != nil {
+			return nil, err
+		}
+
+		//get sizes of each part of SSTable single file
+		header := currentFileMMap[:HeaderSize]
+
+		dataSize := binary.BigEndian.Uint64(header[:IndexBlockStart])                      // dataSize
+		indexSize := binary.BigEndian.Uint64(header[IndexBlockStart:SummaryBlockStart])    // indexSize
+		summarySize := binary.BigEndian.Uint64(header[SummaryBlockStart:FilterBlockStart]) // summarySize
+		filterSize := binary.BigEndian.Uint64(header[FilterBlockStart:])                   // filterSize
+
+		dataStart := uint64(HeaderSize)
+		indexStart := dataStart + dataSize
+		summaryStart := indexStart + indexSize
+		filterStart := summaryStart + summarySize
+		metaStart := filterStart + filterSize
+
+		dataMMap = currentFileMMap[dataStart:indexStart]
+		metaMMap = currentFileMMap[metaStart:]
+
+		merkleTree = merkle.DeserializeMerkle(metaMMap)
+		merkleTree2 = merkle.NewMerkle(merkleTree.HashWithSeed)
+		merkleTree2Data := make([]byte, 0)
+		for offset < uint64(len(dataMMap)) {
+			dataRec, err := readDataFromFile(dataMMap, 1, "", offset, sstable.compression, sstable.encoder)
+			if err != nil {
+				return nil, err
+			}
+			hashedData, err := merkleTree2.CreateNodeData(dataRec, sstable.compression, sstable.encoder)
+			if err != nil {
+				return nil, err
+			}
+			merkleTree2Data = append(merkleTree2Data, hashedData...)
+			offset += uint64(len(dataRec.Serialize(sstable.compression, sstable.encoder)))
+		}
+		err = merkleTree2.CreateMerkleTree(merkleTree2Data, sstable.compression, sstable.encoder)
+		if err != nil {
+			return nil, err
+		}
+
+		err = currentFileMMap.Unmap()
+		if err != nil {
+			return nil, err
+		}
+
+		err = currentFile.Close()
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		metaFile, err := os.OpenFile(filepath.Join(subDirPath, subDirEntries[3].Name()), os.O_RDWR, 0644)
+		if err != nil {
+			return nil, err
+		}
+
+		tMetaMMap, err := mmap.Map(metaFile, mmap.RDWR, 0)
+		if err != nil {
+			return nil, err
+		}
+		copy(metaMMap, tMetaMMap)
+		err = metaMMap.Unmap()
+		if err != nil {
+			return nil, err
+		}
+		err = metaFile.Close()
+		if err != nil {
+			return nil, err
+		}
+		merkleTree = merkle.DeserializeMerkle(metaMMap)
+
+		dataFile, err := os.OpenFile(filepath.Join(subDirPath, subDirEntries[0].Name()), os.O_RDWR, 0644)
+		if err != nil {
+			return nil, err
+		}
+		tDataMMap, err := mmap.Map(dataFile, mmap.RDWR, 0)
+		if err != nil {
+			return nil, err
+		}
+		copy(dataMMap, tDataMMap)
+		err = dataMMap.Unmap()
+		if err != nil {
+			return nil, err
+		}
+		err = dataFile.Close()
+		if err != nil {
+			return nil, err
+		}
+
+		merkleTree2 = merkle.NewMerkle(merkleTree.HashWithSeed)
+		merkleTree2Data := make([]byte, 0)
+		for offset < uint64(len(dataMMap)) {
+			dataRec, err := readDataFromFile(dataMMap, 1, "", offset, sstable.compression, sstable.encoder)
+			if err != nil {
+				return nil, err
+			}
+			hashedData, err := merkleTree2.CreateNodeData(dataRec, sstable.compression, sstable.encoder)
+			if err != nil {
+				return nil, err
+			}
+			merkleTree2Data = append(merkleTree2Data, hashedData...)
+			offset += uint64(len(dataRec.Serialize(sstable.compression, sstable.encoder)))
+		}
+		err = merkleTree2.CreateMerkleTree(merkleTree2Data, sstable.compression, sstable.encoder)
+		if err != nil {
+			return nil, err
+		}
+
+	}
+
+	corruptedIndexes, err := merkleTree.CompareTrees(merkleTree2)
+	if err != nil {
+		return nil, err
+	}
+	offset = 0
+	var dataRec *models.Data
+	for _, index := range corruptedIndexes {
+		for index >= 0 {
+			dataRec, err = readDataFromFile(dataMMap, 1, "", offset, sstable.compression, sstable.encoder)
+			if err != nil {
+				return nil, err
+			}
+			index--
+			offset += uint64(len(dataRec.Serialize(sstable.compression, sstable.encoder)))
+		}
+		corruptedData = append(corruptedData, dataRec)
+	}
+
+	return corruptedData, nil
+}
