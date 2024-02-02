@@ -40,4 +40,4 @@ keyencoder/
 !internal/structures/keyencoder
 
 # YAML files (config)
-*.yaml
+*.yml
