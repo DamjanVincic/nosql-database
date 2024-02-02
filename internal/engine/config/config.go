@@ -7,7 +7,7 @@ import (
 	"os"
 )
 
-const ConfigFile = "config.yaml"
+const ConfigFile = "config.yml"
 
 type Config struct {
 	WAL         WALConfig         `yaml:"wal"`
@@ -102,4 +102,18 @@ func LoadConfig() (*Config, error) {
 	}
 
 	return config, nil
+}
+
+func (config *Config) WriteConfig() error {
+	data, err := yaml.Marshal(config)
+	if err != nil {
+		return err
+	}
+
+	err = os.WriteFile(ConfigFile, data, 0644)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
