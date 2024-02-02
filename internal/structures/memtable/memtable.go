@@ -5,6 +5,9 @@ import (
 	"github.com/DamjanVincic/key-value-engine/internal/structures/b-tree"
 	"github.com/DamjanVincic/key-value-engine/internal/structures/hashmap"
 	"github.com/DamjanVincic/key-value-engine/internal/structures/skiplist"
+	"slices"
+	"sort"
+	"strings"
 )
 
 const (
@@ -93,4 +96,27 @@ func (memtable *Memtable) Get(key string) *models.Data {
 		}
 	}
 	return nil
+}
+
+// returns all keys in memtable with given prefix sorted
+func (memtable *Memtable) GetKeysWithPrefix(prefix string) []string {
+	keys := make([]string, 0)
+	currentKeys := memtable.currentPartition.GetSorted()
+	for _, data := range currentKeys {
+		if strings.HasPrefix(data.Key, prefix) {
+			keys = append(keys, data.Key)
+		}
+	}
+	for _, partition := range memtable.partitions {
+		currentKeys = partition.GetSorted()
+		for _, data := range currentKeys {
+			if strings.HasPrefix(data.Key, prefix) {
+				if !slices.Contains(keys, data.Key) {
+					keys = append(keys, data.Key)
+				}
+			}
+		}
+	}
+	sort.Strings(keys)
+	return keys
 }
