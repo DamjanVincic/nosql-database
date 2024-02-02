@@ -743,7 +743,7 @@ func readSummaryFromFile(mmapFile mmap.MMap, key string, compression bool, encod
 	var recordLength uint64
 	var offset uint64
 	for {
-		currentSummaryRecord, recordLength, err = readNextIndex(mmapFile, offset, compression, encoder)
+		currentSummaryRecord, recordLength, err = readNextIndexRecord(mmapFile, offset, compression, encoder)
 		if err != nil {
 			return 0, 0, err
 		}
@@ -834,7 +834,7 @@ func readSummaryHeader(mmapFile mmap.MMap, compression bool, encoder *keyencoder
 	return
 }
 
-func readNextIndex(mmapFile mmap.MMap, offset uint64, compression bool, encoder *keyencoder.KeyEncoder) (indexRecord *IndexRecord, recordLength uint64, err error) {
+func readNextIndexRecord(mmapFile mmap.MMap, offset uint64, compression bool, encoder *keyencoder.KeyEncoder) (indexRecord *IndexRecord, recordLength uint64, err error) {
 	err = nil
 	if compression {
 		if len(mmapFile[offset:]) < CompressedIndexRecordMaxSize {
@@ -862,7 +862,7 @@ func readIndexFromFile(mmapFile mmap.MMap, summaryConst uint16, key string, offs
 	indexRecordSize := uint64(0)
 	//read SummaryConst number of index records
 	for i := uint16(0); i < summaryConst; i++ {
-		currentRecord, indexRecordSize, err = readNextIndex(mmapFile, offset, compression, encoder)
+		currentRecord, indexRecordSize, err = readNextIndexRecord(mmapFile, offset, compression, encoder)
 		if err != nil {
 			return 0, 0, err
 		}
