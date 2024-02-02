@@ -19,12 +19,12 @@ func NewCache() *Cache {
 }
 
 // adds MemEntry to cache and makes it most recently used
-func (cache *Cache) Put(entry *models.MemEntry) {
+func (cache *Cache) Put(entry *models.Data) {
 	elem, ok := cache.cacheMap[entry.Key] //find element in cacheList
 	if !ok {                              //if entry isn't already in cache, it needs to be added
 		if cache.cacheList.Len() >= capacity { //if cache is full, least recently used entry is deleted
 			elem = cache.cacheList.Back()
-			delete(cache.cacheMap, elem.Value.(*models.MemEntry).Key)
+			delete(cache.cacheMap, elem.Value.(*models.Data).Key)
 			cache.cacheList.Remove(elem)
 		}
 
@@ -38,13 +38,13 @@ func (cache *Cache) Put(entry *models.MemEntry) {
 }
 
 // returns entry form cache and makes it most recently used
-func (cache *Cache) Get(key string) *models.MemEntry {
+func (cache *Cache) Get(key string) *models.Data {
 	elem, ok := cache.cacheMap[key] //find element in cacheList
 	if !ok {
 		return nil
 	}
 	cache.cacheList.MoveToFront(elem)
-	value := elem.Value.(*models.MemEntry)
+	value := elem.Value.(*models.Data)
 	return value
 }
 
@@ -53,6 +53,6 @@ func (cache *Cache) Delete(key string) {
 	if !ok {
 		return
 	}
-	delete(cache.cacheMap, elem.Value.(*models.MemEntry).Key)
+	delete(cache.cacheMap, elem.Value.(*models.Data).Key)
 	cache.cacheList.Remove(elem)
 }
