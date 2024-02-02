@@ -3,6 +3,14 @@ package key_encoder
 import (
 	"encoding/binary"
 	"errors"
+	"github.com/edsrzf/mmap-go"
+	"os"
+	"path/filepath"
+)
+
+const (
+	Path     = "key-encoder"
+	Filename = "key-encoder.db"
 )
 
 type KeyEncoder struct {
@@ -88,4 +96,72 @@ func Deserialize(serializedKeyEncoder []byte) (keyEncoder *KeyEncoder, err error
 		bytesRead += int(tempKeySize)
 		keyEncoder.Keys[tempKey] = tempEncoded
 	}
+}
+
+func ReadFromFile() (*KeyEncoder, error) {
+	// if there is no dir to read from create empty encoder
+	dirEntries, err := os.ReadDir(Path)
+	if os.IsNotExist(err) {
+		return NewKeyEncoder(), nil
+	}
+	filePath := filepath.Join(Path, dirEntries[0].Name())
+	file, err := os.OpenFile(filePath, os.O_RDWR, 0644)
+	if err != nil {
+		return nil, err
+	}
+
+	mmapFile, err := mmap.Map(file, mmap.RDWR, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	return Deserialize(mmapFile)
+}
+
+func (keyEncoder *KeyEncoder) WriteToFile() error {
+	_, err := os.ReadDir(Path)
+	if os.IsNotExist(err) {
+		err := os.Mkdir(Path, os.ModePerm)
+		if err != nil {
+			return err
+		}
+	}
+
+	data := keyEncoder.Serialize()
+
+	file, err := os.OpenFile(filepath.Join(Path, Filename), os.O_CREATE|os.O_RDWR, 0644)
+	if err != nil {
+		return err
+	}
+
+	// make sure it has enough space
+	totalBytes := int64(len(data))
+
+	fileStat, err := file.Stat()
+	if err != nil {
+		return err
+	}
+
+	if err = file.Truncate(0); err != nil {
+		return err
+	}
+
+	fileSize := fileStat.Size()
+	if err = file.Truncate(fileSize + totalBytes); err != nil {
+		return err
+	}
+
+	mmapFile, err := mmap.Map(file, mmap.RDWR, 0)
+	if err != nil {
+		return err
+	}
+
+	copy(mmapFile[fileSize:], data)
+
+	err = mmapFile.Unmap()
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
