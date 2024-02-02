@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"github.com/DamjanVincic/key-value-engine/internal/structures/keyencoder"
 	"math"
 
 	"github.com/DamjanVincic/key-value-engine/internal/models"
@@ -34,10 +35,10 @@ type Node struct {
 /*
 get hashed data for leaves
 */
+func (merkleTree *MerkleTree) CreateNodeData(value *models.Data, compression bool, encoder *keyencoder.KeyEncoder) ([]byte, error) {
+	newData := value.Serialize(compression, encoder)
+	values, err := merkleTree.HashWithSeed.Hash(newData)
 
-func (merkle *MerkleTree) CreateNodeData(data *models.DataRecord) ([]byte, error) {
-	newData := data.Serialize()
-	values, err := merkle.HashWithSeed.Hash(newData)
 	if err != nil {
 		return nil, err
 	}
@@ -67,7 +68,7 @@ since merkle tree is build from bottom up we need all data as leafs
 if number of leafs is not 2**n we need to add empty nodes
 there hash wont change anything
 */
-func (merkleTree *MerkleTree) CreateMerkleTree(hashedData []byte) error {
+func (merkleTree *MerkleTree) CreateMerkleTree(hashedData []byte, compression bool, encoder *keyencoder.KeyEncoder) error {
 	var nodes []*Node
 
 	// creating all the end nodes
@@ -86,7 +87,7 @@ func (merkleTree *MerkleTree) CreateMerkleTree(hashedData []byte) error {
 	merkleTree.size = targetSize
 	for i := uint64(len(nodes)); i < targetSize; i++ {
 		// add number of empty nodes that is needed
-		empty, err := merkleTree.CreateNodeData(models.NewDataRecord(&models.Data{Key: "", Value: []byte{}, Tombstone: false, Timestamp: 0}))
+		empty, err := merkleTree.CreateNodeData(models.NewData("", []byte{}, false, 0), compression, encoder)
 		if err != nil {
 			return err
 		}
