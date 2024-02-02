@@ -13,6 +13,7 @@ type Config struct {
 	WAL      WALConfig      `yaml:"wal"`
 	Memtable MemtableConfig `yaml:"memtable"`
 	SSTable  SSTableConfig  `yaml:"sstable"`
+	Cache    CacheConfig    `yaml:"cache"`
 }
 
 type WALConfig struct {
@@ -37,6 +38,10 @@ type SSTableConfig struct {
 	LevelSizeMultiplier uint64 `yaml:"levelSizeMultiplier" validate:"gte=10"`
 }
 
+type CacheConfig struct {
+	Size uint64 `yaml:"size" validate:"gte=1"`
+}
+
 // Default Config
 var config = &Config{
 	WAL: WALConfig{
@@ -57,6 +62,9 @@ var config = &Config{
 		MaxLevel:            4,
 		LevelSize:           2,
 		LevelSizeMultiplier: 10,
+	},
+	Cache: CacheConfig{
+		Size: 10,
 	},
 }
 
