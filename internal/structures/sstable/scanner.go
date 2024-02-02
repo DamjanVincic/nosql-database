@@ -206,6 +206,7 @@ func (sstable *SSTable) PrefixScan(prefix string, pageNumber uint64, pageSize ui
 			}
 			if minCandidate.key > record.Key {
 				minCandidate = &ScanningCandidate{record.Key, scannerFile, scannerFile.offset, recordSize, record.Timestamp}
+				candidates = make([]*ScanningCandidate, 0)
 				continue
 			}
 			if minCandidate.key == record.Key {
@@ -228,16 +229,17 @@ func (sstable *SSTable) PrefixScan(prefix string, pageNumber uint64, pageSize ui
 		} else {
 			minCandidate.file.offset += minCandidate.recordSize
 			if uint64(len(minCandidate.file.file)) <= minCandidate.file.offset {
-				scannerFiles = remove(scannerFiles, minCandidate.file)
+				scannerFiles = removeFromSlice(scannerFiles, minCandidate.file)
 			}
 			for _, candidate := range candidates {
 				candidate.file.offset += candidate.recordSize
 				if uint64(len(candidate.file.file)) <= candidate.file.offset {
-					scannerFiles = remove(scannerFiles, candidate.file)
+					scannerFiles = removeFromSlice(scannerFiles, candidate.file)
 				}
 			}
 		}
 		minCandidate = nil
+		candidates = make([]*ScanningCandidate, 0)
 	}
 
 	if uint64(len(found)) < (pageNumber-1)*pageSize {
@@ -246,6 +248,9 @@ func (sstable *SSTable) PrefixScan(prefix string, pageNumber uint64, pageSize ui
 	}
 	records := make([]*models.Data, 0)
 	for i := (pageNumber - 1) * pageSize; i < uint64(len(found)); i++ {
+		if found[i].file == nil {
+			records = append(records, memtable.Get(found[i].key))
+		}
 		record, _, err := models.Deserialize(found[i].file.file[found[i].offset:], sstable.compression, sstable.encoder)
 		if err != nil {
 			return nil, err
@@ -255,10 +260,10 @@ func (sstable *SSTable) PrefixScan(prefix string, pageNumber uint64, pageSize ui
 	return records, nil
 }
 
-func remove(l []*ScannerFile, item *ScannerFile) []*ScannerFile {
-	for i, other := range l {
+func removeFromSlice(slice []*ScannerFile, item *ScannerFile) []*ScannerFile {
+	for i, other := range slice {
 		if other == item {
-			return append(l[:i], l[i+1:]...)
+			return append(slice[:i], slice[i+1:]...)
 		}
 	}
 	return nil
