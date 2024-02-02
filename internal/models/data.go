@@ -3,7 +3,6 @@ package models
 import (
 	"encoding/binary"
 	"errors"
-	"fmt"
 	key_encoder "github.com/DamjanVincic/key-value-engine/internal/structures/key-encoder"
 	"github.com/edsrzf/mmap-go"
 	"hash/crc32"
@@ -50,7 +49,7 @@ func (data *Data) serializeWithoutCompression() []byte {
 	if !data.Tombstone {
 		bytes = make([]byte, RecordHeaderSize+keySize+valueSize)
 	} else {
-		bytes = make([]byte, RecordHeaderSize+keySize+valueSize-ValueSizeSize)
+		bytes = make([]byte, RecordHeaderSize+keySize-ValueSizeSize)
 	}
 	// Append the Timestamp
 	binary.BigEndian.PutUint64(bytes[TimestampStart:TombstoneStart], data.Timestamp)
@@ -109,7 +108,7 @@ func (data *Data) serializeWithCompression(encoder *key_encoder.KeyEncoder) []by
 		valueSizeBytesSize = binary.PutUvarint(valueSizeBytes, valueSize)
 
 		//calculate size of serialized  record and make bytes
-		bytes = make([]byte, uint64(timestampBytesSize+keyBytesSize+1)+valueSize)
+		bytes = make([]byte, uint64(timestampBytesSize+keyBytesSize+1+valueSizeBytesSize)+valueSize)
 	} else {
 		//calculate size of serialized  record and make bytes
 		bytes = make([]byte, timestampBytesSize+keyBytesSize+1)
@@ -179,7 +178,7 @@ func deserializeWithoutCompression(mmapFile mmap.MMap) (*Data, uint64, error) {
 		bytesRead = KeyStart + keySize + valueSize
 	} else {
 		key = string(mmapFile[ValueSizeStart : ValueSizeStart+keySize])
-		bytesRead = KeyStart + keySize
+		bytesRead = ValueSizeStart + keySize
 	}
 
 	data := &Data{
@@ -190,7 +189,7 @@ func deserializeWithoutCompression(mmapFile mmap.MMap) (*Data, uint64, error) {
 	}
 
 	// Check if the CRC matches
-	if crc != crc32.ChecksumIEEE(mmapFile[TimestampStart:]) {
+	if crc != crc32.ChecksumIEEE(mmapFile[TimestampStart:bytesRead]) {
 		// return dataRecord anyway for merkle
 		return data, bytesRead, errors.New("CRC does not match")
 	} else {
@@ -238,12 +237,12 @@ func deserializeWithCompression(mmapFile mmap.MMap, encoder *key_encoder.KeyEnco
 		copy(value, mmapFile[offset:uint64(offset)+valueSize])
 		offset += int(valueSize)
 	}
-	fmt.Println(crc)
-	//newCrc := crc32.ChecksumIEEE(mmapFile[crcSize:offset])
-	//
-	//if newCrc != uint32(crc) {
-	//	err = errors.New("CRC does not match")
-	//}
+
+	newCrc := crc32.ChecksumIEEE(mmapFile[crcSize:offset])
+
+	if newCrc != uint32(crc) {
+		err = errors.New("CRC does not match")
+	}
 
 	data = &Data{
 		Key:       key,
