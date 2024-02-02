@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"github.com/go-playground/validator/v10"
 	"gopkg.in/yaml.v3"
 	"os"
@@ -11,6 +12,7 @@ const ConfigFile = "config.yaml"
 type Config struct {
 	WAL      WALConfig      `yaml:"wal"`
 	Memtable MemtableConfig `yaml:"memtable"`
+	SSTable  SSTableConfig  `yaml:"sstable"`
 }
 
 type WALConfig struct {
@@ -23,7 +25,20 @@ type MemtableConfig struct {
 	NumberOfTables uint64 `yaml:"numberOfTables" validate:"gte=1"`
 }
 
-var defaultConfig = &Config{
+type SSTableConfig struct {
+	IndexThinningDegree   uint16 `yaml:"indexThinningDegree" validate:"gte=1"`
+	SummaryThinningDegree uint16 `yaml:"summaryThinningDegree" validate:"gte=1"`
+	SingleFile            bool   `yaml:"singleFile"`
+	Compression           bool   `yaml:"compression"`
+
+	CompactionAlgorithm string `yaml:"compactionAlgorithm" validate:"oneof=sizetiered leveled"`
+	MaxLevel            uint8  `yaml:"maxLevel" validate:"gte=4"`
+	LevelSize           uint64 `yaml:"levelSize" validate:"gte=2"`
+	LevelSizeMultiplier uint64 `yaml:"levelSizeMultiplier" validate:"gte=10"`
+}
+
+// Default Config
+var config = &Config{
 	WAL: WALConfig{
 		SegmentSize: 1024 * 1024 * 16,
 	},
@@ -31,6 +46,17 @@ var defaultConfig = &Config{
 		TableSize:      1024 * 1024 * 16,
 		DataStructure:  "hashmap",
 		NumberOfTables: 1,
+	},
+	SSTable: SSTableConfig{
+		IndexThinningDegree:   10,
+		SummaryThinningDegree: 10,
+		SingleFile:            false,
+		Compression:           false,
+
+		CompactionAlgorithm: "sizetiered",
+		MaxLevel:            4,
+		LevelSize:           2,
+		LevelSizeMultiplier: 10,
 	},
 }
 
@@ -41,14 +67,19 @@ func LoadConfig() (*Config, error) {
 		return nil, err
 	}
 
-	if err = yaml.Unmarshal(file, defaultConfig); err != nil {
+	var fileConfig = &Config{}
+
+	if err = yaml.Unmarshal(file, fileConfig); err != nil {
 		return nil, err
 	}
 
 	validate := validator.New(validator.WithRequiredStructEnabled())
-	if err = validate.Struct(defaultConfig); err != nil {
-		return nil, err
+	if err = validate.Struct(fileConfig); err != nil {
+		//return nil, err
+		fmt.Println("Error while validating config, using default config")
+	} else {
+		config = fileConfig
 	}
 
-	return defaultConfig, nil
+	return config, nil
 }

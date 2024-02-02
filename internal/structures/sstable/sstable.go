@@ -88,9 +88,14 @@ type SSTable struct {
 	singleFile   bool
 	compression  bool
 	encoder      *keyencoder.KeyEncoder
+
+	compactionAlgorithm string
+	maxLevel            uint8
+	levelSize           uint64
+	levelSizeMultiplier uint64
 }
 
-func NewSSTable(indexSparseConst uint16, summarySparseConst uint16, singleFile bool, compression bool) (*SSTable, error) {
+func NewSSTable(indexSparseConst uint16, summarySparseConst uint16, singleFile bool, compression bool, compactionAlgorithm string, maxLevel uint8, levelSize uint64, levelSizeMultiplier uint64) (*SSTable, error) {
 	//check if sstable dir exists, if not create it
 	_, err := os.ReadDir(Path)
 	if os.IsNotExist(err) {
@@ -109,11 +114,15 @@ func NewSSTable(indexSparseConst uint16, summarySparseConst uint16, singleFile b
 	}
 
 	return &SSTable{
-		indexConst:   indexSparseConst,
-		summaryConst: summarySparseConst,
-		singleFile:   singleFile,
-		compression:  compression,
-		encoder:      encoder,
+		indexConst:          indexSparseConst,
+		summaryConst:        summarySparseConst,
+		singleFile:          singleFile,
+		compression:         compression,
+		encoder:             encoder,
+		compactionAlgorithm: compactionAlgorithm,
+		maxLevel:            maxLevel,
+		levelSize:           levelSize,
+		levelSizeMultiplier: levelSizeMultiplier,
 	}, nil
 }
 
