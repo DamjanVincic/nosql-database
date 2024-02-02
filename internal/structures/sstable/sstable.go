@@ -4,10 +4,13 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"github.com/DamjanVincic/key-value-engine/internal/structures/keyencoder"
+
+	// "math"
 	"os"
 	"path/filepath"
 	"strconv"
+
+	"github.com/DamjanVincic/key-value-engine/internal/structures/keyencoder"
 
 	"github.com/DamjanVincic/key-value-engine/internal/models"
 	"github.com/DamjanVincic/key-value-engine/internal/structures/bloomfilter"
@@ -135,6 +138,31 @@ path example sstable/01/sst0000200002/data.db   -  data part of the sstable(sst0
 func (sstable *SSTable) Write(memEntries []*models.Data) error {
 	// new sstable is always placed on the first lsm level
 	lsmLevel := uint8(1)
+
+	filePaths, err := sstable.createSStableFolder(lsmLevel)
+	if err != nil {
+		return err
+	}
+	//create files
+	err = sstable.createFiles(memEntries, sstable.singleFile, filePaths)
+	if err != nil {
+		return err
+	}
+
+	if sstable.compression {
+		err = sstable.encoder.WriteToFile()
+		if err != nil {
+			return err
+		}
+	}
+	// err = sstable.CheckCompaction(filePaths, lsmLevel)
+	// if err != nil {
+	// 	return err
+	// }
+	return nil
+}
+
+func (sstable *SSTable) createSStableFolder(lsmLevel uint8) ([]string, error) {
 	//index - sequence number of the sstable
 	var index uint16
 	// subdirName : 00 (a two-digit num for the lsm index)
@@ -146,7 +174,7 @@ func (sstable *SSTable) Write(memEntries []*models.Data) error {
 		// if there is no sstable on the lsm level, index for the new one is 1
 		index = 1
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
 	// If there are sstables on the lsm level, take index from last added and increment it
@@ -154,11 +182,11 @@ func (sstable *SSTable) Write(memEntries []*models.Data) error {
 		lastAddedSstableFolderName := sstableFolders[len(sstableFolders)-1].Name()
 		n, err := strconv.ParseUint(lastAddedSstableFolderName[3:], 10, 16)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		index = uint16(n)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		index++
 	}
@@ -167,7 +195,7 @@ func (sstable *SSTable) Write(memEntries []*models.Data) error {
 	sstFolderPath := filepath.Join(subdirPath, sstFolderName)
 	err = os.Mkdir(sstFolderPath, os.ModePerm)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var filePaths []string
 	// creates files and save the data
@@ -176,32 +204,12 @@ func (sstable *SSTable) Write(memEntries []*models.Data) error {
 		// name - single.db
 		filename := fmt.Sprintf("%s.db", SingleFileName)
 		filePaths = append(filePaths, filepath.Join(sstFolderPath, filename))
-		err = sstable.createFiles(memEntries, sstable.singleFile, filePaths)
-		if err != nil {
-			return err
-		}
 	} else {
 		// Filename format: PART.db, part = sstable element
 		// create names of new files
-
 		filePaths = makeMultiFilenames(sstFolderPath)
-		//create files
-		err = sstable.createFiles(memEntries, sstable.singleFile, filePaths)
-		if err != nil {
-			return err
-		}
 	}
-	if sstable.compression {
-		err = sstable.encoder.WriteToFile()
-		if err != nil {
-			return err
-		}
-	}
-	// err = sstable.CheckCompaction(filePaths)
-	if err != nil {
-		return err
-	}
-	return nil
+	return filePaths, nil
 }
 
 func makeMultiFilenames(subdirPath string) []string {
@@ -469,11 +477,12 @@ func writeToFile(file *os.File, data []byte) error {
 	return nil
 }
 
-// func (sstable *SSTable) CheckCompaction(folderEntries []string) error {
-// 	if uint16(len(folderEntries)) > sstable.firstLevelMax {
+// func (sstable *SSTable) CheckCompaction(folderEntries []string, lsmLevel uint8) error {
+// 	multiplier := math.Pow(float64(sstable.levelMultiplier), float64(lsmLevel-1))
+// 	if uint16(len(folderEntries)) > (sstable.firstLevelMax * uint16(multiplier)) {
 // 		//radi kompakciju celog nivoa
 // 		if !sstable.leveledCompaction {
-// 			err := sstable.sizeTieredCompact(folderEntries)
+// 			err := sstable.sizeTieredCompact(folderEntries, lsmLevel)
 // 			if err != nil {
 // 				return err
 // 			}
@@ -482,7 +491,7 @@ func writeToFile(file *os.File, data []byte) error {
 // 	return nil
 // }
 
-// func (sstable *SSTable) sizeTieredCompact(sstables []string) error {
+// func (sstable *SSTable) sizeTieredCompact(sstables []string, lsmLevel uint8) error {
 // 	var sstForCompaction []mmap.MMap
 // 	for _, sstable := range sstables {
 // 		file, err := os.OpenFile(sstable, os.O_RDWR, 0644)
@@ -504,14 +513,30 @@ func writeToFile(file *os.File, data []byte) error {
 // 			return err
 // 		}
 // 	}
-// 	err := sstable.combineSSTables(sstForCompaction)
+// 	err := sstable.combineSSTables(sstForCompaction, lsmLevel+1)
 // 	if err != nil {
 // 		return err
 // 	}
 // 	return nil
 // }
 
-// func (sstable *SSTable) combineSSTables(sstForCompaction []mmap.MMap) error {
+// func (sstable *SSTable) combineSSTables(sstForCompaction []mmap.MMap, nextLsmLevel uint8) error {
+// 	lsmLevel := uint8(1)
+// 	//index - sequence number of the sstable
+// 	var index uint16
+// 	// subdirName : 00 (a two-digit num for the lsm index)
+// 	subdirName := fmt.Sprintf("%02d", nextLsmLevel)
+// 	subdirPath := filepath.Join(Path, subdirName)
+// 	sstableFolders, err := os.ReadDir(subdirPath)
+// 	if os.IsNotExist(err) {
+// 		err := os.Mkdir(subdirPath, os.ModePerm)
+// 		// if there is no sstable on the lsm level, index for the new one is 1
+// 		index = 1
+// 		if err != nil {
+// 			return err
+// 		}
+// 	}
+
 // 	numberOfSSTables := len(sstForCompaction)
 // 	// we keep where we left of in each sstable and last key
 // 	offsets := make([]uint64, numberOfSSTables)
@@ -539,7 +564,7 @@ func writeToFile(file *os.File, data []byte) error {
 // 	var filterBlockSize uint64
 // 	var metaBlockSize uint64
 
-// 	var index uint64
+// 	// var index uint64
 // 	subDirName := fmt.Sprintf("%2d", lsmLevel+1)
 // 	subDirPath := filepath.Join(Path, subDirName)
 // 	subDirEntries, err := os.ReadDir(subDirPath)
@@ -776,89 +801,87 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 	if os.IsNotExist(err) {
 		return nil, err
 	}
-
-	// search for the key from the newest to the oldest sstable
-	// i variable will be increment each time as long as its not equal to the len of dirEntries
 	dirSize := len(dirEntries) - 1
-	i := dirSize
+	j := dirSize
 	for {
-		if i < 0 {
+		if j < 0 {
 			return nil, errors.New("key not found")
 		}
-		subDirName := dirEntries[i].Name()
+		subDirName := dirEntries[j].Name()
 		subDirPath := filepath.Join(Path, subDirName)
 		subDirEntries, err := os.ReadDir(subDirPath)
 		if os.IsNotExist(err) {
 			return nil, err
 		}
-		subDirSize := len(subDirEntries)
+		// search for the key from the newest to the oldest sstable
+		// i variable will be increment each time as long as its not equal to the len of dirEntries
+		subdirSize := len(subDirEntries) - 1
+		i := subdirSize
+		for {
+			if i < 0 {
+				j--
+				break
+			}
+			sstDirName := subDirEntries[i].Name()
+			sstDirPath := filepath.Join(subDirPath, sstDirName)
+			sstDirEntries, err := os.ReadDir(sstDirPath)
+			if os.IsNotExist(err) {
+				return nil, err
+			}
+			sstDirSize := len(sstDirEntries)
 
-		// search the single file if len == 1, otherwise multi files
-		if subDirSize == 1 {
-			// get the data from single file sstable
-			singleFilePath := filepath.Join(subDirPath, subDirEntries[0].Name())
-			currentFile, err = os.OpenFile(singleFilePath, os.O_RDWR, 0644)
+			// search the single file if len == 1, otherwise multi files
+			if sstDirSize == 1 {
+				// get the data from single file sstable
+				singleFilePath := filepath.Join(sstDirPath, sstDirEntries[0].Name())
+				currentFile, err = os.OpenFile(singleFilePath, os.O_RDWR, 0644)
+				if err != nil {
+					return nil, err
+				}
+
+				mmapSingleFile, err = mmap.Map(currentFile, mmap.RDWR, 0)
+				if err != nil {
+					return nil, err
+				}
+
+				//get sizes of each part of SSTable single file
+				header := mmapSingleFile[:HeaderSize]
+
+				dataSize := binary.BigEndian.Uint64(header[:IndexBlockStart])                      // dataSize
+				indexSize := binary.BigEndian.Uint64(header[IndexBlockStart:SummaryBlockStart])    // indexSize
+				summarySize := binary.BigEndian.Uint64(header[SummaryBlockStart:FilterBlockStart]) // summarySize
+				filterSize := binary.BigEndian.Uint64(header[FilterBlockStart:])                   // filterSize
+
+				dataStart = uint64(HeaderSize)
+				indexStart = dataStart + dataSize
+				summaryStart = indexStart + indexSize
+				filterStart = summaryStart + summarySize
+				metaStart = filterStart + filterSize
+			}
+
+			// start process for getting the element
+			//if its not singleFile we need to read multifiles one by one
+			// first we need to check if its in bloom filter
+			if sstDirSize == 1 {
+				filter = mmapSingleFile[filterStart:metaStart]
+			} else {
+				currentFile, err = os.OpenFile(filepath.Join(sstDirPath, sstDirEntries[1].Name()), os.O_RDWR, 0644)
+				if err != nil {
+					return nil, err
+				}
+				filter, err = mmap.Map(currentFile, mmap.RDWR, 0)
+				if err != nil {
+					return nil, err
+				}
+			}
+			found, err := readBloomFilterFromFile(key, filter)
 			if err != nil {
 				return nil, err
 			}
 
-			mmapSingleFile, err = mmap.Map(currentFile, mmap.RDWR, 0)
-			if err != nil {
-				return nil, err
-			}
-
-			//get sizes of each part of SSTable single file
-			header := mmapSingleFile[:HeaderSize]
-
-			dataSize := binary.BigEndian.Uint64(header[:IndexBlockStart])                      // dataSize
-			indexSize := binary.BigEndian.Uint64(header[IndexBlockStart:SummaryBlockStart])    // indexSize
-			summarySize := binary.BigEndian.Uint64(header[SummaryBlockStart:FilterBlockStart]) // summarySize
-			filterSize := binary.BigEndian.Uint64(header[FilterBlockStart:])                   // filterSize
-
-			dataStart = uint64(HeaderSize)
-			indexStart = dataStart + dataSize
-			summaryStart = indexStart + indexSize
-			filterStart = summaryStart + summarySize
-			metaStart = filterStart + filterSize
-		}
-
-		// start process for getting the element
-		//if its not singleFile we need to read multifiles one by one
-		// first we need to check if its in bloom filter
-		if subDirSize == 1 {
-			filter = mmapSingleFile[filterStart:metaStart]
-		} else {
-			currentFile, err = os.OpenFile(filepath.Join(subDirPath, subDirEntries[1].Name()), os.O_RDWR, 0644)
-			if err != nil {
-				return nil, err
-			}
-			filter, err = mmap.Map(currentFile, mmap.RDWR, 0)
-			if err != nil {
-				return nil, err
-			}
-		}
-		found, err := readBloomFilterFromFile(key, filter)
-		if err != nil {
-			return nil, err
-		}
-
-		// Unmap the memory and close the file
-		if subDirSize != 1 {
-			err = filter.Unmap()
-			if err != nil {
-				return nil, err
-			}
-			err = currentFile.Close()
-			if err != nil {
-				return nil, err
-			}
-		}
-
-		// if its not found, check next sstable
-		if !found {
-			i--
-			if subDirSize == 1 {
-				err = mmapSingleFile.Unmap()
+			// Unmap the memory and close the file
+			if sstDirSize != 1 {
+				err = filter.Unmap()
 				if err != nil {
 					return nil, err
 				}
@@ -867,117 +890,41 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 					return nil, err
 				}
 			}
-			continue
-		}
 
-		//check if its in summary range (between min and max index)
-		if subDirSize == 1 {
-			summary = mmapSingleFile[summaryStart:filterStart]
-		} else {
-			currentFile, err = os.OpenFile(filepath.Join(subDirPath, subDirEntries[4].Name()), os.O_RDWR, 0644)
-			if err != nil {
-				return nil, err
-			}
-			summary, err = mmap.Map(currentFile, mmap.RDWR, 0)
-			if err != nil {
-				return nil, err
-			}
-		}
-
-		indexOffset, summaryThinningConst, err := readSummaryFromFile(summary, key, sstable.compression, sstable.encoder)
-
-		if subDirSize != 1 {
-			err = summary.Unmap()
-			if err != nil {
-				return nil, err
-			}
-			err = currentFile.Close()
-			if err != nil {
-				return nil, err
-			}
-		}
-
-		if err != nil {
-			i--
-			if subDirSize == 1 {
-				err = mmapSingleFile.Unmap()
-				if err != nil {
-					return nil, err
-				}
-				err = currentFile.Close()
-				if err != nil {
-					return nil, err
-				}
-			}
-			continue
-		}
-
-		//check if its in index
-		if subDirSize == 1 {
-			index = mmapSingleFile[indexStart:summaryStart]
-		} else {
-			currentFile, err = os.OpenFile(filepath.Join(subDirPath, subDirEntries[2].Name()), os.O_RDWR, 0644)
-			if err != nil {
-				return nil, err
-			}
-			index, err = mmap.Map(currentFile, mmap.RDWR, 0)
-			if err != nil {
-				return nil, err
-			}
-		}
-
-		dataOffset, indexThinningConst, err := readIndexFromFile(index, summaryThinningConst, key, indexOffset, sstable.compression, sstable.encoder)
-		if err != nil {
-			return nil, err
-		}
-
-		if subDirSize != 1 {
-			err = index.Unmap()
-			if err != nil {
-				return nil, err
-			}
-			err = currentFile.Close()
-			if err != nil {
-				return nil, err
-			}
-		}
-
-		//find it in data
-		if subDirSize == 1 {
-			data = mmapSingleFile[dataStart:indexStart]
-		} else {
-			currentFile, err = os.OpenFile(filepath.Join(subDirPath, subDirEntries[0].Name()), os.O_RDWR, 0644)
-			if err != nil {
-				return nil, err
-			}
-			data, err = mmap.Map(currentFile, mmap.RDWR, 0)
-			if err != nil {
-				return nil, err
-			}
-		}
-		dataRecord, err := readDataFromFile(data, indexThinningConst, key, dataOffset, sstable.compression, sstable.encoder)
-		if err != nil {
-			if err.Error() == "key not found" {
+			// if its not found, check next sstable
+			if !found {
 				i--
+				if sstDirSize == 1 {
+					err = mmapSingleFile.Unmap()
+					if err != nil {
+						return nil, err
+					}
+					err = currentFile.Close()
+					if err != nil {
+						return nil, err
+					}
+				}
 				continue
 			}
-			return nil, err
-		}
 
-		if subDirSize != 1 {
-			err = data.Unmap()
-			if err != nil {
-				return nil, err
+			//check if its in summary range (between min and max index)
+			if sstDirSize == 1 {
+				summary = mmapSingleFile[summaryStart:filterStart]
+			} else {
+				currentFile, err = os.OpenFile(filepath.Join(sstDirPath, sstDirEntries[4].Name()), os.O_RDWR, 0644)
+				if err != nil {
+					return nil, err
+				}
+				summary, err = mmap.Map(currentFile, mmap.RDWR, 0)
+				if err != nil {
+					return nil, err
+				}
 			}
-			err = currentFile.Close()
-			if err != nil {
-				return nil, err
-			}
-		}
 
-		if dataRecord != nil {
-			if subDirSize == 1 {
-				err = mmapSingleFile.Unmap()
+			indexOffset, summaryThinningConst, err := readSummaryFromFile(summary, key, sstable.compression, sstable.encoder)
+
+			if sstDirSize != 1 {
+				err = summary.Unmap()
 				if err != nil {
 					return nil, err
 				}
@@ -987,20 +934,112 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 				}
 			}
 
-			return dataRecord, nil
-		}
-		i--
+			if err != nil {
+				i--
+				if sstDirSize == 1 {
+					err = mmapSingleFile.Unmap()
+					if err != nil {
+						return nil, err
+					}
+					err = currentFile.Close()
+					if err != nil {
+						return nil, err
+					}
+				}
+				continue
+			}
 
-		if subDirSize == 1 {
-			err = mmapSingleFile.Unmap()
+			//check if its in index
+			if sstDirSize == 1 {
+				index = mmapSingleFile[indexStart:summaryStart]
+			} else {
+				currentFile, err = os.OpenFile(filepath.Join(sstDirPath, sstDirEntries[2].Name()), os.O_RDWR, 0644)
+				if err != nil {
+					return nil, err
+				}
+				index, err = mmap.Map(currentFile, mmap.RDWR, 0)
+				if err != nil {
+					return nil, err
+				}
+			}
+
+			dataOffset, indexThinningConst, err := readIndexFromFile(index, summaryThinningConst, key, indexOffset, sstable.compression, sstable.encoder)
 			if err != nil {
 				return nil, err
 			}
-			err = currentFile.Close()
+
+			if sstDirSize != 1 {
+				err = index.Unmap()
+				if err != nil {
+					return nil, err
+				}
+				err = currentFile.Close()
+				if err != nil {
+					return nil, err
+				}
+			}
+
+			//find it in data
+			if sstDirSize == 1 {
+				data = mmapSingleFile[dataStart:indexStart]
+			} else {
+				currentFile, err = os.OpenFile(filepath.Join(sstDirPath, sstDirEntries[0].Name()), os.O_RDWR, 0644)
+				if err != nil {
+					return nil, err
+				}
+				data, err = mmap.Map(currentFile, mmap.RDWR, 0)
+				if err != nil {
+					return nil, err
+				}
+			}
+			dataRecord, err := readDataFromFile(data, indexThinningConst, key, dataOffset, sstable.compression, sstable.encoder)
 			if err != nil {
+				if err.Error() == "key not found" {
+					i--
+					continue
+				}
 				return nil, err
+			}
+
+			if sstDirSize != 1 {
+				err = data.Unmap()
+				if err != nil {
+					return nil, err
+				}
+				err = currentFile.Close()
+				if err != nil {
+					return nil, err
+				}
+			}
+
+			if dataRecord != nil {
+				if sstDirSize == 1 {
+					err = mmapSingleFile.Unmap()
+					if err != nil {
+						return nil, err
+					}
+					err = currentFile.Close()
+					if err != nil {
+						return nil, err
+					}
+				}
+
+				return dataRecord, nil
+			}
+			i--
+
+			if sstDirSize == 1 {
+				err = mmapSingleFile.Unmap()
+				if err != nil {
+					return nil, err
+				}
+				err = currentFile.Close()
+				if err != nil {
+					return nil, err
+				}
 			}
 		}
+
 	}
 }
 
