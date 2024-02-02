@@ -51,23 +51,23 @@ type TokenBucketConfig struct {
 // Default Config
 var config = &Config{
 	WAL: WALConfig{
-		SegmentSize: 1024 * 1024 * 16,
+		SegmentSize: 1024,
 	},
 	Memtable: MemtableConfig{
-		TableSize:      1024 * 1024 * 16,
+		TableSize:      1000,
 		DataStructure:  "hashmap",
 		NumberOfTables: 1,
 	},
 	SSTable: SSTableConfig{
-		IndexThinningDegree:   10,
-		SummaryThinningDegree: 10,
+		IndexThinningDegree:   5,
+		SummaryThinningDegree: 5,
 		SingleFile:            false,
 		Compression:           false,
 
 		CompactionAlgorithm: "sizetiered",
 		MaxLevel:            4,
 		LevelSize:           2,
-		LevelSizeMultiplier: 10,
+		LevelSizeMultiplier: 1,
 	},
 	Cache: CacheConfig{
 		Size: 10,
