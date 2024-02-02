@@ -63,12 +63,6 @@ func (data *Data) serializeWithoutCompression() []byte {
 	}
 	// Append the Timestamp
 	binary.BigEndian.PutUint64(bytes[TimestampStart:TombstoneStart], data.Timestamp)
-	// Append the Tombstone
-	//if data.Tombstone {
-	//	bytes[TombstoneStart] = 1
-	//} else {
-	//	bytes[TombstoneStart] = 0
-	//}
 	// Append the Key Size
 	binary.BigEndian.PutUint64(bytes[KeySizeStart:ValueSizeStart], keySize)
 
