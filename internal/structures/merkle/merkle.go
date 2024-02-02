@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"github.com/DamjanVincic/key-value-engine/internal/structures/keyencoder"
 	"math"
 
 	"github.com/DamjanVincic/key-value-engine/internal/models"
@@ -34,8 +35,8 @@ type Node struct {
 /*
 get binary data and hash function and return new node with no children and hashed values
 */
-func (merkleTree *MerkleTree) createNewNode(value *models.DataRecord) (*Node, error) {
-	newData := value.Serialize()
+func (merkleTree *MerkleTree) createNewNode(value *models.Data, compression bool, encoder *keyencoder.KeyEncoder) (*Node, error) {
+	newData := value.Serialize(compression, encoder)
 	values, err := merkleTree.HashWithSeed.Hash(newData)
 	if err != nil {
 		return nil, err
@@ -50,7 +51,7 @@ since merkle tree is build from bottom up we need all data as leafs
 if number of leafs is not 2**n we need to add empty nodes
 there hash wont change anything
 */
-func CreateMerkleTree(allData []*models.DataRecord, hashFunc *hash.HashWithSeed) (*MerkleTree, error) {
+func CreateMerkleTree(allData []*models.Data, hashFunc *hash.HashWithSeed, compression bool, encoder *keyencoder.KeyEncoder) (*MerkleTree, error) {
 	var nodes []*Node
 	var merkleTree MerkleTree
 	if hashFunc == nil {
@@ -60,7 +61,7 @@ func CreateMerkleTree(allData []*models.DataRecord, hashFunc *hash.HashWithSeed)
 
 	// creating all the end nodes
 	for _, data := range allData {
-		node, err := merkleTree.createNewNode(data)
+		node, err := merkleTree.createNewNode(data, compression, encoder)
 		if err != nil {
 			return nil, err
 		}
@@ -74,8 +75,8 @@ func CreateMerkleTree(allData []*models.DataRecord, hashFunc *hash.HashWithSeed)
 	merkleTree.size = targetSize
 	for i := uint64(len(nodes)); i < targetSize; i++ {
 		// add number of empty nodes that is needed
-		empty := models.NewDataRecord(&models.Data{Key: "", Value: []byte{}, Tombstone: false, Timestamp: 0})
-		node, err := merkleTree.createNewNode(empty)
+		empty := &models.Data{Key: "", Value: []byte{}, Tombstone: true, Timestamp: 0}
+		node, err := merkleTree.createNewNode(empty, compression, encoder)
 		if err != nil {
 			return nil, err
 		}
