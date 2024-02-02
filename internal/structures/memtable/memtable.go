@@ -51,7 +51,7 @@ func (memtable *Memtable) makePartition() {
 	}
 
 	//if there is no currentPartition (during initialization) only currentPartition is created
-	if memtable.currentPartition == nil {
+	if memtable.currentPartition == nil || memtable.maxPartitions == 1 {
 		memtable.currentPartition = newPartition
 		return
 	}
@@ -74,7 +74,11 @@ func (memtable *Memtable) Put(key string, value []byte, timestamp uint64, tombst
 
 	if uint64(memtable.currentPartition.Size()) >= memtable.maxEntries {
 		if uint64(len(memtable.partitions)+1) >= memtable.maxPartitions {
-			toFlush = memtable.partitions[0].GetSorted()
+			if len(memtable.partitions) == 0 {
+				toFlush = memtable.currentPartition.GetSorted()
+			} else {
+				toFlush = memtable.partitions[0].GetSorted()
+			}
 		}
 		memtable.makePartition()
 	}
