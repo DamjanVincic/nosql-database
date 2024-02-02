@@ -10,10 +10,11 @@ import (
 const ConfigFile = "config.yaml"
 
 type Config struct {
-	WAL      WALConfig      `yaml:"wal"`
-	Memtable MemtableConfig `yaml:"memtable"`
-	SSTable  SSTableConfig  `yaml:"sstable"`
-	Cache    CacheConfig    `yaml:"cache"`
+	WAL         WALConfig         `yaml:"wal"`
+	Memtable    MemtableConfig    `yaml:"memtable"`
+	SSTable     SSTableConfig     `yaml:"sstable"`
+	Cache       CacheConfig       `yaml:"cache"`
+	TokenBucket TokenBucketConfig `yaml:"tokenbucket"`
 }
 
 type WALConfig struct {
@@ -42,6 +43,11 @@ type CacheConfig struct {
 	Size uint64 `yaml:"size" validate:"gte=1"`
 }
 
+type TokenBucketConfig struct {
+	Capacity     uint64 `yaml:"capacity" validate:"gte=1"`
+	RefillPeriod uint64 `yaml:"refillPeriod"`
+}
+
 // Default Config
 var config = &Config{
 	WAL: WALConfig{
@@ -66,19 +72,25 @@ var config = &Config{
 	Cache: CacheConfig{
 		Size: 10,
 	},
+	TokenBucket: TokenBucketConfig{
+		Capacity:     3,
+		RefillPeriod: 10,
+	},
 }
 
 // return default if an error is thrown while loading config
 func LoadConfig() (*Config, error) {
 	file, err := os.ReadFile(ConfigFile)
 	if err != nil {
-		return nil, err
+		fmt.Println("Error while reading config file, using default config")
+		return config, err
 	}
 
 	var fileConfig = &Config{}
 
 	if err = yaml.Unmarshal(file, fileConfig); err != nil {
-		return nil, err
+		fmt.Println("Error while unmarshalling config, using default config")
+		return config, err
 	}
 
 	validate := validator.New(validator.WithRequiredStructEnabled())
