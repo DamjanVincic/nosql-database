@@ -4,7 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	key_encoder "github.com/DamjanVincic/key-value-engine/internal/structures/key-encoder"
+	"github.com/DamjanVincic/key-value-engine/internal/structures/keyencoder"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -87,7 +87,7 @@ type SSTable struct {
 	summaryConst uint16
 	singleFile   bool
 	compression  bool
-	encoder      *key_encoder.KeyEncoder
+	encoder      *keyencoder.KeyEncoder
 }
 
 func NewSSTable(indexSparseConst uint16, summarySparseConst uint16, singleFile bool, compression bool) (*SSTable, error) {
@@ -100,9 +100,9 @@ func NewSSTable(indexSparseConst uint16, summarySparseConst uint16, singleFile b
 		}
 	}
 
-	var encoder *key_encoder.KeyEncoder
+	var encoder *keyencoder.KeyEncoder
 	if compression {
-		encoder, err = key_encoder.ReadFromFile()
+		encoder, err = keyencoder.ReadFromFile()
 		if err != nil {
 			return nil, err
 		}
@@ -377,7 +377,7 @@ func initializeIndexRecords(indexConst uint16, compression bool) []byte {
 	return indexRecords
 }
 
-func createSummaryHeader(summaryConst uint16, summaryMin string, summaryMax string, compression bool, encoder *key_encoder.KeyEncoder) []byte {
+func createSummaryHeader(summaryConst uint16, summaryMin string, summaryMax string, compression bool, encoder *keyencoder.KeyEncoder) []byte {
 	var summaryHeader []byte
 	if compression {
 		//temporary storage for 16 and 64-bit integers and used bytes in them
@@ -417,7 +417,7 @@ func createSummaryHeader(summaryConst uint16, summaryMin string, summaryMax stri
 	return summaryHeader
 }
 
-func addToIndex(offset uint64, entry *models.Data, result *[]byte, compression bool, encoder *key_encoder.KeyEncoder) []byte {
+func addToIndex(offset uint64, entry *models.Data, result *[]byte, compression bool, encoder *keyencoder.KeyEncoder) []byte {
 	indexRecord := NewIndexRecord(entry, offset)
 	serializedIndexRecord := indexRecord.SerializeIndexRecord(compression, encoder)
 	*result = append(*result, serializedIndexRecord...)
@@ -702,7 +702,7 @@ func readBloomFilterFromFile(key string, mmapFile mmap.MMap) (bool, error) {
 }
 
 // check if key is in summary range, if it is return index record offset, if it is not return 0
-func readSummaryFromFile(mmapFile mmap.MMap, key string, compression bool, encoder *key_encoder.KeyEncoder) (uint64, uint16, error) {
+func readSummaryFromFile(mmapFile mmap.MMap, key string, compression bool, encoder *keyencoder.KeyEncoder) (uint64, uint16, error) {
 
 	summaryConst, summaryMin, summaryMax, headerLength, err := readSummaryHeader(mmapFile, compression, encoder)
 
@@ -751,7 +751,7 @@ func readSummaryFromFile(mmapFile mmap.MMap, key string, compression bool, encod
 }
 
 // reads summary thinning const, min and max key, also returns header length
-func readSummaryHeader(mmapFile mmap.MMap, compression bool, encoder *key_encoder.KeyEncoder) (summaryConst uint16, min string, max string, bytesRead uint64, err error) {
+func readSummaryHeader(mmapFile mmap.MMap, compression bool, encoder *keyencoder.KeyEncoder) (summaryConst uint16, min string, max string, bytesRead uint64, err error) {
 	summaryConst = 0
 	bytesRead = 0
 	min = ""
@@ -769,7 +769,7 @@ func readSummaryHeader(mmapFile mmap.MMap, compression bool, encoder *key_encode
 		summaryConst = uint16(tempSummaryConst)
 
 		if len(mmapFile[bytesRead:]) < CompressedIndexRecordMaxSize {
-			endOffset = uint64(len(mmapFile[bytesRead:]) - 1)
+			endOffset = uint64(len(mmapFile[bytesRead:]))
 		} else {
 			endOffset = bytesRead + CompressedIndexRecordMaxSize
 		}
@@ -813,7 +813,7 @@ func readSummaryHeader(mmapFile mmap.MMap, compression bool, encoder *key_encode
 	return
 }
 
-func readNextIndex(mmapFile mmap.MMap, offset uint64, compression bool, encoder *key_encoder.KeyEncoder) (indexRecord *IndexRecord, recordLength uint64, err error) {
+func readNextIndex(mmapFile mmap.MMap, offset uint64, compression bool, encoder *keyencoder.KeyEncoder) (indexRecord *IndexRecord, recordLength uint64, err error) {
 	err = nil
 	if compression {
 		if len(mmapFile[offset:]) < CompressedIndexRecordMaxSize {
@@ -833,7 +833,7 @@ func readNextIndex(mmapFile mmap.MMap, offset uint64, compression bool, encoder 
 
 // check if key is in index range, if it is return data record offset, if it is not return 0
 // we start reading summaryThinningConst number of index records from offset in index file
-func readIndexFromFile(mmapFile mmap.MMap, summaryConst uint16, key string, offset uint64, compression bool, encoder *key_encoder.KeyEncoder) (uint64, uint16, error) {
+func readIndexFromFile(mmapFile mmap.MMap, summaryConst uint16, key string, offset uint64, compression bool, encoder *keyencoder.KeyEncoder) (uint64, uint16, error) {
 	var previousRecord *IndexRecord
 	var currentRecord *IndexRecord
 	var err error
@@ -880,7 +880,7 @@ func readIndexHeader(mmapFile mmap.MMap, compression bool) uint16 {
 
 // param mmapFile - we do this instead passing the file or filename itself, so we can use function for
 // both multi and single file sstable, we do this for all reads
-func readDataFromFile(mmapFile mmap.MMap, indexThinningConst uint16, key string, offset uint64, compression bool, encoder *key_encoder.KeyEncoder) (*models.Data, error) {
+func readDataFromFile(mmapFile mmap.MMap, indexThinningConst uint16, key string, offset uint64, compression bool, encoder *keyencoder.KeyEncoder) (*models.Data, error) {
 	//read IndexConst number of data records
 	for i := uint16(0); i < indexThinningConst; i++ {
 		dataRecord, dataRecordSize, err := models.Deserialize(mmapFile[offset:], compression, encoder)

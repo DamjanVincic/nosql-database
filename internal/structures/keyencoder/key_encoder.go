@@ -1,4 +1,4 @@
-package key_encoder
+package keyencoder
 
 import (
 	"encoding/binary"
@@ -9,8 +9,8 @@ import (
 )
 
 const (
-	Path     = "key-encoder"
-	Filename = "key-encoder.db"
+	Path     = "keyencoder"
+	Filename = "keyencoder.db"
 )
 
 type KeyEncoder struct {
@@ -78,7 +78,7 @@ func Deserialize(serializedKeyEncoder []byte) (keyEncoder *KeyEncoder, err error
 	var tempKeySize uint64 //temp variable for storing keySize
 	var tempKey string     //temp variable used for storing key
 	var tempBytesRead int  //temp variable for number of bytes read for each 64-bit integer
-	bytesRead := 0         //total number of bytes read
+	var bytesRead int      //total number of bytes read
 
 	for {
 		tempEncoded, tempBytesRead = binary.Uvarint(serializedKeyEncoder[bytesRead:])
@@ -137,17 +137,8 @@ func (keyEncoder *KeyEncoder) WriteToFile() error {
 	// make sure it has enough space
 	totalBytes := int64(len(data))
 
-	fileStat, err := file.Stat()
-	if err != nil {
-		return err
-	}
-
-	if err = file.Truncate(0); err != nil {
-		return err
-	}
-
-	fileSize := fileStat.Size()
-	if err = file.Truncate(fileSize + totalBytes); err != nil {
+	//fileSize := fileStat.Size()
+	if err = file.Truncate(totalBytes); err != nil {
 		return err
 	}
 
@@ -156,7 +147,7 @@ func (keyEncoder *KeyEncoder) WriteToFile() error {
 		return err
 	}
 
-	copy(mmapFile[fileSize:], data)
+	copy(mmapFile, data)
 
 	err = mmapFile.Unmap()
 	if err != nil {

@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
-	key_encoder "github.com/DamjanVincic/key-value-engine/internal/structures/key-encoder"
+	"github.com/DamjanVincic/key-value-engine/internal/structures/keyencoder"
 	"math"
 
 	"github.com/DamjanVincic/key-value-engine/internal/models"
@@ -35,7 +35,7 @@ type Node struct {
 /*
 get binary data and hash function and return new node with no children and hashed values
 */
-func (merkleTree *MerkleTree) createNewNode(value *models.Data, compression bool, encoder *key_encoder.KeyEncoder) (*Node, error) {
+func (merkleTree *MerkleTree) createNewNode(value *models.Data, compression bool, encoder *keyencoder.KeyEncoder) (*Node, error) {
 	newData := value.Serialize(compression, encoder)
 	values, err := merkleTree.HashWithSeed.Hash(newData)
 	if err != nil {
@@ -51,7 +51,7 @@ since merkle tree is build from bottom up we need all data as leafs
 if number of leafs is not 2**n we need to add empty nodes
 there hash wont change anything
 */
-func CreateMerkleTree(allData []*models.Data, hashFunc *hash.HashWithSeed, compression bool, encoder *key_encoder.KeyEncoder) (*MerkleTree, error) {
+func CreateMerkleTree(allData []*models.Data, hashFunc *hash.HashWithSeed, compression bool, encoder *keyencoder.KeyEncoder) (*MerkleTree, error) {
 	var nodes []*Node
 	var merkleTree MerkleTree
 	if hashFunc == nil {

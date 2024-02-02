@@ -3,19 +3,10 @@ package models
 import (
 	"encoding/binary"
 	"errors"
-	key_encoder "github.com/DamjanVincic/key-value-engine/internal/structures/key-encoder"
+	"github.com/DamjanVincic/key-value-engine/internal/structures/keyencoder"
 	"github.com/edsrzf/mmap-go"
 	"hash/crc32"
 )
-
-// Data struct that wraps bytes, tombstone and timestamp
-// to be used in structures that require those fields
-type Data struct {
-	Key       string
-	Value     []byte
-	Tombstone bool
-	Timestamp uint64
-}
 
 const (
 	CrcSize       = 4
@@ -34,7 +25,16 @@ const (
 	RecordHeaderSize = CrcSize + TimestampSize + TombstoneSize + KeySizeSize + ValueSizeSize
 )
 
-func (data *Data) Serialize(compression bool, encoder *key_encoder.KeyEncoder) []byte {
+// Data struct that wraps bytes, tombstone and timestamp
+// to be used in structures that require those fields
+type Data struct {
+	Key       string
+	Value     []byte
+	Tombstone bool
+	Timestamp uint64
+}
+
+func (data *Data) Serialize(compression bool, encoder *keyencoder.KeyEncoder) []byte {
 	if compression {
 		return data.serializeWithCompression(encoder)
 	} else {
@@ -48,21 +48,7 @@ func (data *Data) serializeWithoutCompression() []byte {
 	valueSize := uint64(len(data.Value))
 	if !data.Tombstone {
 		bytes = make([]byte, RecordHeaderSize+keySize+valueSize)
-	} else {
-		bytes = make([]byte, RecordHeaderSize+keySize-ValueSizeSize)
-	}
-	// Append the Timestamp
-	binary.BigEndian.PutUint64(bytes[TimestampStart:TombstoneStart], data.Timestamp)
-	// Append the Tombstone
-	if data.Tombstone {
-		bytes[TombstoneStart] = 1
-	} else {
 		bytes[TombstoneStart] = 0
-	}
-	// Append the Key Size
-	binary.BigEndian.PutUint64(bytes[KeySizeStart:ValueSizeStart], keySize)
-
-	if !data.Tombstone {
 		// Append the Value Size
 		binary.BigEndian.PutUint64(bytes[ValueSizeStart:KeyStart], valueSize)
 		// Append the Key
@@ -70,9 +56,21 @@ func (data *Data) serializeWithoutCompression() []byte {
 		// Append the Value
 		copy(bytes[KeyStart+keySize:], data.Value)
 	} else {
+		bytes = make([]byte, RecordHeaderSize+keySize-ValueSizeSize)
+		bytes[TombstoneStart] = 1
 		// Append the Key
 		copy(bytes[ValueSizeStart:ValueSizeStart+keySize], data.Key)
 	}
+	// Append the Timestamp
+	binary.BigEndian.PutUint64(bytes[TimestampStart:TombstoneStart], data.Timestamp)
+	// Append the Tombstone
+	//if data.Tombstone {
+	//	bytes[TombstoneStart] = 1
+	//} else {
+	//	bytes[TombstoneStart] = 0
+	//}
+	// Append the Key Size
+	binary.BigEndian.PutUint64(bytes[KeySizeStart:ValueSizeStart], keySize)
 
 	crc := crc32.ChecksumIEEE(bytes[CrcSize:])
 	// Append the CRC
@@ -81,7 +79,7 @@ func (data *Data) serializeWithoutCompression() []byte {
 	return bytes
 }
 
-func (data *Data) serializeWithCompression(encoder *key_encoder.KeyEncoder) []byte {
+func (data *Data) serializeWithCompression(encoder *keyencoder.KeyEncoder) []byte {
 	var bytes []byte
 	valueSize := uint64(len(data.Value))
 
@@ -108,10 +106,10 @@ func (data *Data) serializeWithCompression(encoder *key_encoder.KeyEncoder) []by
 		valueSizeBytesSize = binary.PutUvarint(valueSizeBytes, valueSize)
 
 		//calculate size of serialized  record and make bytes
-		bytes = make([]byte, uint64(timestampBytesSize+keyBytesSize+1+valueSizeBytesSize)+valueSize)
+		bytes = make([]byte, uint64(timestampBytesSize+keyBytesSize+TombstoneSize+valueSizeBytesSize)+valueSize)
 	} else {
 		//calculate size of serialized  record and make bytes
-		bytes = make([]byte, timestampBytesSize+keyBytesSize+1)
+		bytes = make([]byte, timestampBytesSize+keyBytesSize+TombstoneSize)
 	}
 	offset := 0
 
@@ -131,7 +129,7 @@ func (data *Data) serializeWithCompression(encoder *key_encoder.KeyEncoder) []by
 	copy(bytes[offset:offset+keyBytesSize], keyBytes[:keyBytesSize])
 	offset += keyBytesSize
 
-	if !(data.Tombstone) {
+	if !data.Tombstone {
 		//append ValueSize
 		copy(bytes[offset:offset+valueSizeBytesSize], valueSizeBytes[:valueSizeBytesSize])
 		offset += valueSizeBytesSize
@@ -151,7 +149,7 @@ func (data *Data) serializeWithCompression(encoder *key_encoder.KeyEncoder) []by
 	return bytes
 }
 
-func Deserialize(mmapFile mmap.MMap, compression bool, encoder *key_encoder.KeyEncoder) (*Data, uint64, error) {
+func Deserialize(mmapFile mmap.MMap, compression bool, encoder *keyencoder.KeyEncoder) (*Data, uint64, error) {
 	if compression {
 		return deserializeWithCompression(mmapFile, encoder)
 	} else {
@@ -197,7 +195,7 @@ func deserializeWithoutCompression(mmapFile mmap.MMap) (*Data, uint64, error) {
 	}
 }
 
-func deserializeWithCompression(mmapFile mmap.MMap, encoder *key_encoder.KeyEncoder) (data *Data, bytesRead uint64, err error) {
+func deserializeWithCompression(mmapFile mmap.MMap, encoder *keyencoder.KeyEncoder) (data *Data, bytesRead uint64, err error) {
 	data = nil
 	err = nil
 	bytesRead = 0

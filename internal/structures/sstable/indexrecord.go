@@ -2,7 +2,7 @@ package sstable
 
 import (
 	"encoding/binary"
-	key_encoder "github.com/DamjanVincic/key-value-engine/internal/structures/key-encoder"
+	"github.com/DamjanVincic/key-value-engine/internal/structures/keyencoder"
 
 	"github.com/DamjanVincic/key-value-engine/internal/models"
 )
@@ -19,7 +19,7 @@ func NewIndexRecord(memEntry *models.Data, offset uint64) *IndexRecord {
 	}
 }
 
-func (indexRecord *IndexRecord) SerializeIndexRecord(compression bool, encoder *key_encoder.KeyEncoder) []byte {
+func (indexRecord *IndexRecord) SerializeIndexRecord(compression bool, encoder *keyencoder.KeyEncoder) []byte {
 	var bytes []byte
 
 	if compression {
@@ -51,7 +51,7 @@ func (indexRecord *IndexRecord) SerializeIndexRecord(compression bool, encoder *
 		binary.BigEndian.PutUint64(bytes, keySize)
 
 		// Serialize Key (variable size)
-		copy(bytes[KeyStart:], []byte(indexRecord.Key))
+		copy(bytes[KeyStart:], indexRecord.Key)
 
 		// Serialize Offset (8 bytes, BigEndian)
 		binary.BigEndian.PutUint64(bytes[KeyStart+keySize:], indexRecord.Offset)
@@ -60,7 +60,7 @@ func (indexRecord *IndexRecord) SerializeIndexRecord(compression bool, encoder *
 	return bytes
 }
 
-func DeserializeIndexRecord(bytes []byte, compression bool, encoder *key_encoder.KeyEncoder) (indexRecord *IndexRecord, recordLength uint64, err error) {
+func DeserializeIndexRecord(bytes []byte, compression bool, encoder *keyencoder.KeyEncoder) (indexRecord *IndexRecord, recordLength uint64, err error) {
 	indexRecord = nil
 	err = nil
 	recordLength = 0
