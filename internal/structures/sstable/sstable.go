@@ -256,26 +256,42 @@ func (sstable *SSTable) createFiles(memEntries []*models.Data, singleFile bool, 
 	// process of adding entries
 	for _, dataRecord := range memEntries {
 		//every entry is saved in data segment
-		sizeOfDR, sizeOfIR, sizeOfSR = sstable.writeNextDataRecord()
-		dataBlockSize += sizeOfDR
-		offset += sizeOfDR
-		if countRecords%sstable.indexConst == 0 {
 
-		if sizeOfIR != 0{
-			indexBlockSize += sizeOfIR
-			countRecords++
-			indexOffset += sizeOfIR
+		hashedData, err := merkleTree.CreateNodeData(dataRecord, sstable.compression, sstable.encoder)
+		if err != nil {
+			return err
 		}
-		if sizeOfIR != 0{
-			summaryBlockSize += sizeOfSR
+		merkleHashedRecords = append(merkleHashedRecords, hashedData...)
+		serializedRecord := dataRecord.Serialize(sstable.compression, sstable.encoder)
+		sizeOfDR = uint64(len(serializedRecord))
+		dataRecords = append(dataRecords, serializedRecord...)
+
+		dataBlockSize += sizeOfDR
+		// every Nth one is saved in the index (key, offset of dataRec)
+		if countRecords%sstable.indexConst == 0 {
+			serializedIndexRecord = addToIndex(offset, dataRecord, &indexRecords, sstable.compression, sstable.encoder)
+			sizeOfIR = uint64(len(serializedIndexRecord))
+			indexBlockSize += sizeOfIR
+			// every Nth one is saved in the summary index (key, offset of indexRec)
+			if countIndexRecords%sstable.summaryConst == 0 {
+				serializedSummaryRecord = addToIndex(indexOffset, dataRecord, &summaryRecords, sstable.compression, sstable.encoder)
+				sizeOfSR = uint64(len(serializedSummaryRecord))
+				summaryBlockSize += sizeOfSR
+				if summaryMin == "" {
+					summaryMin = dataRecord.Key
+				}
+			}
+			indexOffset += sizeOfIR
 			countIndexRecords++
 		}
-
+		summaryMax = dataRecord.Key
 		//add key to bf
 		err = filter.AddElement([]byte(dataRecord.Key))
 		if err != nil {
 			return err
 		}
+		offset += sizeOfDR
+		countRecords++
 	}
 	err := merkleTree.CreateMerkleTree(merkleHashedRecords, sstable.compression, sstable.encoder)
 	if err != nil {
@@ -351,38 +367,6 @@ func (sstable *SSTable) createFiles(memEntries []*models.Data, singleFile bool, 
 	return nil
 }
 
-func (sstable *SSTable) writeNextDataRecord(merkleTree *merkle.MerkleTree, dataRecord *models.Data, merkleHashedRecords *[]byte, indexRecords *[]byte, summaryRecords *[]byte, dataRecords *[]byte, offset *uint64, indexOffset *uint64) (uint64, error) {
-	var sizeOfDR uint64
-	var sizeOfIR uint64
-	var sizeOfSR uint64
-
-	hashedData, err := merkleTree.CreateNodeData(dataRecord, sstable.compression, sstable.encoder)
-	if err != nil {
-		return 0, err
-	}
-	*merkleHashedRecords = append(*merkleHashedRecords, hashedData...)
-	serializedRecord := dataRecord.Serialize(sstable.compression, sstable.encoder)
-	sizeOfDR = uint64(len(serializedRecord))
-	*dataRecords = append(*dataRecords, serializedRecord...)
-
-	// every Nth one is saved in the index (key, offset of dataRec)
-	summaryMax = dataRecord.Key
-	return sizeOfDR, sizeOfIR, sizeOfSR, nil
-}
-func writeNextIndexRecord(){
-		serializedIndexRecord := addToIndex(offset, dataRecord, indexRecords, sstable.compression, sstable.encoder)
-		sizeOfIR = uint64(len(serializedIndexRecord))
-		// every Nth one is saved in the summary index (key, offset of indexRec)
-		if countIndexRecords%sstable.summaryConst == 0 {
-			serializedSummaryRecord := addToIndex(indexOffset, dataRecord, summaryRecords, sstable.compression, sstable.encoder)
-			sizeOfSR = uint64(len(serializedSummaryRecord))
-			if summaryMin == "" {
-				summaryMin = dataRecord.Key
-			}
-		}
-	
-
-}
 // serializes index const and returns resulting bytes
 func initializeIndexRecords(indexConst uint16, compression bool) []byte {
 	var indexRecords []byte
