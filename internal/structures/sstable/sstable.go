@@ -761,19 +761,31 @@ func readSummaryHeader(mmapFile mmap.MMap, compression bool, encoder *key_encode
 	if compression {
 		bytesStep := 0
 
+		var endOffset uint64
+
 		//tempSummaryConst is needed because varint returns only 64-bit integers
 		tempSummaryConst, bytesStep := binary.Uvarint(mmapFile)
 		bytesRead += uint64(bytesStep)
 		summaryConst = uint16(tempSummaryConst)
 
-		encodedMin, bytesStep := binary.Uvarint(mmapFile[bytesRead:])
+		if len(mmapFile[bytesRead:]) < CompressedIndexRecordMaxSize {
+			endOffset = uint64(len(mmapFile[bytesRead:]) - 1)
+		} else {
+			endOffset = bytesRead + CompressedIndexRecordMaxSize
+		}
+		encodedMin, bytesStep := binary.Uvarint(mmapFile[bytesRead:endOffset])
 		bytesRead += uint64(bytesStep)
 		min, err = encoder.GetKey(encodedMin)
 		if err != nil {
 			return
 		}
 
-		encodedMax, bytesStep := binary.Uvarint(mmapFile[bytesRead:])
+		if len(mmapFile[bytesRead:]) < CompressedIndexRecordMaxSize {
+			endOffset = uint64(len(mmapFile[bytesRead:]))
+		} else {
+			endOffset = bytesRead + CompressedIndexRecordMaxSize
+		}
+		encodedMax, bytesStep := binary.Uvarint(mmapFile[bytesRead:endOffset])
 		bytesRead += uint64(bytesStep)
 		max, err = encoder.GetKey(encodedMax)
 		if err != nil {
@@ -804,7 +816,12 @@ func readSummaryHeader(mmapFile mmap.MMap, compression bool, encoder *key_encode
 func readNextIndex(mmapFile mmap.MMap, offset uint64, compression bool, encoder *key_encoder.KeyEncoder) (indexRecord *IndexRecord, recordLength uint64, err error) {
 	err = nil
 	if compression {
-		indexRecord, recordLength, err = DeserializeIndexRecord(mmapFile[offset:], compression, encoder)
+		if len(mmapFile[offset:]) < CompressedIndexRecordMaxSize {
+			indexRecord, recordLength, err = DeserializeIndexRecord(mmapFile[offset:], compression, encoder)
+		} else {
+			indexRecord, recordLength, err = DeserializeIndexRecord(mmapFile[offset:offset+CompressedIndexRecordMaxSize], compression, encoder)
+		}
+
 	} else {
 		// each record has keySize, key and offset
 		keySize := binary.BigEndian.Uint64(mmapFile[offset+KeySizeStart : offset+KeySizeSize])
@@ -821,7 +838,6 @@ func readIndexFromFile(mmapFile mmap.MMap, summaryConst uint16, key string, offs
 	var currentRecord *IndexRecord
 	var err error
 	indexThinningConst := readIndexHeader(mmapFile, compression)
-	//bytesSize := uint64(len(mmapFile)) ???
 	indexRecordSize := uint64(0)
 	//read SummaryConst number of index records
 	for i := uint16(0); i < summaryConst; i++ {
