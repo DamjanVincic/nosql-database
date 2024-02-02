@@ -92,7 +92,6 @@ type SSTable struct {
 
 func NewSSTable(indexSparseConst uint16, summarySparseConst uint16, singleFile bool, compression bool) (*SSTable, error) {
 	//check if sstable dir exists, if not create it
-	// _ = dirEntries, now its like this bc we dont use it anywhere (Mijat)
 	_, err := os.ReadDir(Path)
 	if os.IsNotExist(err) {
 		err := os.Mkdir(Path, os.ModePerm)
@@ -101,14 +100,20 @@ func NewSSTable(indexSparseConst uint16, summarySparseConst uint16, singleFile b
 		}
 	}
 
-	//add reading encoder!!
+	var encoder *key_encoder.KeyEncoder
+	if compression {
+		encoder, err = key_encoder.ReadFromFile()
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	return &SSTable{
 		indexConst:   indexSparseConst,
 		summaryConst: summarySparseConst,
 		singleFile:   singleFile,
 		compression:  compression,
-		encoder:      key_encoder.NewKeyEncoder(),
+		encoder:      encoder,
 	}, nil
 }
 
@@ -178,8 +183,6 @@ func (sstable *SSTable) Write(memEntries []*models.Data) error {
 		if err != nil {
 			return err
 		}
-
-		return nil
 	} else {
 		// Filename format: PART.db, part = sstable element
 		// create names of new files
@@ -200,9 +203,11 @@ func (sstable *SSTable) Write(memEntries []*models.Data) error {
 		if err != nil {
 			return err
 		}
-
-		return nil
 	}
+	if sstable.compression {
+		return sstable.encoder.WriteToFile()
+	}
+	return nil
 }
 
 // we distinguish implementations by the singleFile value (and the num of params, 1 for single, 5 for multi)
