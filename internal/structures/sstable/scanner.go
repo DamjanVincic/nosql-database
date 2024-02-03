@@ -2,6 +2,7 @@ package sstable
 
 import (
 	"encoding/binary"
+	"errors"
 	"github.com/DamjanVincic/key-value-engine/internal/models"
 	"github.com/DamjanVincic/key-value-engine/internal/structures/keyencoder"
 	"github.com/DamjanVincic/key-value-engine/internal/structures/memtable"
@@ -281,12 +282,77 @@ type ScannerFile struct {
 	offset           uint64
 }
 
-type ScannerIterator struct {
+type PrefixIterator struct {
+	memKeys         []string
+	scannerFiles    []*ScannerFile
+	filesToBeClosed []*ScannerFile
+	sstable         *SSTable
+	memtable        *memtable.Memtable
+	prefix          string
 }
 
-func (sstable *SSTable) PrefixScan(prefix string, pageNumber uint64, pageSize uint64, memtable *memtable.Memtable) ([]*models.Data, error) {
-	memKeys := memtable.GetKeysWithPrefix(prefix)
+func (sstable *SSTable) NewPrefixIterator(prefix string, memtable *memtable.Memtable) (*PrefixIterator, *models.Data, error) {
+	records, err, memKeys, scannerFiles, filesToBeClosed := sstable._prefixScan(prefix, 1, 1, memtable, true)
+	if err != nil {
+		return nil, nil, err
+	}
+	var record *models.Data
+	if len(records) > 0 {
+		record = records[0]
+	}
+	return &PrefixIterator{memKeys: memKeys, scannerFiles: scannerFiles, filesToBeClosed: filesToBeClosed, sstable: sstable, memtable: memtable, prefix: prefix}, record, err
+}
+
+func (iterator *PrefixIterator) Next() (*models.Data, error) {
+
+	minCandidate, candidates, filesWithoutPrefix, err := iterator.sstable.getCandidates(iterator.memKeys, iterator.scannerFiles, iterator.prefix)
+
+	if err != nil {
+		return nil, err
+	}
+
+	for _, file := range filesWithoutPrefix {
+		iterator.scannerFiles = removeFromSlice(iterator.scannerFiles, file)
+	}
+
+	if minCandidate == nil {
+		return nil, errors.New("no records left")
+	}
+
+	var record *models.Data
+
+	if minCandidate.file == nil {
+		record = iterator.memtable.Get(minCandidate.key)
+	} else {
+		record, _, err = models.Deserialize(minCandidate.file.mmapFile[minCandidate.offset:], iterator.sstable.compression, iterator.sstable.encoder)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	iterator.memKeys, iterator.scannerFiles = iterator.sstable.updateScannerFiles(minCandidate, candidates, iterator.memKeys, iterator.scannerFiles)
+
+	return record, nil
+}
+
+func (iterator *PrefixIterator) Stop() error {
+	return iterator.sstable.closeScannerFiles(iterator.filesToBeClosed)
+}
+
+func (sstable *SSTable) PrefixScan(prefix string, pageNumber uint64, pageSize uint64, memtable *memtable.Memtable) (records []*models.Data, err error) {
+	records, err, _, _, _ = sstable._prefixScan(prefix, pageNumber, pageSize, memtable, false)
+
+	if err != nil {
+		records = nil
+	}
+	return
+}
+
+func (sstable *SSTable) _prefixScan(prefix string, pageNumber uint64, pageSize uint64, memtable *memtable.Memtable, iterator bool) (records []*models.Data, err error, memKeys []string, scannerFiles []*ScannerFile, filesToBeClosed []*ScannerFile) {
+	memKeys = memtable.GetKeysWithPrefix(prefix)
 	found := make([]*ScanningCandidate, 0)
+	records = make([]*models.Data, 0)
+	err = nil
 
 	//stores newest candidate with min key in current iteration
 	var minCandidate *ScanningCandidate
@@ -297,14 +363,14 @@ func (sstable *SSTable) PrefixScan(prefix string, pageNumber uint64, pageSize ui
 	recordsNeeded := pageNumber * pageSize
 
 	//get mmapFiles positioned to start with record that has first occurrence of given prefix
-	scannerFiles, err := sstable.getDataFilesWithPrefix(prefix)
+	scannerFiles, err = sstable.getDataFilesWithPrefix(prefix)
 
 	//keep track of all files to be closed when done
-	filesToBeClosed := make([]*ScannerFile, len(scannerFiles))
+	filesToBeClosed = make([]*ScannerFile, len(scannerFiles))
 	copy(filesToBeClosed, scannerFiles)
 
 	if err != nil {
-		return nil, err
+		return
 	}
 
 	for uint64(len(found)) < recordsNeeded {
@@ -328,24 +394,20 @@ func (sstable *SSTable) PrefixScan(prefix string, pageNumber uint64, pageSize ui
 	//there isn't enough keys with given prefix to fill pages before requested page
 	if uint64(len(found)) < (pageNumber-1)*pageSize {
 		err = sstable.closeScannerFiles(filesToBeClosed)
-		return nil, err
+		return
 	}
-
-	var records []*models.Data
 
 	records, err = sstable.getFoundRecords(found, memtable, pageNumber, pageSize)
 
 	if err != nil {
-		return nil, err
+		return
 	}
 
-	err = sstable.closeScannerFiles(filesToBeClosed)
-
-	if err != nil {
-		return nil, err
+	if !iterator {
+		err = sstable.closeScannerFiles(filesToBeClosed)
 	}
 
-	return records, nil
+	return
 }
 
 func (sstable *SSTable) getCandidates(memKeys []string, scannerFiles []*ScannerFile, prefix string) (minCandidate *ScanningCandidate, candidates []*ScanningCandidate, filesWithoutPrefix []*ScannerFile, err error) {
