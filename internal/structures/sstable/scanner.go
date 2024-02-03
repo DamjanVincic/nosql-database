@@ -157,7 +157,12 @@ func (sstable *SSTable) getDataFilesWithPrefix(prefix string) (files []*ScannerF
 					}
 				}
 
-				files = append(files, &ScannerFile{mmapFile: data, osFile: currentFile, offset: 0})
+				if sstDirSize == 1 {
+					files = append(files, &ScannerFile{mmapFile: data, originalMmapFile: mmapSingleFile, osFile: currentFile, offset: 0})
+				} else {
+					files = append(files, &ScannerFile{mmapFile: data, originalMmapFile: data, osFile: currentFile, offset: 0})
+				}
+
 			} else {
 				indexOffset, summaryThinningConst, err := readSummaryFromFile(summary, prefix, sstable.compression, sstable.encoder)
 
@@ -229,7 +234,11 @@ func (sstable *SSTable) getDataFilesWithPrefix(prefix string) (files []*ScannerF
 					return nil, err
 				}
 				if positionedFile != nil {
-					files = append(files, &ScannerFile{mmapFile: positionedFile, osFile: currentFile, offset: 0})
+					if sstDirSize == 1 {
+						files = append(files, &ScannerFile{mmapFile: data, originalMmapFile: mmapSingleFile, osFile: currentFile, offset: 0})
+					} else {
+						files = append(files, &ScannerFile{mmapFile: data, originalMmapFile: data, osFile: currentFile, offset: 0})
+					}
 				}
 			}
 
@@ -266,9 +275,10 @@ type ScanningCandidate struct {
 }
 
 type ScannerFile struct {
-	mmapFile mmap.MMap
-	osFile   *os.File
-	offset   uint64
+	mmapFile         mmap.MMap
+	originalMmapFile mmap.MMap
+	osFile           *os.File
+	offset           uint64
 }
 
 type ScannerIterator struct {
@@ -404,10 +414,16 @@ func (sstable *SSTable) updateScannerFiles(minCandidate *ScanningCandidate, cand
 func (sstable *SSTable) closeScannerFiles(filesToBeClosed []*ScannerFile) error {
 	var err error
 	for _, file := range filesToBeClosed {
-		err = file.mmapFile.Unmap()
+		err = file.originalMmapFile.Unmap()
+		if err != nil {
+			return err
+		}
 		err = file.osFile.Close()
+		if err != nil {
+			return err
+		}
 	}
-	return err
+	return nil
 }
 
 func (sstable *SSTable) getFoundRecords(found []*ScanningCandidate, memtable *memtable.Memtable, pageNumber uint64, pageSize uint64) ([]*models.Data, error) {
