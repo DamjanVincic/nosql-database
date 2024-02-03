@@ -375,6 +375,15 @@ func (sstable *SSTable) PrefixScan(prefix string, pageNumber uint64, pageSize ui
 	return
 }
 
+func (sstable *SSTable) RangeScan(min string, max string, pageNumber uint64, pageSize uint64, memtable *memtable.Memtable) (records []*models.Data, err error) {
+	records, err, _, _, _ = sstable.scanWithConditions(min, max, false, pageNumber, pageSize, memtable, false)
+
+	if err != nil {
+		records = nil
+	}
+	return
+}
+
 func (sstable *SSTable) scanWithConditions(param1 string, param2 string, prefix bool, pageNumber uint64, pageSize uint64, memtable *memtable.Memtable, iterator bool) (records []*models.Data, err error, memKeys []string, scannerFiles []*ScannerFile, filesToBeClosed []*ScannerFile) {
 	if prefix {
 		memKeys = memtable.GetKeysWithPrefix(param1)
