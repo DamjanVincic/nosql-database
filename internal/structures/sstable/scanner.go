@@ -12,7 +12,7 @@ import (
 	"strings"
 )
 
-func (sstable *SSTable) getDataFilesWithPrefix(prefix string) (files []*ScannerFile, err error) {
+func (sstable *SSTable) getDataFilesForScanning(param1 string, param2 string, prefix bool) (files []*ScannerFile, err error) {
 	files = make([]*ScannerFile, 0)
 	err = nil
 
@@ -106,7 +106,10 @@ func (sstable *SSTable) getDataFilesWithPrefix(prefix string) (files []*ScannerF
 
 			_, minKey, maxKey, _, err := readSummaryHeader(summary, sstable.compression, sstable.encoder)
 
-			if (minKey > prefix && !strings.HasPrefix(minKey, prefix)) || (maxKey < prefix) {
+			prefix_not_possible := (minKey > param1 && !strings.HasPrefix(minKey, param1)) || (maxKey < param1)
+			range_not_possible := maxKey < param1 || minKey > param2
+
+			if (prefix && prefix_not_possible) || (!prefix && range_not_possible) {
 				i--
 				if sstDirSize != 1 {
 					err = summary.Unmap()
@@ -132,7 +135,9 @@ func (sstable *SSTable) getDataFilesWithPrefix(prefix string) (files []*ScannerF
 				continue
 			}
 
-			if strings.HasPrefix(minKey, prefix) {
+			minKeyIsInRange := minKey >= param1 && minKey <= param2
+
+			if (prefix && strings.HasPrefix(minKey, param1)) || (!prefix && minKeyIsInRange) {
 				if sstDirSize != 1 {
 					err = summary.Unmap()
 					if err != nil {
@@ -165,7 +170,7 @@ func (sstable *SSTable) getDataFilesWithPrefix(prefix string) (files []*ScannerF
 				}
 
 			} else {
-				indexOffset, summaryThinningConst, err := readSummaryFromFile(summary, prefix, sstable.compression, sstable.encoder)
+				indexOffset, summaryThinningConst, err := readSummaryFromFile(summary, param1, sstable.compression, sstable.encoder)
 
 				if err != nil {
 					//uradi zatvaranje fajlova
@@ -196,7 +201,7 @@ func (sstable *SSTable) getDataFilesWithPrefix(prefix string) (files []*ScannerF
 					}
 				}
 
-				dataOffset, _, err := readIndexFromFile(index, summaryThinningConst, prefix, indexOffset, sstable.compression, sstable.encoder)
+				dataOffset, _, err := readIndexFromFile(index, summaryThinningConst, param1, indexOffset, sstable.compression, sstable.encoder)
 
 				if err != nil {
 					//uradi zatvaranje fajlova
@@ -230,7 +235,12 @@ func (sstable *SSTable) getDataFilesWithPrefix(prefix string) (files []*ScannerF
 
 				var positionedFile mmap.MMap
 
-				positionedFile, err = findFirstWithPrefix(prefix, data[dataOffset:], sstable.compression, sstable.encoder)
+				if prefix {
+					positionedFile, err = findFirstWithPrefix(param1, data[dataOffset:], sstable.compression, sstable.encoder)
+				} else {
+					positionedFile, err = findFirstInRange(param1, param2, data[dataOffset:], sstable.compression, sstable.encoder)
+				}
+
 				if err != nil {
 					return nil, err
 				}
@@ -258,6 +268,23 @@ func findFirstWithPrefix(prefix string, mmapFile mmap.MMap, compression bool, en
 			return nil, err
 		}
 		if strings.HasPrefix(record.Key, prefix) {
+			return mmapFile[offset:], nil
+		}
+		offset += recordSize
+		if uint64(len(mmapFile)) <= offset {
+			return nil, nil
+		}
+	}
+}
+
+func findFirstInRange(min string, max string, mmapFile mmap.MMap, compression bool, encoder *keyencoder.KeyEncoder) (mmap.MMap, error) {
+	var offset uint64
+	for {
+		record, recordSize, err := models.Deserialize(mmapFile[offset:], compression, encoder)
+		if err != nil {
+			return nil, err
+		}
+		if record.Key >= min && record.Key <= max {
 			return mmapFile[offset:], nil
 		}
 		offset += recordSize
@@ -363,7 +390,7 @@ func (sstable *SSTable) _prefixScan(prefix string, pageNumber uint64, pageSize u
 	recordsNeeded := pageNumber * pageSize
 
 	//get mmapFiles positioned to start with record that has first occurrence of given prefix
-	scannerFiles, err = sstable.getDataFilesWithPrefix(prefix)
+	scannerFiles, err = sstable.getDataFilesForScanning(prefix, "", true)
 
 	//keep track of all files to be closed when done
 	filesToBeClosed = make([]*ScannerFile, len(scannerFiles))
