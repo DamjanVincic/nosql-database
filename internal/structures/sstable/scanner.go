@@ -132,6 +132,17 @@ func (sstable *SSTable) getDataFilesWithPrefix(prefix string) (files []*ScannerF
 			}
 
 			if strings.HasPrefix(minKey, prefix) {
+				if sstDirSize != 1 {
+					err = summary.Unmap()
+					if err != nil {
+						return nil, err
+					}
+					err = currentFile.Close()
+					if err != nil {
+						return nil, err
+					}
+				}
+
 				//find it in data
 				if sstDirSize == 1 {
 					data = mmapSingleFile[dataStart:indexStart]
@@ -147,17 +158,6 @@ func (sstable *SSTable) getDataFilesWithPrefix(prefix string) (files []*ScannerF
 				}
 
 				files = append(files, &ScannerFile{mmapFile: data, osFile: currentFile, offset: 0})
-
-				if sstDirSize != 1 {
-					err = summary.Unmap()
-					if err != nil {
-						return nil, err
-					}
-					err = currentFile.Close()
-					if err != nil {
-						return nil, err
-					}
-				}
 			} else {
 				indexOffset, summaryThinningConst, err := readSummaryFromFile(summary, prefix, sstable.compression, sstable.encoder)
 
