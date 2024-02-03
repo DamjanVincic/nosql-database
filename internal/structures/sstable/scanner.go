@@ -197,9 +197,10 @@ type ScannerFile struct {
 
 func (sstable *SSTable) PrefixScan(prefix string, pageNumber uint64, pageSize uint64, memtable *memtable.Memtable) ([]*models.Data, error) {
 	memKeys := memtable.GetKeysWithPrefix(prefix)
-	candidates := make([]*ScanningCandidate, 0)
 	found := make([]*ScanningCandidate, 0)
+
 	var minCandidate *ScanningCandidate
+	var candidates []*ScanningCandidate
 
 	recordsNeeded := pageNumber * pageSize
 
@@ -212,64 +213,106 @@ func (sstable *SSTable) PrefixScan(prefix string, pageNumber uint64, pageSize ui
 		return nil, err
 	}
 
-	for {
-		if len(memKeys) > 0 {
-			minCandidate = &ScanningCandidate{memKeys[0], nil, 0, 0, 0}
-		}
-		for _, scannerFile := range scannerFiles {
-			record, recordSize, err := models.Deserialize(scannerFile.mmapFile[scannerFile.offset:], sstable.compression, sstable.encoder)
-			if err != nil {
-				return nil, err
-			}
-			if minCandidate == nil {
-				minCandidate = &ScanningCandidate{record.Key, scannerFile, scannerFile.offset, recordSize, record.Timestamp}
-				continue
-			}
-			if minCandidate.key > record.Key {
-				minCandidate = &ScanningCandidate{record.Key, scannerFile, scannerFile.offset, recordSize, record.Timestamp}
-				candidates = make([]*ScanningCandidate, 0)
-				continue
-			}
-			if minCandidate.key == record.Key {
-				if minCandidate.timestamp < record.Timestamp && minCandidate.file != nil {
-					candidates = append(candidates, minCandidate)
-					minCandidate = &ScanningCandidate{record.Key, scannerFile, scannerFile.offset, recordSize, record.Timestamp}
-				} else {
-					candidates = append(candidates, &ScanningCandidate{record.Key, scannerFile, scannerFile.offset, recordSize, record.Timestamp})
-				}
-			}
-		}
-		if minCandidate == nil || uint64(len(found)) >= recordsNeeded {
+	for uint64(len(found)) < recordsNeeded {
+		minCandidate, candidates, err = sstable.getCandidates(memKeys, scannerFiles)
+
+		if minCandidate == nil {
 			break
 		}
 
 		found = append(found, minCandidate)
 
-		if minCandidate.file == nil {
-			memKeys = memKeys[1:]
-		} else {
-			minCandidate.file.offset += minCandidate.recordSize
-			if uint64(len(minCandidate.file.mmapFile)) <= minCandidate.file.offset {
-				scannerFiles = removeFromSlice(scannerFiles, minCandidate.file)
-			}
-		}
-		for _, candidate := range candidates {
-			candidate.file.offset += candidate.recordSize
-			if uint64(len(candidate.file.mmapFile)) <= candidate.file.offset {
-				scannerFiles = removeFromSlice(scannerFiles, candidate.file)
-			}
-		}
-		minCandidate = nil
-		candidates = make([]*ScanningCandidate, 0)
+		memKeys, scannerFiles = sstable.updateScannerFiles(minCandidate, candidates, memKeys, scannerFiles)
 	}
 
+	//there isn't enough keys with given prefix to fill pages before requested page
 	if uint64(len(found)) < (pageNumber-1)*pageSize {
-		for _, file := range filesToBeClosed {
-			err = file.mmapFile.Unmap()
-			err = file.osFile.Close()
-		}
+		err = sstable.closeScannerFiles(filesToBeClosed)
 		return nil, err
 	}
+
+	var records []*models.Data
+
+	records, err = sstable.getFoundRecords(found, memtable, pageNumber, pageSize)
+
+	if err != nil {
+		return nil, err
+	}
+
+	err = sstable.closeScannerFiles(filesToBeClosed)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return records, nil
+}
+
+func (sstable *SSTable) getCandidates(memKeys []string, scannerFiles []*ScannerFile) (minCandidate *ScanningCandidate, candidates []*ScanningCandidate, err error) {
+	err = nil
+	minCandidate = nil
+	candidates = make([]*ScanningCandidate, 0)
+
+	if len(memKeys) > 0 {
+		minCandidate = &ScanningCandidate{memKeys[0], nil, 0, 0, 0}
+	}
+	for _, scannerFile := range scannerFiles {
+		var record *models.Data
+		var recordSize uint64
+
+		record, recordSize, err = models.Deserialize(scannerFile.mmapFile[scannerFile.offset:], sstable.compression, sstable.encoder)
+		if err != nil {
+			return
+		}
+		if minCandidate == nil {
+			minCandidate = &ScanningCandidate{record.Key, scannerFile, scannerFile.offset, recordSize, record.Timestamp}
+			continue
+		}
+		if minCandidate.key > record.Key {
+			minCandidate = &ScanningCandidate{record.Key, scannerFile, scannerFile.offset, recordSize, record.Timestamp}
+			candidates = make([]*ScanningCandidate, 0)
+			continue
+		}
+		if minCandidate.key == record.Key {
+			if minCandidate.timestamp < record.Timestamp && minCandidate.file != nil {
+				candidates = append(candidates, minCandidate)
+				minCandidate = &ScanningCandidate{record.Key, scannerFile, scannerFile.offset, recordSize, record.Timestamp}
+			} else {
+				candidates = append(candidates, &ScanningCandidate{record.Key, scannerFile, scannerFile.offset, recordSize, record.Timestamp})
+			}
+		}
+	}
+	return
+}
+
+func (sstable *SSTable) updateScannerFiles(minCandidate *ScanningCandidate, candidates []*ScanningCandidate, memKeys []string, scannerFiles []*ScannerFile) ([]string, []*ScannerFile) {
+	if minCandidate.file == nil {
+		memKeys = memKeys[1:]
+	} else {
+		minCandidate.file.offset += minCandidate.recordSize
+		if uint64(len(minCandidate.file.mmapFile)) <= minCandidate.file.offset {
+			scannerFiles = removeFromSlice(scannerFiles, minCandidate.file)
+		}
+	}
+	for _, candidate := range candidates {
+		candidate.file.offset += candidate.recordSize
+		if uint64(len(candidate.file.mmapFile)) <= candidate.file.offset {
+			scannerFiles = removeFromSlice(scannerFiles, candidate.file)
+		}
+	}
+	return memKeys, scannerFiles
+}
+
+func (sstable *SSTable) closeScannerFiles(filesToBeClosed []*ScannerFile) error {
+	var err error
+	for _, file := range filesToBeClosed {
+		err = file.mmapFile.Unmap()
+		err = file.osFile.Close()
+	}
+	return err
+}
+
+func (sstable *SSTable) getFoundRecords(found []*ScanningCandidate, memtable *memtable.Memtable, pageNumber uint64, pageSize uint64) ([]*models.Data, error) {
 	records := make([]*models.Data, 0)
 	for i := (pageNumber - 1) * pageSize; i < uint64(len(found)); i++ {
 		if found[i].file == nil {
@@ -281,18 +324,7 @@ func (sstable *SSTable) PrefixScan(prefix string, pageNumber uint64, pageSize ui
 			}
 			records = append(records, record)
 		}
-
 	}
-
-	for _, file := range filesToBeClosed {
-		err = file.mmapFile.Unmap()
-		err = file.osFile.Close()
-	}
-
-	if err != nil {
-		return nil, err
-	}
-
 	return records, nil
 }
 
