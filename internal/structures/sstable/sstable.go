@@ -16,6 +16,7 @@ import (
 	"github.com/DamjanVincic/key-value-engine/internal/models"
 	"github.com/DamjanVincic/key-value-engine/internal/structures/bloomfilter"
 	"github.com/DamjanVincic/key-value-engine/internal/structures/merkle"
+
 	"github.com/edsrzf/mmap-go"
 )
 
@@ -169,7 +170,7 @@ func (sstable *SSTable) Write(memEntries []*models.Data) error {
 
 func (sstable *SSTable) createSStableFolder(lsmLevel uint8) ([]string, error) {
 	//index - sequence number of the sstable
-	var index uint16
+	index := uint16(1)
 	// subdirName : 00 (a two-digit num for the lsm index)
 	subdirName := fmt.Sprintf("%02d", lsmLevel)
 	subdirPath := filepath.Join(Path, subdirName)
@@ -463,6 +464,9 @@ func writeToFile(file *os.File, data []byte) error {
 	}
 
 	fileSize := fileStat.Size()
+	if fileSize == 1 {
+		fileSize--
+	}
 	if err = file.Truncate(fileSize + totalBytes); err != nil {
 		return err
 	}
@@ -486,16 +490,26 @@ func writeToFile(file *os.File, data []byte) error {
 // numberOfSSTables - the number of sst on the lsm level
 func (sstable *SSTable) CheckCompaction(lsmLvlDirPath string, lsmLevel uint8) error {
 	sstablesOnLvl, err := os.ReadDir(lsmLvlDirPath)
+	//levelStr := lsmLvlDirPath[8:]
+	//level :=
 	if os.IsNotExist(err) {
 		if err != nil {
 			return err
 		}
 	}
 	multiplier := math.Pow(float64(sstable.levelMultiplier), float64(lsmLevel-1))
-	if uint16(len(sstablesOnLvl)) > sstable.firstLevelMax*uint16(multiplier) {
+	if !sstable.leveledCompaction {
+		multiplier = 1
+	}
+	if uint16(len(sstablesOnLvl)) == sstable.firstLevelMax*uint16(multiplier) {
 		//radi kompakciju celog nivoa
 		if !sstable.leveledCompaction {
 			err := sstable.sizeTieredCompact(sstablesOnLvl, lsmLvlDirPath, lsmLevel)
+			if err != nil {
+				return err
+			}
+		} else {
+			err := sstable.leveledCompact(sstablesOnLvl, sstablesOnLvl)
 			if err != nil {
 				return err
 			}
@@ -503,8 +517,12 @@ func (sstable *SSTable) CheckCompaction(lsmLvlDirPath string, lsmLevel uint8) er
 	}
 	return nil
 }
-
+func (SSTable *SSTable) leveledCompact(sstablesOnLvl, sstablesOnLvlPlus []fs.DirEntry) error {
+	//var toBeDeleted []string
+	return nil
+}
 func (sstable *SSTable) sizeTieredCompact(sstOnLsmLvl []fs.DirEntry, lsmLvlDirPath string, lsmLevel uint8) error {
+	var toBeDeleted []string
 	var sstForCompaction []mmap.MMap
 	var file *os.File
 	var mmapFile mmap.MMap
@@ -514,6 +532,7 @@ func (sstable *SSTable) sizeTieredCompact(sstOnLsmLvl []fs.DirEntry, lsmLvlDirPa
 	for _, sst := range sstOnLsmLvl {
 		// sstable/02 + sst000000000054
 		filePath := filepath.Join(lsmLvlDirPath, sst.Name())
+		toBeDeleted = append(toBeDeleted, filePath)
 		sstFiles, err := os.ReadDir(filePath)
 		if os.IsNotExist(err) {
 			if err != nil {
@@ -561,10 +580,15 @@ func (sstable *SSTable) sizeTieredCompact(sstOnLsmLvl []fs.DirEntry, lsmLvlDirPa
 	if err != nil {
 		return err
 	}
+	err = RemoveSSTable(toBeDeleted)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
 func (sstable *SSTable) combineSSTables(sstForCompaction []mmap.MMap, nextLsmLevel uint8, folderPath string) error {
+	var mmapCurrFile mmap.MMap
 	var index uint64
 	folderEntries, err := os.ReadDir(folderPath)
 	if os.IsNotExist(err) {
@@ -602,18 +626,6 @@ func (sstable *SSTable) combineSSTables(sstForCompaction []mmap.MMap, nextLsmLev
 	if err != nil {
 		return err
 	}
-	fileStat, err := currentFile.Stat()
-	if err != nil {
-		return err
-	}
-	fileSize := fileStat.Size()
-	if err = currentFile.Truncate(fileSize + 10); err != nil {
-		return err
-	}
-	mmapCurrFile, err := mmap.Map(currentFile, mmap.RDWR, 0)
-	if err != nil {
-		return err
-	}
 	numberOfSSTables := len(sstForCompaction)
 	// we keep where we left of in each sstable and last key
 	offsets := make([]uint64, numberOfSSTables)
@@ -621,7 +633,7 @@ func (sstable *SSTable) combineSSTables(sstForCompaction []mmap.MMap, nextLsmLev
 
 	// read first record from each sstable
 	for i := 0; i < numberOfSSTables; i++ {
-		dataRecord, dataRecSize, err := readDataFromFile(sstForCompaction[i], 1, "", offsets[i], sstable.compression, sstable.encoder)
+		dataRecord, dataRecSize, err := models.Deserialize(sstForCompaction[i][offsets[i]:], sstable.compression, sstable.encoder)
 		if err != nil {
 			return err
 		}
@@ -642,7 +654,7 @@ func (sstable *SSTable) combineSSTables(sstForCompaction []mmap.MMap, nextLsmLev
 	groupedData[2] = &summaryData
 	// Storage for offsets in case of single file
 	// Storage for offsets in case of single file
-	var dataBlockSize uint64
+	var dataBlockSize int64
 	var indexBlockSize uint64
 	var summaryBlockSize uint64
 
@@ -650,7 +662,7 @@ func (sstable *SSTable) combineSSTables(sstForCompaction []mmap.MMap, nextLsmLev
 	if sstable.singleFile {
 		offset = uint64(len(indexData))
 	}
-	var sizeOfDR uint64
+	var sizeOfDR int64
 	var sizeOfIR uint64
 	var sizeOfSR uint64
 	var indexOffset uint64 = IndexConstSize
@@ -679,7 +691,16 @@ func (sstable *SSTable) combineSSTables(sstForCompaction []mmap.MMap, nextLsmLev
 			if minDataRecord.Timestamp < current[keyIndex].Timestamp {
 				minDataRecord = current[keyIndex]
 			}
-			nextRecord, nextRecSize, err := readDataFromFile(sstForCompaction[keyIndex], 1, "", offsets[keyIndex], sstable.compression, sstable.encoder)
+			var nextRecord *models.Data
+			nextRecSize := uint64(0)
+			if offsets[keyIndex] >= uint64(len(sstForCompaction[keyIndex])) {
+				nextRecord = nil
+			} else {
+				nextRecord, nextRecSize, err = models.Deserialize(sstForCompaction[keyIndex][offsets[keyIndex]:], sstable.compression, sstable.encoder)
+				if err != nil {
+					return err
+				}
+			}
 			if err != nil {
 				return err
 			}
@@ -691,8 +712,27 @@ func (sstable *SSTable) combineSSTables(sstForCompaction []mmap.MMap, nextLsmLev
 		}
 		filterKeys = append(filterKeys, minDataRecord.Key)
 		serializedDataRecord = minDataRecord.Serialize(sstable.compression, sstable.encoder)
-		sizeOfDR = uint64(len(serializedDataRecord))
+		sizeOfDR = int64(len(serializedDataRecord))
 		dataBlockSize += sizeOfDR
+
+		// Truncate the file to the required size
+		if err := currentFile.Truncate(dataBlockSize); err != nil {
+			return err
+		}
+
+		// Map the file into memory
+		mmapCurrFile, err := mmap.Map(currentFile, mmap.RDWR, 0)
+		if err != nil {
+			return err
+		}
+
+		// Use copy to update the memory-mapped slice
+		copy(mmapCurrFile[:sizeOfDR], serializedDataRecord)
+
+		//err = mmapCurrFile.Unmap()
+		//if err != nil {
+		//	return err
+		//}
 		hashedData, err := merkleTree.CreateNodeData(minDataRecord, sstable.compression, sstable.encoder)
 		if err != nil {
 			return err
@@ -717,7 +757,7 @@ func (sstable *SSTable) combineSSTables(sstForCompaction []mmap.MMap, nextLsmLev
 			countIndexRecords++
 		}
 		summaryMax = minDataRecord.Key
-		offset += sizeOfDR
+		offset += uint64(sizeOfDR)
 		countRecords++
 
 	}
@@ -755,6 +795,9 @@ func (sstable *SSTable) combineSSTables(sstForCompaction []mmap.MMap, nextLsmLev
 		}
 		fileSize := fileInfo.Size()
 		dataSize := int64(indexBlockSize + summaryBlockSize + filterBlockSize + metaBlockSize)
+		if fileSize == 1 {
+			fileSize--
+		}
 		if err = currentFile.Truncate(fileSize + dataSize); err != nil {
 			return err
 		}
@@ -771,6 +814,7 @@ func (sstable *SSTable) combineSSTables(sstForCompaction []mmap.MMap, nextLsmLev
 			if idx == 0 {
 				continue
 			}
+
 			file, err := os.OpenFile(fileName, os.O_CREATE|os.O_RDWR, 0644)
 			if err != nil {
 				return err
@@ -792,21 +836,7 @@ func (sstable *SSTable) combineSSTables(sstForCompaction []mmap.MMap, nextLsmLev
 	currentFile.Close()
 
 	if index > uint64(sstable.firstLevelMax) {
-		folderEntries, err = os.ReadDir(folderPath)
-		// if os.IsNotExist(err) {
-		// 	if err != nil {
-		// 		return err
-		// 	}
-		// }
-		// var fileNames []string
-		// for i, folderEntry := range folderEntries {
-		// 	info, err := folderEntry.Info()
-		// 	if err != nil {
-		// 		return err
-		// 	}
-		// 	fileNames[i] = info.Name()
-		// }
-		sstable.sizeTieredCompact(folderEntries, folderPath, nextLsmLevel)
+		return sstable.sizeTieredCompact(folderEntries, folderPath, nextLsmLevel)
 	}
 	return nil
 }
@@ -1323,6 +1353,9 @@ func readIndexHeader(mmapFile mmap.MMap, compression bool) uint16 {
 // both multi and single file sstable, we do this for all reads
 func readDataFromFile(mmapFile mmap.MMap, indexThinningConst uint16, key string, offset uint64, compression bool, encoder *keyencoder.KeyEncoder) (*models.Data, uint64, error) {
 	//read IndexConst number of data records
+	if len(mmapFile) <= int(offset) {
+		return nil, 0, errors.New("key not found")
+	}
 	for i := uint16(0); i < indexThinningConst; i++ {
 		dataRecord, dataRecordSize, err := models.Deserialize(mmapFile[offset:], compression, encoder)
 
