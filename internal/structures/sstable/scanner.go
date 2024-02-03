@@ -235,9 +235,9 @@ func (sstable *SSTable) getDataFilesWithPrefix(prefix string) (files []*ScannerF
 				}
 				if positionedFile != nil {
 					if sstDirSize == 1 {
-						files = append(files, &ScannerFile{mmapFile: data, originalMmapFile: mmapSingleFile, osFile: currentFile, offset: 0})
+						files = append(files, &ScannerFile{mmapFile: positionedFile, originalMmapFile: mmapSingleFile, osFile: currentFile, offset: 0})
 					} else {
-						files = append(files, &ScannerFile{mmapFile: data, originalMmapFile: data, osFile: currentFile, offset: 0})
+						files = append(files, &ScannerFile{mmapFile: positionedFile, originalMmapFile: data, osFile: currentFile, offset: 0})
 					}
 				}
 			}
