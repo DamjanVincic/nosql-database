@@ -56,3 +56,13 @@ func (cache *Cache) Delete(key string) {
 	delete(cache.cacheMap, elem.Value.(*models.Data).Key)
 	cache.cacheList.Remove(elem)
 }
+
+// update data that is flushed from memtable
+func (cache *Cache) Update(data []*models.Data) {
+	for _, record := range data {
+		elem, ok := cache.cacheMap[record.Key]
+		if ok {
+			elem.Value = record
+		}
+	}
+}
