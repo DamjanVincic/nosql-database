@@ -17,6 +17,7 @@ func (sstable *SSTable) getDataFilesWithPrefix(prefix string) (files []*ScannerF
 
 	var data mmap.MMap
 	var summary mmap.MMap
+	var index mmap.MMap
 
 	// Storage for offsets in case of single mmapFile
 	var dataStart uint64
@@ -102,25 +103,21 @@ func (sstable *SSTable) getDataFilesWithPrefix(prefix string) (files []*ScannerF
 				}
 			}
 
-			_, minKey, maxKey, _, err2 := readSummaryHeader(summary, sstable.compression, sstable.encoder)
-
-			if sstDirSize != 1 {
-				err = summary.Unmap()
-				if err != nil {
-					return nil, err
-				}
-				err = currentFile.Close()
-				if err != nil {
-					return nil, err
-				}
-			}
-
-			if err2 != nil {
-				return nil, err2
-			}
+			_, minKey, maxKey, _, err := readSummaryHeader(summary, sstable.compression, sstable.encoder)
 
 			if (minKey > prefix && !strings.HasPrefix(minKey, prefix)) || (maxKey < prefix) {
 				i--
+				if sstDirSize != 1 {
+					err = summary.Unmap()
+					if err != nil {
+						return nil, err
+					}
+					err = currentFile.Close()
+					if err != nil {
+						return nil, err
+					}
+				}
+
 				if sstDirSize == 1 {
 					err = mmapSingleFile.Unmap()
 					if err != nil {
@@ -134,27 +131,106 @@ func (sstable *SSTable) getDataFilesWithPrefix(prefix string) (files []*ScannerF
 				continue
 			}
 
-			//find it in data
-			if sstDirSize == 1 {
-				data = mmapSingleFile[dataStart:indexStart]
-			} else {
-				currentFile, err = os.OpenFile(filepath.Join(sstDirPath, sstDirEntries[0].Name()), os.O_RDWR, 0644)
-				if err != nil {
-					return nil, err
+			if strings.HasPrefix(minKey, prefix) {
+				//find it in data
+				if sstDirSize == 1 {
+					data = mmapSingleFile[dataStart:indexStart]
+				} else {
+					currentFile, err = os.OpenFile(filepath.Join(sstDirPath, sstDirEntries[0].Name()), os.O_RDWR, 0644)
+					if err != nil {
+						return nil, err
+					}
+					data, err = mmap.Map(currentFile, mmap.RDWR, 0)
+					if err != nil {
+						return nil, err
+					}
 				}
-				data, err = mmap.Map(currentFile, mmap.RDWR, 0)
-				if err != nil {
-					return nil, err
-				}
-			}
 
-			var positionedFile mmap.MMap
-			positionedFile, err = findFirstWithPrefix(prefix, data, sstable.compression, sstable.encoder)
-			if err != nil {
-				return nil, err
-			}
-			if positionedFile != nil {
-				files = append(files, &ScannerFile{mmapFile: positionedFile, osFile: currentFile, offset: 0})
+				files = append(files, &ScannerFile{mmapFile: data, osFile: currentFile, offset: 0})
+
+				if sstDirSize != 1 {
+					err = summary.Unmap()
+					if err != nil {
+						return nil, err
+					}
+					err = currentFile.Close()
+					if err != nil {
+						return nil, err
+					}
+				}
+			} else {
+				indexOffset, summaryThinningConst, err := readSummaryFromFile(summary, prefix, sstable.compression, sstable.encoder)
+
+				if err != nil {
+					//uradi zatvaranje fajlova
+					return nil, err
+				}
+
+				if sstDirSize != 1 {
+					err = summary.Unmap()
+					if err != nil {
+						return nil, err
+					}
+					err = currentFile.Close()
+					if err != nil {
+						return nil, err
+					}
+				}
+
+				if sstDirSize == 1 {
+					index = mmapSingleFile[indexStart:summaryStart]
+				} else {
+					currentFile, err = os.OpenFile(filepath.Join(sstDirPath, sstDirEntries[2].Name()), os.O_RDWR, 0644)
+					if err != nil {
+						return nil, err
+					}
+					index, err = mmap.Map(currentFile, mmap.RDWR, 0)
+					if err != nil {
+						return nil, err
+					}
+				}
+
+				dataOffset, _, err := readIndexFromFile(index, summaryThinningConst, prefix, indexOffset, sstable.compression, sstable.encoder)
+
+				if err != nil {
+					//uradi zatvaranje fajlova
+					return nil, err
+				}
+
+				if sstDirSize != 1 {
+					err = index.Unmap()
+					if err != nil {
+						return nil, err
+					}
+					err = currentFile.Close()
+					if err != nil {
+						return nil, err
+					}
+				}
+
+				//find it in data
+				if sstDirSize == 1 {
+					data = mmapSingleFile[dataStart:indexStart]
+				} else {
+					currentFile, err = os.OpenFile(filepath.Join(sstDirPath, sstDirEntries[0].Name()), os.O_RDWR, 0644)
+					if err != nil {
+						return nil, err
+					}
+					data, err = mmap.Map(currentFile, mmap.RDWR, 0)
+					if err != nil {
+						return nil, err
+					}
+				}
+
+				var positionedFile mmap.MMap
+
+				positionedFile, err = findFirstWithPrefix(prefix, data[dataOffset:], sstable.compression, sstable.encoder)
+				if err != nil {
+					return nil, err
+				}
+				if positionedFile != nil {
+					files = append(files, &ScannerFile{mmapFile: positionedFile, osFile: currentFile, offset: 0})
+				}
 			}
 
 			i--
@@ -195,17 +271,25 @@ type ScannerFile struct {
 	offset   uint64
 }
 
+type ScannerIterator struct {
+}
+
 func (sstable *SSTable) PrefixScan(prefix string, pageNumber uint64, pageSize uint64, memtable *memtable.Memtable) ([]*models.Data, error) {
 	memKeys := memtable.GetKeysWithPrefix(prefix)
 	found := make([]*ScanningCandidate, 0)
 
+	//stores newest candidate with min key in current iteration
 	var minCandidate *ScanningCandidate
+	//stores candidates with the same key as minCandidate, but are older (so we don't consider them in the next iteration)
 	var candidates []*ScanningCandidate
 
+	//records needed to fill requested page
 	recordsNeeded := pageNumber * pageSize
 
+	//get mmapFiles positioned to start with record that has first occurrence of given prefix
 	scannerFiles, err := sstable.getDataFilesWithPrefix(prefix)
 
+	//keep track of all files to be closed when done
 	filesToBeClosed := make([]*ScannerFile, len(scannerFiles))
 	copy(filesToBeClosed, scannerFiles)
 
@@ -214,7 +298,13 @@ func (sstable *SSTable) PrefixScan(prefix string, pageNumber uint64, pageSize ui
 	}
 
 	for uint64(len(found)) < recordsNeeded {
-		minCandidate, candidates, err = sstable.getCandidates(memKeys, scannerFiles)
+		var filesWithoutPrefix []*ScannerFile
+
+		minCandidate, candidates, filesWithoutPrefix, err = sstable.getCandidates(memKeys, scannerFiles, prefix)
+
+		for _, file := range filesWithoutPrefix {
+			scannerFiles = removeFromSlice(scannerFiles, file)
+		}
 
 		if minCandidate == nil {
 			break
@@ -248,10 +338,12 @@ func (sstable *SSTable) PrefixScan(prefix string, pageNumber uint64, pageSize ui
 	return records, nil
 }
 
-func (sstable *SSTable) getCandidates(memKeys []string, scannerFiles []*ScannerFile) (minCandidate *ScanningCandidate, candidates []*ScanningCandidate, err error) {
+func (sstable *SSTable) getCandidates(memKeys []string, scannerFiles []*ScannerFile, prefix string) (minCandidate *ScanningCandidate, candidates []*ScanningCandidate, filesWithoutPrefix []*ScannerFile, err error) {
 	err = nil
 	minCandidate = nil
 	candidates = make([]*ScanningCandidate, 0)
+
+	filesWithoutPrefix = make([]*ScannerFile, 0)
 
 	if len(memKeys) > 0 {
 		minCandidate = &ScanningCandidate{memKeys[0], nil, 0, 0, 0}
@@ -261,6 +353,12 @@ func (sstable *SSTable) getCandidates(memKeys []string, scannerFiles []*ScannerF
 		var recordSize uint64
 
 		record, recordSize, err = models.Deserialize(scannerFile.mmapFile[scannerFile.offset:], sstable.compression, sstable.encoder)
+
+		if !strings.HasPrefix(record.Key, prefix) {
+			filesWithoutPrefix = append(filesWithoutPrefix, scannerFile)
+			continue
+		}
+
 		if err != nil {
 			return
 		}
