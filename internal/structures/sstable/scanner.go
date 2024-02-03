@@ -375,7 +375,73 @@ func (sstable *SSTable) PrefixScan(prefix string, pageNumber uint64, pageSize ui
 	return
 }
 
+type RangeIterator struct {
+	memKeys         []string
+	scannerFiles    []*ScannerFile
+	filesToBeClosed []*ScannerFile
+	sstable         *SSTable
+	memtable        *memtable.Memtable
+	min             string
+	max             string
+}
+
+func (sstable *SSTable) NewRangeIterator(min string, max string, memtable *memtable.Memtable) (*RangeIterator, *models.Data, error) {
+	if min > max {
+		return nil, nil, errors.New("invalid range given")
+	}
+
+	records, err, memKeys, scannerFiles, filesToBeClosed := sstable.scanWithConditions(min, max, false, 1, 1, memtable, true)
+	if err != nil {
+		return nil, nil, err
+	}
+	var record *models.Data
+	if len(records) > 0 {
+		record = records[0]
+	}
+	return &RangeIterator{memKeys: memKeys, scannerFiles: scannerFiles, filesToBeClosed: filesToBeClosed, sstable: sstable, memtable: memtable, min: min, max: max}, record, err
+}
+
+func (iterator *RangeIterator) Next() (*models.Data, error) {
+
+	minCandidate, candidates, filesWithoutMatches, err := iterator.sstable.getCandidates(iterator.memKeys, iterator.scannerFiles, iterator.min, iterator.max, false)
+
+	if err != nil {
+		return nil, err
+	}
+
+	for _, file := range filesWithoutMatches {
+		iterator.scannerFiles = removeFromSlice(iterator.scannerFiles, file)
+	}
+
+	if minCandidate == nil {
+		return nil, errors.New("no records left")
+	}
+
+	var record *models.Data
+
+	if minCandidate.file == nil {
+		record = iterator.memtable.Get(minCandidate.key)
+	} else {
+		record, _, err = models.Deserialize(minCandidate.file.mmapFile[minCandidate.offset:], iterator.sstable.compression, iterator.sstable.encoder)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	iterator.memKeys, iterator.scannerFiles = iterator.sstable.updateScannerFiles(minCandidate, candidates, iterator.memKeys, iterator.scannerFiles)
+
+	return record, nil
+}
+
+func (iterator *RangeIterator) Stop() error {
+	return iterator.sstable.closeScannerFiles(iterator.filesToBeClosed)
+}
+
 func (sstable *SSTable) RangeScan(min string, max string, pageNumber uint64, pageSize uint64, memtable *memtable.Memtable) (records []*models.Data, err error) {
+	if min > max {
+		return nil, errors.New("invalid range given")
+	}
+
 	records, err, _, _, _ = sstable.scanWithConditions(min, max, false, pageNumber, pageSize, memtable, false)
 
 	if err != nil {
@@ -451,12 +517,12 @@ func (sstable *SSTable) scanWithConditions(param1 string, param2 string, prefix 
 	return
 }
 
-func (sstable *SSTable) getCandidates(memKeys []string, scannerFiles []*ScannerFile, param1 string, param2 string, prefix bool) (minCandidate *ScanningCandidate, candidates []*ScanningCandidate, filesWithoutPrefix []*ScannerFile, err error) {
+func (sstable *SSTable) getCandidates(memKeys []string, scannerFiles []*ScannerFile, param1 string, param2 string, prefix bool) (minCandidate *ScanningCandidate, candidates []*ScanningCandidate, filesWithoutMatches []*ScannerFile, err error) {
 	err = nil
 	minCandidate = nil
 	candidates = make([]*ScanningCandidate, 0)
 
-	filesWithoutPrefix = make([]*ScannerFile, 0)
+	filesWithoutMatches = make([]*ScannerFile, 0)
 
 	if len(memKeys) > 0 {
 		minCandidate = &ScanningCandidate{memKeys[0], nil, 0, 0, 0}
@@ -469,12 +535,12 @@ func (sstable *SSTable) getCandidates(memKeys []string, scannerFiles []*ScannerF
 
 		if prefix {
 			if !strings.HasPrefix(record.Key, param1) {
-				filesWithoutPrefix = append(filesWithoutPrefix, scannerFile)
+				filesWithoutMatches = append(filesWithoutMatches, scannerFile)
 				continue
 			}
 		} else {
 			if record.Key > param2 {
-				filesWithoutPrefix = append(filesWithoutPrefix, scannerFile)
+				filesWithoutMatches = append(filesWithoutMatches, scannerFile)
 				continue
 			}
 		}
