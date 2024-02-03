@@ -868,9 +868,9 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 		return nil, err
 	}
 	dirSize := len(dirEntries) - 1
-	j := dirSize
+	j := 0
 	for {
-		if j < 0 {
+		if j > dirSize {
 			return nil, errors.New("key not found")
 		}
 		subDirName := dirEntries[j].Name()
@@ -885,7 +885,7 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 		i := subdirSize
 		for {
 			if i < 0 {
-				j--
+				j++
 				break
 			}
 			sstDirName := subDirEntries[i].Name()
@@ -987,7 +987,7 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 				}
 			}
 
-			indexOffset, summaryThinningConst, err := readSummaryFromFile(summary, key, sstable.compression, sstable.encoder)
+			indexOffset, summaryThinningConst, errSumm := readSummaryFromFile(summary, key, sstable.compression, sstable.encoder)
 
 			if sstDirSize != 1 {
 				err = summary.Unmap()
@@ -1000,8 +1000,7 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 				}
 			}
 
-			if err != nil {
-				i--
+			if errSumm != nil {
 				if sstDirSize == 1 {
 					err = mmapSingleFile.Unmap()
 					if err != nil {
@@ -1012,7 +1011,12 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 						return nil, err
 					}
 				}
-				continue
+
+				if errSumm.Error() == "key not in range of summary index table" {
+					i--
+					continue
+				}
+				return nil, errSumm
 			}
 
 			//check if its in index
@@ -1057,7 +1061,8 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 					return nil, err
 				}
 			}
-			dataRecord, _, err := readDataFromFile(data, indexThinningConst, key, dataOffset, sstable.compression, sstable.encoder)
+			dataRecord, _, errData := readDataFromFile(data, indexThinningConst, key, dataOffset, sstable.compression, sstable.encoder)
+
 			if sstDirSize != 1 {
 				err = data.Unmap()
 				if err != nil {
@@ -1074,6 +1079,26 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 					continue
 				}
 				return nil, err
+			}
+
+			if errData != nil {
+				if sstDirSize == 1 {
+					err = mmapSingleFile.Unmap()
+					if err != nil {
+						return nil, err
+					}
+					err = currentFile.Close()
+					if err != nil {
+						return nil, err
+					}
+				}
+
+				if errData.Error() == "key not found" {
+					i--
+					continue
+				}
+
+				return nil, errData
 			}
 
 			if dataRecord != nil {
@@ -1103,7 +1128,6 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 				}
 			}
 		}
-
 	}
 }
 
