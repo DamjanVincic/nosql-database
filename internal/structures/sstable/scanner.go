@@ -319,7 +319,7 @@ type PrefixIterator struct {
 }
 
 func (sstable *SSTable) NewPrefixIterator(prefix string, memtable *memtable.Memtable) (*PrefixIterator, *models.Data, error) {
-	records, err, memKeys, scannerFiles, filesToBeClosed := sstable._prefixScan(prefix, 1, 1, memtable, true)
+	records, err, memKeys, scannerFiles, filesToBeClosed := sstable.scanWithConditions(prefix, "", true, 1, 1, memtable, true)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -332,7 +332,7 @@ func (sstable *SSTable) NewPrefixIterator(prefix string, memtable *memtable.Memt
 
 func (iterator *PrefixIterator) Next() (*models.Data, error) {
 
-	minCandidate, candidates, filesWithoutPrefix, err := iterator.sstable.getCandidates(iterator.memKeys, iterator.scannerFiles, iterator.prefix)
+	minCandidate, candidates, filesWithoutPrefix, err := iterator.sstable.getCandidates(iterator.memKeys, iterator.scannerFiles, iterator.prefix, "", true)
 
 	if err != nil {
 		return nil, err
@@ -367,7 +367,7 @@ func (iterator *PrefixIterator) Stop() error {
 }
 
 func (sstable *SSTable) PrefixScan(prefix string, pageNumber uint64, pageSize uint64, memtable *memtable.Memtable) (records []*models.Data, err error) {
-	records, err, _, _, _ = sstable._prefixScan(prefix, pageNumber, pageSize, memtable, false)
+	records, err, _, _, _ = sstable.scanWithConditions(prefix, "", true, pageNumber, pageSize, memtable, false)
 
 	if err != nil {
 		records = nil
@@ -375,8 +375,13 @@ func (sstable *SSTable) PrefixScan(prefix string, pageNumber uint64, pageSize ui
 	return
 }
 
-func (sstable *SSTable) _prefixScan(prefix string, pageNumber uint64, pageSize uint64, memtable *memtable.Memtable, iterator bool) (records []*models.Data, err error, memKeys []string, scannerFiles []*ScannerFile, filesToBeClosed []*ScannerFile) {
-	memKeys = memtable.GetKeysWithPrefix(prefix)
+func (sstable *SSTable) scanWithConditions(param1 string, param2 string, prefix bool, pageNumber uint64, pageSize uint64, memtable *memtable.Memtable, iterator bool) (records []*models.Data, err error, memKeys []string, scannerFiles []*ScannerFile, filesToBeClosed []*ScannerFile) {
+	if prefix {
+		memKeys = memtable.GetKeysWithPrefix(param1)
+	} else {
+		memKeys = memtable.GetKeysInRange(param1, param2)
+	}
+
 	found := make([]*ScanningCandidate, 0)
 	records = make([]*models.Data, 0)
 	err = nil
@@ -390,7 +395,7 @@ func (sstable *SSTable) _prefixScan(prefix string, pageNumber uint64, pageSize u
 	recordsNeeded := pageNumber * pageSize
 
 	//get mmapFiles positioned to start with record that has first occurrence of given prefix
-	scannerFiles, err = sstable.getDataFilesForScanning(prefix, "", true)
+	scannerFiles, err = sstable.getDataFilesForScanning(param1, param2, prefix)
 
 	//keep track of all files to be closed when done
 	filesToBeClosed = make([]*ScannerFile, len(scannerFiles))
@@ -403,7 +408,7 @@ func (sstable *SSTable) _prefixScan(prefix string, pageNumber uint64, pageSize u
 	for uint64(len(found)) < recordsNeeded {
 		var filesWithoutPrefix []*ScannerFile
 
-		minCandidate, candidates, filesWithoutPrefix, err = sstable.getCandidates(memKeys, scannerFiles, prefix)
+		minCandidate, candidates, filesWithoutPrefix, err = sstable.getCandidates(memKeys, scannerFiles, param1, param2, prefix)
 
 		for _, file := range filesWithoutPrefix {
 			scannerFiles = removeFromSlice(scannerFiles, file)
@@ -437,7 +442,7 @@ func (sstable *SSTable) _prefixScan(prefix string, pageNumber uint64, pageSize u
 	return
 }
 
-func (sstable *SSTable) getCandidates(memKeys []string, scannerFiles []*ScannerFile, prefix string) (minCandidate *ScanningCandidate, candidates []*ScanningCandidate, filesWithoutPrefix []*ScannerFile, err error) {
+func (sstable *SSTable) getCandidates(memKeys []string, scannerFiles []*ScannerFile, param1 string, param2 string, prefix bool) (minCandidate *ScanningCandidate, candidates []*ScanningCandidate, filesWithoutPrefix []*ScannerFile, err error) {
 	err = nil
 	minCandidate = nil
 	candidates = make([]*ScanningCandidate, 0)
@@ -453,9 +458,16 @@ func (sstable *SSTable) getCandidates(memKeys []string, scannerFiles []*ScannerF
 
 		record, recordSize, err = models.Deserialize(scannerFile.mmapFile[scannerFile.offset:], sstable.compression, sstable.encoder)
 
-		if !strings.HasPrefix(record.Key, prefix) {
-			filesWithoutPrefix = append(filesWithoutPrefix, scannerFile)
-			continue
+		if prefix {
+			if !strings.HasPrefix(record.Key, param1) {
+				filesWithoutPrefix = append(filesWithoutPrefix, scannerFile)
+				continue
+			}
+		} else {
+			if record.Key > param2 {
+				filesWithoutPrefix = append(filesWithoutPrefix, scannerFile)
+				continue
+			}
 		}
 
 		if err != nil {
