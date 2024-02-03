@@ -120,3 +120,26 @@ func (memtable *Memtable) GetKeysWithPrefix(prefix string) []string {
 	sort.Strings(keys)
 	return keys
 }
+
+// returns all keys in memtable in given range sorted
+func (memtable *Memtable) GetKeysInRange(min string, max string) []string {
+	keys := make([]string, 0)
+	currentKeys := memtable.currentPartition.GetSorted()
+	for _, data := range currentKeys {
+		if min <= data.Key && max >= data.Key {
+			keys = append(keys, data.Key)
+		}
+	}
+	for _, partition := range memtable.partitions {
+		currentKeys = partition.GetSorted()
+		for _, data := range currentKeys {
+			if min <= data.Key && max >= data.Key {
+				if !slices.Contains(keys, data.Key) {
+					keys = append(keys, data.Key)
+				}
+			}
+		}
+	}
+	sort.Strings(keys)
+	return keys
+}
