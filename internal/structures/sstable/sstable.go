@@ -4,8 +4,9 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io/fs"
 
-	// "math"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -71,12 +72,12 @@ const (
 
 	// Path to store the SStable single file
 	// File naming constants for SSTable
-	DataFileName    = "data"
-	IndexFileName   = "index"
-	SummaryFileName = "summary"
-	FilterFileName  = "filter"
-	MetaFileName    = "meta"
-	SingleFileName  = "single"
+	DataFileName    = "data.db"
+	IndexFileName   = "index.db"
+	SummaryFileName = "summary.db"
+	FilterFileName  = "filter.db"
+	MetaFileName    = "meta.db"
+	SingleFileName  = "single.db"
 )
 
 /*
@@ -94,6 +95,7 @@ type SSTable struct {
 	leveledCompaction bool
 	firstLevelMax     uint16
 	levelMultiplier   uint64
+	maxNumberOfLevels uint
 }
 
 func NewSSTable(indexSparseConst uint16, summarySparseConst uint16, singleFile bool, compression bool, leveledCompaction bool, firstLevelMax uint16, levelMultiplier uint64) (*SSTable, error) {
@@ -138,7 +140,7 @@ path example sstable/01/sst0000200002/data.db   -  data part of the sstable(sst0
 func (sstable *SSTable) Write(memEntries []*models.Data) error {
 	// new sstable is always placed on the first lsm level
 	lsmLevel := uint8(1)
-
+	// returns sstable\\01\\000001\\data(index,summ,filter,meta,single).db and sst folders on the lsm level
 	filePaths, err := sstable.createSStableFolder(lsmLevel)
 	if err != nil {
 		return err
@@ -155,10 +157,13 @@ func (sstable *SSTable) Write(memEntries []*models.Data) error {
 			return err
 		}
 	}
-	// err = sstable.CheckCompaction(filePaths, lsmLevel)
-	// if err != nil {
-	// 	return err
-	// }
+
+	lsmLvlDir := filePaths[0][:10]
+
+	err = sstable.CheckCompaction(lsmLvlDir, lsmLevel)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -202,8 +207,7 @@ func (sstable *SSTable) createSStableFolder(lsmLevel uint8) ([]string, error) {
 	if sstable.singleFile {
 		// create single file for ssTable
 		// name - single.db
-		filename := fmt.Sprintf("%s.db", SingleFileName)
-		filePaths = append(filePaths, filepath.Join(sstFolderPath, filename))
+		filePaths = append(filePaths, filepath.Join(sstFolderPath, SingleFileName))
 	} else {
 		// Filename format: PART.db, part = sstable element
 		// create names of new files
@@ -212,12 +216,13 @@ func (sstable *SSTable) createSStableFolder(lsmLevel uint8) ([]string, error) {
 	return filePaths, nil
 }
 
+// returns slice of filepaths - sstable/02/sst0000000009/single.db(data,index,summary,filter,metadata.db)
 func makeMultiFilenames(subdirPath string) []string {
-	dataFilename := fmt.Sprintf("%s.db", DataFileName)
-	indexFilename := fmt.Sprintf("%s.db", IndexFileName)
-	summaryFilename := fmt.Sprintf("%s.db", SummaryFileName)
-	filterFilename := fmt.Sprintf("%s.db", FilterFileName)
-	metadataFilename := fmt.Sprintf("%s.db", MetaFileName)
+	dataFilename := DataFileName
+	indexFilename := IndexFileName
+	summaryFilename := SummaryFileName
+	filterFilename := FilterFileName
+	metadataFilename := MetaFileName
 
 	fileNames := []string{dataFilename, indexFilename, summaryFilename, filterFilename, metadataFilename}
 	var filePaths []string
@@ -477,306 +482,367 @@ func writeToFile(file *os.File, data []byte) error {
 	return nil
 }
 
-// func (sstable *SSTable) CheckCompaction(folderEntries []string, lsmLevel uint8) error {
-// 	multiplier := math.Pow(float64(sstable.levelMultiplier), float64(lsmLevel-1))
-// 	if uint16(len(folderEntries)) > (sstable.firstLevelMax * uint16(multiplier)) {
-// 		//radi kompakciju celog nivoa
-// 		if !sstable.leveledCompaction {
-// 			err := sstable.sizeTieredCompact(folderEntries, lsmLevel)
-// 			if err != nil {
-// 				return err
-// 			}
-// 		}
-// 	}
-// 	return nil
-// }
+// folderENtries - paths of sstable files
+// numberOfSSTables - the number of sst on the lsm level
+func (sstable *SSTable) CheckCompaction(lsmLvlDirPath string, lsmLevel uint8) error {
+	sstablesOnLvl, err := os.ReadDir(lsmLvlDirPath)
+	if os.IsNotExist(err) {
+		if err != nil {
+			return err
+		}
+	}
+	multiplier := math.Pow(float64(sstable.levelMultiplier), float64(lsmLevel-1))
+	if uint16(len(sstablesOnLvl)) > sstable.firstLevelMax*uint16(multiplier) {
+		//radi kompakciju celog nivoa
+		if !sstable.leveledCompaction {
+			err := sstable.sizeTieredCompact(sstablesOnLvl, lsmLvlDirPath, lsmLevel)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
 
-// func (sstable *SSTable) sizeTieredCompact(sstables []string, lsmLevel uint8) error {
-// 	var sstForCompaction []mmap.MMap
-// 	for _, sstable := range sstables {
-// 		file, err := os.OpenFile(sstable, os.O_RDWR, 0644)
-// 		if err != nil {
-// 			return err
-// 		}
-// 		mmap, err := mmap.Map(file, mmap.RDWR, 0)
-// 		if err != nil {
-// 			return err
-// 		}
-// 		dataBlock := mmap[DataBlockStart:IndexBlockStart]
-// 		sstForCompaction = append(sstForCompaction, dataBlock)
-// 		err = mmap.Unmap()
-// 		if err != nil {
-// 			return err
-// 		}
-// 		err = file.Close()
-// 		if err != nil {
-// 			return err
-// 		}
-// 	}
-// 	err := sstable.combineSSTables(sstForCompaction, lsmLevel+1)
-// 	if err != nil {
-// 		return err
-// 	}
-// 	return nil
-// }
+func (sstable *SSTable) sizeTieredCompact(sstOnLsmLvl []fs.DirEntry, lsmLvlDirPath string, lsmLevel uint8) error {
+	var sstForCompaction []mmap.MMap
+	var file *os.File
+	var mmapFile mmap.MMap
+	var dataFilePath string
+	var mmapFilesOpened []mmap.MMap
+	var filesOpened []*os.File
+	for _, sst := range sstOnLsmLvl {
+		// sstable/02 + sst000000000054
+		filePath := filepath.Join(lsmLvlDirPath, sst.Name())
+		sstFiles, err := os.ReadDir(filePath)
+		if os.IsNotExist(err) {
+			if err != nil {
+				return err
+			}
+		}
+		if len(sstFiles) == 1 {
+			dataFilePath = filepath.Join(filePath, SingleFileName)
+		} else {
+			dataFilePath = filepath.Join(filePath, DataFileName)
+		}
+		file, err = os.OpenFile(dataFilePath, os.O_RDWR, 0644)
+		if err != nil {
+			return err
+		}
+		filesOpened = append(filesOpened, file)
 
-// func (sstable *SSTable) combineSSTables(sstForCompaction []mmap.MMap, nextLsmLevel uint8) error {
-// 	lsmLevel := uint8(1)
-// 	//index - sequence number of the sstable
-// 	var index uint16
-// 	// subdirName : 00 (a two-digit num for the lsm index)
-// 	subdirName := fmt.Sprintf("%02d", nextLsmLevel)
-// 	subdirPath := filepath.Join(Path, subdirName)
-// 	sstableFolders, err := os.ReadDir(subdirPath)
-// 	if os.IsNotExist(err) {
-// 		err := os.Mkdir(subdirPath, os.ModePerm)
-// 		// if there is no sstable on the lsm level, index for the new one is 1
-// 		index = 1
-// 		if err != nil {
-// 			return err
-// 		}
-// 	}
+		mmapFile, err = mmap.Map(file, mmap.RDWR, 0)
+		if err != nil {
+			return err
+		}
+		mmapFilesOpened = append(mmapFilesOpened, mmapFile)
+		if len(sstFiles) == 1 {
+			dataSize := binary.BigEndian.Uint64(mmapFile[DataBlockStart:IndexBlockStart])
+			mmapFile = mmapFile[HeaderSize : HeaderSize+dataSize]
+		}
+		sstForCompaction = append(sstForCompaction, mmapFile)
 
-// 	numberOfSSTables := len(sstForCompaction)
-// 	// we keep where we left of in each sstable and last key
-// 	offsets := make([]uint64, numberOfSSTables)
-// 	current := make([]*models.Data, numberOfSSTables)
+	}
+	// cmd\key-value-engine\sstable\01\sst0000000001
+	nextLsmLevel := lsmLevel + 1
+	nextSSTFolderName := fmt.Sprintf("%02d", nextLsmLevel)
+	sstFolderPath := filepath.Join(Path, nextSSTFolderName)
+	err := sstable.combineSSTables(sstForCompaction, nextLsmLevel, sstFolderPath) //nazovi lsmnivofolderpath
+	for index, file := range filesOpened {
+		err = mmapFilesOpened[index].Unmap()
+		if err != nil {
+			return err
+		}
+		err = file.Close()
+		if err != nil {
+			return err
+		}
+	}
+	if err != nil {
+		return err
+	}
+	return nil
+}
 
-// 	var currentFile *os.File
-// 	var mmapCurrFile mmap.MMap
-// 	indexData := initializeIndexRecords(sstable.indexConst, sstable.compression)
-// 	// append index thinning const to indexRecords data
-// 	binary.BigEndian.PutUint16(indexData[:IndexConstSize], sstable.indexConst)
-// 	var groupedData = make([]*[]byte, 5)
-// 	var summaryData []byte
-// 	var filterData []byte
-// 	var merkleData []byte
-// 	var filterKeys []string
-// 	groupedData[0] = &indexData
-// 	groupedData[1] = &summaryData
-// 	groupedData[2] = &filterData
-// 	groupedData[3] = &merkleData
-// 	// Storage for offsets in case of single file
-// 	// Storage for offsets in case of single file
-// 	var dataBlockSize uint64
-// 	var indexBlockSize uint64
-// 	var summaryBlockSize uint64
-// 	var filterBlockSize uint64
-// 	var metaBlockSize uint64
+func (sstable *SSTable) combineSSTables(sstForCompaction []mmap.MMap, nextLsmLevel uint8, folderPath string) error {
+	var index uint64
+	folderEntries, err := os.ReadDir(folderPath)
+	if os.IsNotExist(err) {
+		err := os.Mkdir(folderPath, os.ModePerm)
+		index = 1
+		if err != nil {
+			return err
+		}
+	}
 
-// 	// var index uint64
-// 	subDirName := fmt.Sprintf("%2d", lsmLevel+1)
-// 	subDirPath := filepath.Join(Path, subDirName)
-// 	subDirEntries, err := os.ReadDir(subDirPath)
-// 	if os.IsNotExist(err) {
-// 		err := os.Mkdir(subDirPath, os.ModePerm)
-// 		index = 1
-// 		if err != nil {
-// 			return err
-// 		}
-// 	}
-// 	//read name from last added sstable in next lsm level and create new name
-// 	tempIndex, err := strconv.Atoi(subDirEntries[len(subDirEntries)-1].Name()[3:])
-// 	index = uint64(tempIndex + 1)
-// 	sstDirName := fmt.Sprintf("%5d", index)
-// 	sstDirPath := filepath.Join(subDirPath, sstDirName)
-// 	err = os.Mkdir(sstDirPath, os.ModePerm)
-// 	if err != nil {
-// 		return err
-// 	}
-// 	var fileName string
-// 	if singleFile {
-// 		fileName = fmt.Sprintf("%s.db", SingleFileName)
-// 	} else {
-// 		fileName = fmt.Sprintf("%s.db", DataFileName)
-// 	}
-// 	//if its single - currentFile = all data
-// 	//otherwise = currentFile = data file
-// 	currentFile, err = os.OpenFile(filepath.Join(sstDirPath, fileName), os.O_CREATE|os.O_RDWR, 0644)
-// 	if err != nil {
-// 		return err
-// 	}
-// 	mmapCurrFile, err = mmap.Map(currentFile, mmap.RDWR, 0)
-// 	if err != nil {
-// 		return err
-// 	}
+	if len(folderEntries) != 0 {
+		//read name from last added sstable in next lsm level and create new name
+		tempIndex, err := strconv.Atoi(folderEntries[len(folderEntries)-1].Name()[3:])
+		if err != nil {
+			return err
+		}
+		index = uint64(tempIndex + 1)
+	}
+	sstDirName := fmt.Sprintf("sst%010d", index)
+	sstDirPath := filepath.Join(folderPath, sstDirName)
+	err = os.Mkdir(sstDirPath, os.ModePerm)
+	if err != nil {
+		return err
+	}
 
-// 	// currentFile.Name()
-// 	//fmt.Print(mmapCurrFile)
+	var fileName string
+	if sstable.singleFile {
+		fileName = SingleFileName
+	} else {
+		fileName = DataFileName
+	}
+	//if its single - currentFile = all data
+	//otherwise = currentFile = data file
+	currentFile, err := os.OpenFile(filepath.Join(sstDirPath, fileName), os.O_CREATE|os.O_RDWR, 0644)
+	if err != nil {
+		return err
+	}
+	fileStat, err := currentFile.Stat()
+	if err != nil {
+		return err
+	}
+	fileSize := fileStat.Size()
+	if err = currentFile.Truncate(fileSize + 10); err != nil {
+		return err
+	}
+	mmapCurrFile, err := mmap.Map(currentFile, mmap.RDWR, 0)
+	if err != nil {
+		return err
+	}
+	numberOfSSTables := len(sstForCompaction)
+	// we keep where we left of in each sstable and last key
+	offsets := make([]uint64, numberOfSSTables)
+	current := make([]*models.Data, numberOfSSTables)
 
-// 	// read first record from each sstable
-// 	for i := 0; i < numberOfSSTables; i++ {
-// 		dataRecord, err := readDataFromFile(*sstables[i], 1, "", offsets[i], sstable.com)
-// 		if err != nil {
-// 			return err
-// 		}
-// 		if dataRecord != nil {
-// 			// set offsets for next
-// 			offsets[i] = uint64(len(dataRecord.Data.Key) + KeySizeSize + ValueSizeSize + len(dataRecord.Data.Value) + TombstoneSize + TimestampSize + CrcSize)
-// 		}
-// 		current[i] = dataRecord
-// 	}
-// 	// find the smallest key
-// 	// we know that the index we return is the sstable we read next (or multiple)
-// 	offset := uint64(0)
-// 	var serializedMinRec []byte
-// 	// needed for offsets and single file header
-// 	var sizeOfDR uint64
-// 	var sizeOfIR uint64
-// 	var sizeOfSR uint64
-// 	var indexOffset uint64 = IndexConstSize
-// 	// counter for index and index summary, for every n index records add one to summary
-// 	countRecords := uint16(0)
-// 	countIndexRecords := uint16(0)
-// 	var merkleHashedRecords []byte
+	// read first record from each sstable
+	for i := 0; i < numberOfSSTables; i++ {
+		dataRecord, dataRecSize, err := readDataFromFile(sstForCompaction[i], 1, "", offsets[i], sstable.compression, sstable.encoder)
+		if err != nil {
+			return err
+		}
+		if dataRecord != nil {
+			// set offsets for next
+			offsets[i] = dataRecSize
+		}
+		current[i] = dataRecord
+	}
 
-// 	var summaryMin string
-// 	var summaryMax string
-// 	var serializedIndexRecord []byte
-// 	var serializedSummaryRecord []byte
+	var groupedData = make([]*[]byte, 5)
+	// append index thinning const to indexRecords data
+	indexData := initializeIndexRecords(sstable.indexConst, sstable.compression)
+	var summaryData []byte
+	var merkleLeaves []byte
+	var filterKeys []string
+	groupedData[1] = &indexData
+	groupedData[2] = &summaryData
+	// Storage for offsets in case of single file
+	// Storage for offsets in case of single file
+	var dataBlockSize uint64
+	var indexBlockSize uint64
+	var summaryBlockSize uint64
 
-// 	var summaryHeader = make([]byte, SummaryMinSizeSize+SummaryMaxSizeSize+SummaryConstSize)
+	offset := uint64(0)
+	if sstable.singleFile {
+		offset = uint64(len(indexData))
+	}
+	var sizeOfDR uint64
+	var sizeOfIR uint64
+	var sizeOfSR uint64
+	var indexOffset uint64 = IndexConstSize
+	// counter for index and index summary, for every n index records add one to summary
+	countRecords := uint16(0)
+	countIndexRecords := uint16(0)
 
-// 	//create an new merkle tree with new hashfunc and without nodes
-// 	merkleTree := merkle.NewMerkle(nil)
-// 	var dataRecord *models.DataRecord
-// 	for len(sstables) > 0 {
-// 		smallestKey := findSmallestKey(current)
-// 		if smallestKey == nil {
-// 			break
-// 		}
-// 		var minRecord *models.Data
-// 		for _, keyIndex := range smallestKey {
-// 			if minRecord == nil {
-// 				minRecord = current[keyIndex].Data
-// 			}
-// 			if minRecord.Timestamp < current[keyIndex].Data.Timestamp {
-// 				minRecord = current[keyIndex].Data
-// 				dataRecord = models.NewDataRecord(minRecord)
-// 			}
-// 			nextRecord, err := readDataFromFile(*sstables[keyIndex], 1, "", offsets[keyIndex])
-// 			if err != nil {
-// 				return err
-// 			}
-// 			if nextRecord != nil {
-// 				// set offsets for next
-// 				offsets[keyIndex] += uint64(len(dataRecord.Data.Key) + CrcSize + KeySizeSize + ValueSizeSize + len(dataRecord.Data.Value) + TombstoneSize + TimestampSize)
-// 			}
-// 			current[keyIndex] = nextRecord
-// 		}
-// 		filterKeys = append(filterKeys, dataRecord.Data.Key)
-// 		serializedMinRec = dataRecord.Serialize()
-// 		sizeOfDR = uint64(len(serializedMinRec))
-// 		dataBlockSize += sizeOfDR
-// 		hashedData, err := merkleTree.CreateNodeData(dataRecord)
-// 		if err != nil {
-// 			return err
-// 		}
-// 		merkleHashedRecords = append(merkleHashedRecords, hashedData...)
+	var summaryMin string
+	var summaryMax string
+	var serializedIndexRecord []byte
+	var serializedSummaryRecord []byte
+	var serializedDataRecord []byte
 
-// 		// every Nth one is saved in the index (key, offset of dataRec)
-// 		if countRecords%indexConst == 0 {
-// 			serializedIndexRecord = addToIndex(offset, dataRecord.Data, &indexData)
-// 			sizeOfIR = uint64(len(serializedIndexRecord))
-// 			indexBlockSize += sizeOfIR
-// 			// every Nth one is saved in the summary index (key, offset of indexRec)
-// 			if countIndexRecords%summaryConst == 0 {
-// 				serializedSummaryRecord = addToIndex(indexOffset, dataRecord.Data, &summaryData)
-// 				sizeOfSR = uint64(len(serializedSummaryRecord))
-// 				summaryBlockSize += sizeOfSR
-// 				if summaryMin == "" {
-// 					summaryMin = dataRecord.Data.Key
-// 				}
-// 			}
-// 			indexOffset += sizeOfIR
-// 			countIndexRecords++
-// 		}
-// 		summaryMax = dataRecord.Data.Key
-// 		offset += sizeOfDR
-// 		countRecords++
+	//create an new merkle tree with new hashfunc and without nodes
+	merkleTree := merkle.NewMerkle(nil)
+	for len(sstForCompaction) > 0 {
+		smallestKey := findSmallestKey(current)
+		if smallestKey == nil {
+			break
+		}
+		var minDataRecord *models.Data
+		for _, keyIndex := range smallestKey {
+			if minDataRecord == nil {
+				minDataRecord = current[keyIndex]
+			}
+			if minDataRecord.Timestamp < current[keyIndex].Timestamp {
+				minDataRecord = current[keyIndex]
+			}
+			nextRecord, nextRecSize, err := readDataFromFile(sstForCompaction[keyIndex], 1, "", offsets[keyIndex], sstable.compression, sstable.encoder)
+			if err != nil {
+				return err
+			}
+			if nextRecord != nil {
+				// set offsets for next
+				offsets[keyIndex] += nextRecSize
+			}
+			current[keyIndex] = nextRecord
+		}
+		filterKeys = append(filterKeys, minDataRecord.Key)
+		serializedDataRecord = minDataRecord.Serialize(sstable.compression, sstable.encoder)
+		sizeOfDR = uint64(len(serializedDataRecord))
+		dataBlockSize += sizeOfDR
+		hashedData, err := merkleTree.CreateNodeData(minDataRecord, sstable.compression, sstable.encoder)
+		if err != nil {
+			return err
+		}
+		merkleLeaves = append(merkleLeaves, hashedData...)
 
-// 	}
-// 	//create an empty bloom filter
-// 	filter := bloomfilter.CreateBloomFilter(len(filterData), 0.001)
-// 	//add keys to bf
-// 	for _, key := range filterKeys {
-// 		err = filter.AddElement([]byte(key))
-// 		if err != nil {
-// 			return err
-// 		}
-// 	}
-// 	filterData = filter.Serialize()
-// 	filterBlockSize = uint64(len(filterData))
+		// every Nth one is saved in the index (key, offset of dataRec)
+		if countRecords%sstable.indexConst == 0 {
+			serializedIndexRecord = addToIndex(offset, minDataRecord, &indexData, sstable.compression, sstable.encoder)
+			sizeOfIR = uint64(len(serializedIndexRecord))
+			indexBlockSize += sizeOfIR
+			// every Nth one is saved in the summary index (key, offset of indexRec)
+			if countIndexRecords%sstable.summaryConst == 0 {
+				serializedSummaryRecord = addToIndex(indexOffset, minDataRecord, &summaryData, sstable.compression, sstable.encoder)
+				sizeOfSR = uint64(len(serializedSummaryRecord))
+				summaryBlockSize += sizeOfSR
+				if summaryMin == "" {
+					summaryMin = minDataRecord.Key
+				}
+			}
+			indexOffset += sizeOfIR
+			countIndexRecords++
+		}
+		summaryMax = minDataRecord.Key
+		offset += sizeOfDR
+		countRecords++
 
-// 	//metadata
-// 	err = merkleTree.CreateMerkleTree(merkleHashedRecords)
-// 	if err != nil {
-// 		return err
-// 	}
-// 	merkleData = merkleTree.Serialize()
-// 	metaBlockSize = uint64(len(merkleData))
-// 	//creating summary index header
-// 	binary.BigEndian.PutUint16(summaryHeader[:SummaryMinSizeStart], summaryConst)
-// 	binary.BigEndian.PutUint64(summaryHeader[SummaryMinSizeStart:SummaryMaxSizeStart], uint64(len([]byte(summaryMin))))
-// 	binary.BigEndian.PutUint64(summaryHeader[SummaryMaxSizeStart:SummaryMaxSizeStart+SummaryMaxSizeSize], uint64(len([]byte(summaryMax))))
-// 	summaryHeaderSize := SummaryConstSize + SummaryMinSizeSize + SummaryMaxSizeSize + uint64(len([]byte(summaryMin))) + uint64(len([]byte(summaryMax)))
-// 	//append all summary index records
-// 	summaryHeader = append(summaryHeader, []byte(summaryMin)...)
-// 	summaryHeader = append(summaryHeader, []byte(summaryMax)...)
-// 	summaryHeader = append(summaryHeader, summaryData...)
-// 	summaryBlockSize += summaryHeaderSize
+	}
+	//create an empty bloom filter
+	filter := bloomfilter.CreateBloomFilter(len(filterKeys), 0.001)
+	//add keys to bf
+	for _, key := range filterKeys {
+		err = filter.AddElement([]byte(key))
+		if err != nil {
+			return err
+		}
+	}
+	filterData := filter.Serialize()
+	groupedData[3] = &filterData
+	filterBlockSize := uint64(len(filterData))
 
-// 	if singleFile {
-// 		header := make([]byte, HeaderSize)
-// 		binary.BigEndian.PutUint64(header[:DataBlockSizeSize], dataBlockSize)
-// 		binary.BigEndian.PutUint64(header[IndexBlockStart:SummaryBlockStart], indexBlockSize)
-// 		binary.BigEndian.PutUint64(header[SummaryBlockStart:FilterBlockStart], summaryBlockSize)
-// 		binary.BigEndian.PutUint64(header[FilterBlockStart:MetaBlockStart], filterBlockSize)
+	//metadata
+	err = merkleTree.CreateMerkleTree(merkleLeaves, sstable.compression, sstable.encoder)
+	if err != nil {
+		return err
+	}
+	merkleData := merkleTree.Serialize()
+	groupedData[4] = &merkleData
+	metaBlockSize := uint64(len(merkleData))
+	//creating summary index header
+	summaryHeader := createSummaryHeader(sstable.summaryConst, summaryMin, summaryMax, sstable.compression, sstable.encoder)
+	//append all summary index records
+	summaryHeader = append(summaryHeader, summaryData...)
+	summaryBlockSize += uint64(len(summaryHeader))
 
-// 		fileInfo, err := currentFile.Stat()
-// 		if err != nil {
-// 			return err
-// 		}
-// 		fileSize := fileInfo.Size()
-// 		dataSize := int64(indexBlockSize + summaryBlockSize + filterBlockSize + metaBlockSize)
-// 		if err = currentFile.Truncate(fileSize + dataSize); err != nil {
-// 			return err
-// 		}
-// 		copy(mmapCurrFile, indexData)
-// 		copy(mmapCurrFile, summaryData)
-// 		copy(mmapCurrFile, filterData)
-// 		copy(mmapCurrFile, merkleData)
-// 	} else {
-// 		/*
-// 			for multi file implementation
-// 			write data to dataFile, indexData to indexFile... each block in a separate file
-// 		*/
-// 		filePaths := makeMultiFilenames(subDirPath)
-// 		for idx, fileName := range *filePaths {
-// 			if idx == 0 {
-// 				continue
-// 			}
-// 			file, err := os.OpenFile(fileName, os.O_CREATE|os.O_RDWR, 0644)
-// 			if err != nil {
-// 				return err
-// 			}
+	if sstable.singleFile {
+		fileInfo, err := currentFile.Stat()
+		if err != nil {
+			return err
+		}
+		fileSize := fileInfo.Size()
+		dataSize := int64(indexBlockSize + summaryBlockSize + filterBlockSize + metaBlockSize)
+		if err = currentFile.Truncate(fileSize + dataSize); err != nil {
+			return err
+		}
+		for i := range groupedData {
+			copy(mmapCurrFile, *groupedData[i+1])
+		}
+	} else {
+		/*
+			for multi file implementation
+			write data to dataFile, indexData to indexFile... each block in a separate file
+		*/
+		filePaths := makeMultiFilenames(sstDirPath)
+		for idx, fileName := range filePaths {
+			if idx == 0 {
+				continue
+			}
+			file, err := os.OpenFile(fileName, os.O_CREATE|os.O_RDWR, 0644)
+			if err != nil {
+				return err
+			}
 
-// 			err = writeToFile(file, *groupedData[idx])
-// 			if err != nil {
-// 				return err
-// 			}
+			err = writeToFile(file, *groupedData[idx])
+			if err != nil {
+				return err
+			}
 
-// 			err = file.Close()
-// 			if err != nil {
-// 				return err
-// 			}
-// 		}
-// 	}
+			err = file.Close()
+			if err != nil {
+				return err
+			}
+		}
+	}
 
-// 	currentFile.Close()
-// 	mmapCurrFile.Unmap()
-// 	return nil
-// }
+	mmapCurrFile.Unmap()
+	currentFile.Close()
+
+	if index > uint64(sstable.firstLevelMax) {
+		folderEntries, err = os.ReadDir(folderPath)
+		// if os.IsNotExist(err) {
+		// 	if err != nil {
+		// 		return err
+		// 	}
+		// }
+		// var fileNames []string
+		// for i, folderEntry := range folderEntries {
+		// 	info, err := folderEntry.Info()
+		// 	if err != nil {
+		// 		return err
+		// 	}
+		// 	fileNames[i] = info.Name()
+		// }
+		sstable.sizeTieredCompact(folderEntries, folderPath, nextLsmLevel)
+	}
+	return nil
+}
+
+func findSmallestKey(current []*models.Data) []int {
+	var result []int
+	for i := 0; i < len(current); i++ {
+		if current[i] == nil {
+			continue
+		}
+		if len(result) == 0 {
+			// we have nothing in result and add the first one
+			result = append(result, i)
+		} else
+		// if we found another one with this key add it
+		// we need to check timestamp
+		if current[i].Key == current[result[0]].Key {
+			result = append(result, i)
+		} else
+		// new min
+		if current[i].Key < current[result[0]].Key {
+			result = make([]int, 0)
+			result = append(result, i)
+		}
+	}
+	return result
+}
+func removeAtIndex(slice []uint64, index int) []uint64 {
+	// Ensure that the index is within bounds
+	if index < 0 || index >= len(slice) {
+		return slice
+	}
+
+	// Remove the element at the specified index
+	return append(slice[:index], slice[index+1:]...)
+}
 
 // go through every sstable until you find the key, when its found, return its value
 func (sstable *SSTable) Get(key string) (*models.Data, error) {
@@ -875,10 +941,6 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 				}
 			}
 			found, err := readBloomFilterFromFile(key, filter)
-			if err != nil {
-				return nil, err
-			}
-
 			// Unmap the memory and close the file
 			if sstDirSize != 1 {
 				err = filter.Unmap()
@@ -889,6 +951,10 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 				if err != nil {
 					return nil, err
 				}
+			}
+
+			if err != nil {
+				return nil, err
 			}
 
 			// if its not found, check next sstable
@@ -964,10 +1030,6 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 			}
 
 			dataOffset, indexThinningConst, err := readIndexFromFile(index, summaryThinningConst, key, indexOffset, sstable.compression, sstable.encoder)
-			if err != nil {
-				return nil, err
-			}
-
 			if sstDirSize != 1 {
 				err = index.Unmap()
 				if err != nil {
@@ -977,6 +1039,9 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 				if err != nil {
 					return nil, err
 				}
+			}
+			if err != nil {
+				return nil, err
 			}
 
 			//find it in data
@@ -992,15 +1057,7 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 					return nil, err
 				}
 			}
-			dataRecord, err := readDataFromFile(data, indexThinningConst, key, dataOffset, sstable.compression, sstable.encoder)
-			if err != nil {
-				if err.Error() == "key not found" {
-					i--
-					continue
-				}
-				return nil, err
-			}
-
+			dataRecord, _, err := readDataFromFile(data, indexThinningConst, key, dataOffset, sstable.compression, sstable.encoder)
 			if sstDirSize != 1 {
 				err = data.Unmap()
 				if err != nil {
@@ -1010,6 +1067,13 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 				if err != nil {
 					return nil, err
 				}
+			}
+			if err != nil {
+				if err.Error() == "key not found" {
+					i--
+					continue
+				}
+				return nil, err
 			}
 
 			if dataRecord != nil {
@@ -1233,25 +1297,25 @@ func readIndexHeader(mmapFile mmap.MMap, compression bool) uint16 {
 
 // param mmapFile - we do this instead passing the file or filename itself, so we can use function for
 // both multi and single file sstable, we do this for all reads
-func readDataFromFile(mmapFile mmap.MMap, indexThinningConst uint16, key string, offset uint64, compression bool, encoder *keyencoder.KeyEncoder) (*models.Data, error) {
+func readDataFromFile(mmapFile mmap.MMap, indexThinningConst uint16, key string, offset uint64, compression bool, encoder *keyencoder.KeyEncoder) (*models.Data, uint64, error) {
 	//read IndexConst number of data records
 	for i := uint16(0); i < indexThinningConst; i++ {
 		dataRecord, dataRecordSize, err := models.Deserialize(mmapFile[offset:], compression, encoder)
 
 		if err != nil {
-			return dataRecord, err
+			return dataRecord, dataRecordSize, err
 		}
 		// keys must be equal
 		if dataRecord.Key == key || key == "" {
-			return dataRecord, nil
+			return dataRecord, dataRecordSize, nil
 		}
 		offset += dataRecordSize
 		// when you get to the end it means there is no match
 		if len(mmapFile) <= int(offset) {
-			return nil, errors.New("key not found")
+			return nil, 0, errors.New("key not found")
 		}
 	}
-	return nil, errors.New("key not found")
+	return nil, 0, errors.New("key not found")
 }
 
 func RemoveSSTable(filenames []string) error {
@@ -1322,7 +1386,7 @@ func (sstable *SSTable) CheckDataValidity(subDirName string) ([]*models.Data, er
 		merkleTree2 = merkle.NewMerkle(merkleTree.HashWithSeed)
 		merkleTree2Data := make([]byte, 0)
 		for offset < uint64(len(dataMMap)) {
-			dataRec, err := readDataFromFile(dataMMap, 1, "", offset, sstable.compression, sstable.encoder)
+			dataRec, dataRecSize, err := readDataFromFile(dataMMap, 1, "", offset, sstable.compression, sstable.encoder)
 			if err != nil {
 				return nil, err
 			}
@@ -1331,7 +1395,7 @@ func (sstable *SSTable) CheckDataValidity(subDirName string) ([]*models.Data, er
 				return nil, err
 			}
 			merkleTree2Data = append(merkleTree2Data, hashedData...)
-			offset += uint64(len(dataRec.Serialize(sstable.compression, sstable.encoder)))
+			offset += dataRecSize
 		}
 		err = merkleTree2.CreateMerkleTree(merkleTree2Data, sstable.compression, sstable.encoder)
 		if err != nil {
@@ -1389,7 +1453,7 @@ func (sstable *SSTable) CheckDataValidity(subDirName string) ([]*models.Data, er
 		merkleTree2 = merkle.NewMerkle(merkleTree.HashWithSeed)
 		merkleTree2Data := make([]byte, 0)
 		for offset < uint64(len(dataMMap)) {
-			dataRec, err := readDataFromFile(dataMMap, 1, "", offset, sstable.compression, sstable.encoder)
+			dataRec, dataRecSize, err := readDataFromFile(dataMMap, 1, "", offset, sstable.compression, sstable.encoder)
 			if err != nil {
 				return nil, err
 			}
@@ -1398,7 +1462,7 @@ func (sstable *SSTable) CheckDataValidity(subDirName string) ([]*models.Data, er
 				return nil, err
 			}
 			merkleTree2Data = append(merkleTree2Data, hashedData...)
-			offset += uint64(len(dataRec.Serialize(sstable.compression, sstable.encoder)))
+			offset += dataRecSize
 		}
 		err = merkleTree2.CreateMerkleTree(merkleTree2Data, sstable.compression, sstable.encoder)
 		if err != nil {
@@ -1413,14 +1477,15 @@ func (sstable *SSTable) CheckDataValidity(subDirName string) ([]*models.Data, er
 	}
 	offset = 0
 	var dataRec *models.Data
+	var dataRecSize uint64
 	for _, index := range corruptedIndexes {
 		for index >= 0 {
-			dataRec, err = readDataFromFile(dataMMap, 1, "", offset, sstable.compression, sstable.encoder)
+			dataRec, dataRecSize, err = readDataFromFile(dataMMap, 1, "", offset, sstable.compression, sstable.encoder)
 			if err != nil {
 				return nil, err
 			}
 			index--
-			offset += uint64(len(dataRec.Serialize(sstable.compression, sstable.encoder)))
+			offset += dataRecSize
 		}
 		corruptedData = append(corruptedData, dataRec)
 	}
