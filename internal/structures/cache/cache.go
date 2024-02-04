@@ -29,7 +29,7 @@ func (cache *Cache) Put(entry *models.Data) {
 			cache.cacheList.Remove(elem)
 		}
 
-		cache.cacheList.PushFront(entry)
+		cache.cacheList.PushFront(cache.cacheMap[entry.Key])
 		cache.cacheMap[entry.Key] = cache.cacheList.Front()
 
 	} else {
@@ -62,7 +62,7 @@ func (cache *Cache) Update(data []*models.Data) {
 	for _, entry := range data {
 		cacheElem, ok := cache.cacheMap[entry.Key]
 		if ok {
-			cache.cacheMap[entry.Key].Value = cacheElem
+			cacheElem.Value = entry
 		}
 	}
 }

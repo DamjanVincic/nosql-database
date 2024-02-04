@@ -606,6 +606,15 @@ func (engine *Engine) get(key string) ([]byte, error) {
 }
 
 func (engine *Engine) put(key string, value []byte) error {
+	used, err := engine.checkTokenBucket()
+	if err != nil {
+		return err
+	}
+
+	if !used {
+		return errors.New("no tokens remaining")
+	}
+
 	entry, err := engine.wal.AddRecord(key, value, false)
 	if err != nil {
 		return err
@@ -645,15 +654,73 @@ func (engine *Engine) delete(key string) error {
 	return nil
 }
 
+func (engine *Engine) tokenBucketGet(key string) ([]byte, error) {
+	var entry *models.Data
+
+	entry = engine.memtable.Get(key)
+	if entry == nil {
+		entry = engine.cache.Get(key)
+
+		if entry == nil {
+			entry_, err := engine.sstable.Get(key)
+			if err != nil {
+				return nil, err
+			}
+
+			if entry_ == nil {
+				return nil, errors.New("key not found")
+			}
+
+			engine.cache.Put(entry_)
+			entry = entry_
+		} else if entry.Tombstone {
+			return nil, errors.New("key not found")
+		}
+	} else if entry.Tombstone {
+		return nil, errors.New("key not found")
+	}
+
+	return entry.Value, nil
+}
+
+func (engine *Engine) tokenBucketPut(key string, value []byte) error {
+	entry, err := engine.wal.AddRecord(key, value, false)
+	if err != nil {
+		return err
+	}
+
+	toFlush := engine.memtable.Put(entry.Key, entry.Value, entry.Timestamp, entry.Tombstone)
+	if toFlush != nil {
+		err := engine.sstable.Write(toFlush)
+		if err != nil {
+			return err
+		}
+
+		err = engine.wal.MoveLowWatermark(engine.memtable.FindNewestTimestamp(toFlush))
+		if err != nil {
+			return err
+		}
+
+		err = engine.wal.DeleteSegments()
+		if err != nil {
+			return err
+		}
+
+		engine.cache.Update(toFlush)
+	}
+
+	return nil
+}
+
 func (engine *Engine) checkTokenBucket() (bool, error) {
-	serializedTB, err := engine.get(TokenBucketPrefix)
+	serializedTB, err := engine.tokenBucketGet(TokenBucketPrefix)
 	var used bool
 	if err != nil {
 		if err.Error() == "key not found" {
 			tb := tokenbucket.NewTokenBucket(engine.conf.TokenBucket.Capacity, engine.conf.TokenBucket.RefillPeriod)
 			used = tb.UseToken()
 
-			err := engine.put(TokenBucketPrefix, tb.Serialize())
+			err := engine.tokenBucketPut(TokenBucketPrefix, tb.Serialize())
 			if err != nil {
 				return false, err
 			}
@@ -667,7 +734,7 @@ func (engine *Engine) checkTokenBucket() (bool, error) {
 	tb := tokenbucket.Deserialize(serializedTB, engine.conf.TokenBucket.Capacity, engine.conf.TokenBucket.RefillPeriod)
 	used = tb.UseToken()
 
-	err = engine.put(TokenBucketPrefix, tb.Serialize())
+	err = engine.tokenBucketPut(TokenBucketPrefix, tb.Serialize())
 	if err != nil {
 		return false, err
 	}

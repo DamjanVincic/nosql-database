@@ -34,8 +34,9 @@ func mainMenu(eng *engine.Engine) {
 			err = eng.Put(key, value)
 			if err != nil {
 				fmt.Println(err)
+			} else {
+				fmt.Println("Put successful")
 			}
-			fmt.Println("Put successful")
 		case 2:
 			fmt.Print("Key: ")
 			_, err := fmt.Scanf("%s", &key)
@@ -45,8 +46,9 @@ func mainMenu(eng *engine.Engine) {
 			value, err := eng.Get(key)
 			if err != nil {
 				fmt.Println(err)
+			} else {
+				fmt.Println(value)
 			}
-			fmt.Println(value)
 		case 3:
 			fmt.Print("Key: ")
 			_, err := fmt.Scanf("%s", &key)
@@ -57,9 +59,9 @@ func mainMenu(eng *engine.Engine) {
 			err = eng.Delete(key)
 			if err != nil {
 				fmt.Println(err)
+			} else {
+				fmt.Println("Delete successful")
 			}
-
-			fmt.Println("Delete successful")
 		case 4:
 			scanMenu(eng)
 		case 5:
@@ -333,6 +335,7 @@ func probabilisticTypes(eng *engine.Engine) {
 		}
 		err = eng.BloomFilter(key)
 		if err != nil {
+			fmt.Println(err)
 			return
 		}
 	case 2:
@@ -345,6 +348,7 @@ func probabilisticTypes(eng *engine.Engine) {
 		}
 		err = eng.CountMinSketch(key)
 		if err != nil {
+			fmt.Println(err)
 			return
 		}
 	case 3:
@@ -357,6 +361,7 @@ func probabilisticTypes(eng *engine.Engine) {
 		}
 		err = eng.HyperLogLog(key)
 		if err != nil {
+			fmt.Println(err)
 			return
 		}
 	case 4:
@@ -369,6 +374,7 @@ func probabilisticTypes(eng *engine.Engine) {
 		}
 		err = eng.Simhash(key)
 		if err != nil {
+			fmt.Println(err)
 			return
 		}
 	}
