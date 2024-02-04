@@ -89,7 +89,7 @@ type SSTable struct {
 	singleFile                   bool
 	compression                  bool
 	encoder                      *keyencoder.KeyEncoder
-	leveledCompaction            bool
+	compaction                   string
 	maxLevel                     uint8
 	firstLevelMax                uint64
 	levelMultiplier              uint64
@@ -97,7 +97,7 @@ type SSTable struct {
 	bloomFilterFalsePositiveRate float64
 }
 
-func NewSSTable(indexSparseConst uint16, summarySparseConst uint16, singleFile bool, compression bool, leveledCompaction bool, maxLevel uint8, firstLevelMax uint64, levelMultiplier uint64, bloomFilterFalsePositiveRate float64) (*SSTable, error) {
+func NewSSTable(indexSparseConst uint16, summarySparseConst uint16, singleFile bool, compression bool, compaction string, maxLevel uint8, firstLevelMax uint64, levelMultiplier uint64, bloomFilterFalsePositiveRate float64) (*SSTable, error) {
 	//check if sstable dir exists, if not create it
 	_, err := os.ReadDir(Path)
 	if os.IsNotExist(err) {
@@ -115,18 +115,23 @@ func NewSSTable(indexSparseConst uint16, summarySparseConst uint16, singleFile b
 		}
 	}
 
-	return &SSTable{
+	sstable := &SSTable{
 		indexConst:                   indexSparseConst,
 		summaryConst:                 summarySparseConst,
 		singleFile:                   singleFile,
 		compression:                  compression,
 		encoder:                      encoder,
-		leveledCompaction:            leveledCompaction,
+		compaction:                   compaction,
 		maxLevel:                     maxLevel,
 		firstLevelMax:                firstLevelMax,
 		levelMultiplier:              levelMultiplier,
 		bloomFilterFalsePositiveRate: bloomFilterFalsePositiveRate,
-	}, nil
+	}
+	if sstable.compaction == "leveled" {
+		sstable.firstLevelMax++
+	}
+
+	return sstable, nil
 }
 
 // we know which SSTable to create based on the singleFile variable, set in the configuration file
@@ -485,12 +490,12 @@ func (sstable *SSTable) CheckCompaction(lsmLevel uint8) error {
 	}
 
 	multiplier := uint64(math.Pow(float64(sstable.levelMultiplier), float64(lsmLevel-1)))
-	if !sstable.leveledCompaction {
+	if sstable.compaction == "sizetiered" {
 		multiplier = 1
 	}
 	if uint64(len(sstablesOnLvl)) >= sstable.firstLevelMax*multiplier {
 		// does compaction of the whole level
-		if !sstable.leveledCompaction {
+		if sstable.compaction == "sizetiered" {
 			for i := 0; i < len(sstablesOnLvl)/int(sstable.firstLevelMax); i++ {
 				err := sstable.sizeTieredCompact(sstablePaths[i*int(sstable.firstLevelMax):i*int(sstable.firstLevelMax)+int(sstable.firstLevelMax)], lsmLevel)
 				if err != nil {
@@ -522,7 +527,7 @@ func (sstable *SSTable) CheckCompaction(lsmLevel uint8) error {
 			return err
 		}
 
-		if sstable.leveledCompaction {
+		if sstable.compaction == "leveled" {
 			err = renameSSTables(lsmLevel + 1)
 			if err != nil {
 				return err
@@ -541,7 +546,7 @@ func renameSSTables(lsmLevel uint8) error {
 
 	for idx, sstableDir := range ssTableDirs {
 		if sstableDir.Name() == fmt.Sprintf("sst%010d", idx+1) {
-			break
+			continue
 		}
 		err := os.Rename(filepath.Join(Path, fmt.Sprintf("%02d", lsmLevel), sstableDir.Name()), filepath.Join(Path, fmt.Sprintf("%02d", lsmLevel), fmt.Sprintf("sst%010d", idx+1)))
 		if err != nil {
@@ -671,7 +676,7 @@ func (sstable *SSTable) leveledCompact(sstablePaths []string, lsmLevel uint8) er
 
 		if len(sstFiles) == 1 {
 			dataFilePath = filepath.Join(sstablePath, SingleFileName)
-			summaryFilePath = filepath.Join(sstablePath, SummaryFileName)
+			summaryFilePath = filepath.Join(sstablePath, SingleFileName)
 		} else {
 			dataFilePath = filepath.Join(sstablePath, DataFileName)
 			summaryFilePath = filepath.Join(sstablePath, SummaryFileName)
@@ -777,9 +782,15 @@ func (sstable *SSTable) leveledCompact(sstablePaths []string, lsmLevel uint8) er
 		}
 
 		if len(sstFiles) == 1 {
+			var dataBlockSize, indexBlockSize, summarySize uint64
+			dataBlockSize = binary.BigEndian.Uint64(mmapFile[:DataBlockSizeSize])
+			indexBlockSize = binary.BigEndian.Uint64(mmapFile[IndexBlockStart:SummaryBlockStart])
+			summarySize = binary.BigEndian.Uint64(mmapFile[SummaryBlockStart:FilterBlockStart])
+
 			// First SSTable
 			if minKey == "" && maxKey == "" {
-				_, minK, maxK, _, err := readSummaryHeader(mmapFile[SummaryBlockStart:FilterBlockStart], sstable.compression, sstable.encoder)
+
+				_, minK, maxK, _, err := readSummaryHeader(mmapFile[HeaderSize+dataBlockSize+indexBlockSize:HeaderSize+dataBlockSize+indexBlockSize+summarySize], sstable.compression, sstable.encoder)
 				if err != nil {
 					return err
 				}
@@ -788,7 +799,7 @@ func (sstable *SSTable) leveledCompact(sstablePaths []string, lsmLevel uint8) er
 				maxKey = maxK
 			}
 
-			overlap, err := sstable.overlap(minKey, maxKey, mmapFile)
+			overlap, err := sstable.overlap(minKey, maxKey, mmapFile[HeaderSize+dataBlockSize+indexBlockSize:HeaderSize+dataBlockSize+indexBlockSize+summarySize])
 			if err != nil {
 				return err
 			}
