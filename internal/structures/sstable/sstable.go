@@ -1351,6 +1351,26 @@ func (sstable *SSTable) Get(key string) (*models.Data, error) {
 				return nil, errData
 			}
 
+			if errData != nil {
+				if sstDirSize == 1 {
+					err = mmapSingleFile.Unmap()
+					if err != nil {
+						return nil, err
+					}
+					err = currentFile.Close()
+					if err != nil {
+						return nil, err
+					}
+				}
+
+				if errData.Error() == "key not found" {
+					i--
+					continue
+				}
+
+				return nil, errData
+			}
+
 			if dataRecord != nil {
 				if sstDirSize == 1 {
 					err = mmapSingleFile.Unmap()
@@ -1594,6 +1614,28 @@ func readDataFromFile(mmapFile mmap.MMap, indexThinningConst uint16, key string,
 	}
 	return nil, 0, errors.New("key not found")
 }
+
+//// returns mmapFile with data records, first one being min key with given prefix
+//func positionToFirstKeyWithPrefix(mmapFile mmap.MMap, indexThinningConst uint16, prefix string, offset uint64, compression bool, encoder *keyencoder.KeyEncoder) (mmap.MMap, error) {
+//	//read IndexConst number of data records
+//	for i := uint16(0); i < indexThinningConst; i++ {
+//		dataRecord, dataRecordSize, err := models.Deserialize(mmapFile[offset:], compression, encoder)
+//
+//		if err != nil {
+//			return nil, err
+//		}
+//		// keys must be equal
+//		if strings.HasPrefix(dataRecord.Key, prefix) {
+//			return mmapFile[offset:], nil
+//		}
+//		offset += dataRecordSize
+//		// when you get to the end it means there is no match
+//		if len(mmapFile) <= int(offset) {
+//			return nil, nil
+//		}
+//	}
+//	return nil, nil
+//}
 
 func RemoveSSTable(filenames []string) error {
 	for i := range filenames {

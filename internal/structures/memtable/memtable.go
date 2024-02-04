@@ -5,6 +5,9 @@ import (
 	"github.com/DamjanVincic/key-value-engine/internal/structures/b-tree"
 	"github.com/DamjanVincic/key-value-engine/internal/structures/hashmap"
 	"github.com/DamjanVincic/key-value-engine/internal/structures/skiplist"
+	"slices"
+	"sort"
+	"strings"
 )
 
 type MemtableData interface {
@@ -101,4 +104,50 @@ func (memtable *Memtable) Get(key string) *models.Data {
 		}
 	}
 	return nil
+}
+
+// returns all keys in memtable with given prefix sorted
+func (memtable *Memtable) GetKeysWithPrefix(prefix string) []string {
+	keys := make([]string, 0)
+	currentKeys := memtable.currentPartition.GetSorted()
+	for _, data := range currentKeys {
+		if strings.HasPrefix(data.Key, prefix) {
+			keys = append(keys, data.Key)
+		}
+	}
+	for _, partition := range memtable.partitions {
+		currentKeys = partition.GetSorted()
+		for _, data := range currentKeys {
+			if strings.HasPrefix(data.Key, prefix) {
+				if !slices.Contains(keys, data.Key) {
+					keys = append(keys, data.Key)
+				}
+			}
+		}
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// returns all keys in memtable in given range sorted
+func (memtable *Memtable) GetKeysInRange(min string, max string) []string {
+	keys := make([]string, 0)
+	currentKeys := memtable.currentPartition.GetSorted()
+	for _, data := range currentKeys {
+		if min <= data.Key && max >= data.Key {
+			keys = append(keys, data.Key)
+		}
+	}
+	for _, partition := range memtable.partitions {
+		currentKeys = partition.GetSorted()
+		for _, data := range currentKeys {
+			if min <= data.Key && max >= data.Key {
+				if !slices.Contains(keys, data.Key) {
+					keys = append(keys, data.Key)
+				}
+			}
+		}
+	}
+	sort.Strings(keys)
+	return keys
 }
