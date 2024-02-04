@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"github.com/DamjanVincic/key-value-engine/internal/models"
+	"github.com/DamjanVincic/key-value-engine/internal/structures/cache"
 	"github.com/DamjanVincic/key-value-engine/internal/structures/memtable"
+	"github.com/DamjanVincic/key-value-engine/internal/structures/sstable"
 	"github.com/edsrzf/mmap-go"
 	"os"
 	"path/filepath"
@@ -64,10 +66,12 @@ const (
 type WAL struct {
 	segmentSize     uint64
 	currentFilename string
+	sst             *sstable.SSTable
+	cache           *cache.Cache
 }
 
 // NewWAL Create a new Write Ahead Log, segmentSize is the maximum size of a segment in bytes
-func NewWAL(segmentSize uint64) (*WAL, error) {
+func NewWAL(segmentSize uint64, sst *sstable.SSTable, cache *cache.Cache) (*WAL, error) {
 	// Create the directory if it doesn't exist
 	dirEntries, err := os.ReadDir(Path)
 	if os.IsNotExist(err) {
@@ -99,6 +103,8 @@ func NewWAL(segmentSize uint64) (*WAL, error) {
 	return &WAL{
 		segmentSize:     segmentSize,
 		currentFilename: filename,
+		sst:             sst,
+		cache:           cache,
 	}, nil
 }
 
@@ -333,7 +339,25 @@ func (wal *WAL) readRecordsFromFile(fileName string, buffer []byte, memtable *me
 				return 0, nil, false, err
 			}
 			if memtable != nil {
-				memtable.Put(record.Key, record.Value, record.Timestamp, record.Tombstone)
+				toFlush := memtable.Put(record.Key, record.Value, record.Timestamp, record.Tombstone)
+				if toFlush != nil {
+					err := wal.sst.Write(toFlush)
+					if err != nil {
+						return 0, nil, false, err
+					}
+
+					err = wal.MoveLowWatermark(memtable.FindNewestTimestamp(toFlush))
+					if err != nil {
+						return 0, nil, false, err
+					}
+
+					err = wal.DeleteSegments()
+					if err != nil {
+						return 0, nil, false, err
+					}
+
+					wal.cache.Update(toFlush)
+				}
 			} else {
 				if record.Timestamp > timestamp {
 					return previousOffset, nil, true, nil
@@ -419,7 +443,25 @@ func (wal *WAL) ReadRecords(memtable *memtable.Memtable) error {
 				return err
 			}
 
-			memtable.Put(record.Key, record.Value, record.Timestamp, record.Tombstone)
+			toFlush := memtable.Put(record.Key, record.Value, record.Timestamp, record.Tombstone)
+			if toFlush != nil {
+				err := wal.sst.Write(toFlush)
+				if err != nil {
+					return err
+				}
+
+				err = wal.MoveLowWatermark(memtable.FindNewestTimestamp(toFlush))
+				if err != nil {
+					return err
+				}
+
+				err = wal.DeleteSegments()
+				if err != nil {
+					return err
+				}
+
+				wal.cache.Update(toFlush)
+			}
 		}
 	}
 
@@ -475,6 +517,9 @@ func (wal *WAL) MoveLowWatermark(timestamp uint64) error {
 	// Find the segment that has a record with the given or a newer timestamp
 	idx, offset, err := wal.findTimestampSegment(timestamp)
 	if err != nil {
+		if err.Error() == "no segment found" {
+			return nil
+		}
 		return err
 	}
 

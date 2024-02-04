@@ -37,7 +37,7 @@ type SSTableConfig struct {
 	CompactionAlgorithm string `yaml:"compactionAlgorithm" validate:"oneof=sizetiered leveled"`
 	MaxLevel            uint8  `yaml:"maxLevel" validate:"gte=4"`
 	LevelSize           uint64 `yaml:"levelSize" validate:"gte=2"`
-	LevelSizeMultiplier uint64 `yaml:"levelSizeMultiplier" validate:"gte=10"`
+	LevelSizeMultiplier uint64 `yaml:"levelSizeMultiplier" validate:"gte=1"`
 }
 
 type CacheConfig struct {
@@ -55,14 +55,14 @@ var config = &Config{
 		SegmentSize: 1024,
 	},
 	Memtable: MemtableConfig{
-		TableSize:      1000,
+		TableSize:      100,
 		DataStructure:  "hashmap",
 		NumberOfTables: 1,
 	},
 	SSTable: SSTableConfig{
 		IndexThinningDegree:          5,
 		SummaryThinningDegree:        5,
-		SingleFile:                   false,
+		SingleFile:                   true,
 		Compression:                  false,
 		BloomFilterFalsePositiveRate: 0.0001,
 
@@ -84,6 +84,11 @@ var config = &Config{
 func LoadConfig() *Config {
 	file, err := os.ReadFile(ConfigFile)
 	if err != nil {
+		err := config.WriteConfig()
+		if err != nil {
+			return nil
+		}
+
 		fmt.Println("Error while reading config file, using default config")
 		return config
 	}
