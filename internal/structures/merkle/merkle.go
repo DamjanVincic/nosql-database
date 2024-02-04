@@ -33,17 +33,34 @@ type Node struct {
 }
 
 /*
-get binary data and hash function and return new node with no children and hashed values
+get hashed data for leaves
 */
-func (merkleTree *MerkleTree) createNewNode(value *models.Data, compression bool, encoder *keyencoder.KeyEncoder) (*Node, error) {
+func (merkleTree *MerkleTree) CreateNodeData(value *models.Data, compression bool, encoder *keyencoder.KeyEncoder) ([]byte, error) {
 	newData := value.Serialize(compression, encoder)
 	values, err := merkleTree.HashWithSeed.Hash(newData)
+
 	if err != nil {
 		return nil, err
 	}
 	valuesBinary := make([]byte, 8)
 	binary.BigEndian.PutUint64(valuesBinary, values)
-	return &Node{left: nil, right: nil, Data: valuesBinary}, nil
+
+	return valuesBinary, nil
+}
+
+/*
+get binary data and hash function and return new node with no children and hashed values
+*/
+
+func NewMerkle(hashFunc *hash.HashWithSeed) *MerkleTree {
+	if hashFunc == nil {
+		hashFunc = &hash.CreateHashFunctions(1)[0]
+	}
+	return &MerkleTree{
+		Root:         nil,
+		HashWithSeed: hashFunc,
+		size:         0,
+	}
 }
 
 /*
@@ -51,21 +68,16 @@ since merkle tree is build from bottom up we need all data as leafs
 if number of leafs is not 2**n we need to add empty nodes
 there hash wont change anything
 */
-func CreateMerkleTree(allData []*models.Data, hashFunc *hash.HashWithSeed, compression bool, encoder *keyencoder.KeyEncoder) (*MerkleTree, error) {
+func (merkleTree *MerkleTree) CreateMerkleTree(hashedData []byte, compression bool, encoder *keyencoder.KeyEncoder) error {
 	var nodes []*Node
-	var merkleTree MerkleTree
-	if hashFunc == nil {
-		hashFunc = &hash.CreateHashFunctions(1)[0]
-	}
-	merkleTree.HashWithSeed = hashFunc
 
 	// creating all the end nodes
-	for _, data := range allData {
-		node, err := merkleTree.createNewNode(data, compression, encoder)
-		if err != nil {
-			return nil, err
-		}
+	const NodeDataSize = 8
+	offset := 0
+	for offset != len(hashedData) {
+		node := &Node{left: nil, right: nil, Data: hashedData[offset : offset+NodeDataSize]}
 		nodes = append(nodes, node)
+		offset += NodeDataSize
 	}
 
 	// if number of nodes is not 2**n add empty nodes
@@ -75,12 +87,13 @@ func CreateMerkleTree(allData []*models.Data, hashFunc *hash.HashWithSeed, compr
 	merkleTree.size = targetSize
 	for i := uint64(len(nodes)); i < targetSize; i++ {
 		// add number of empty nodes that is needed
-		empty := &models.Data{Key: "", Value: []byte{}, Tombstone: true, Timestamp: 0}
-		node, err := merkleTree.createNewNode(empty, compression, encoder)
+		empty, err := merkleTree.CreateNodeData(models.NewData("", []byte{}, false, 0), compression, encoder)
 		if err != nil {
-			return nil, err
+			return err
 		}
+		node := &Node{left: nil, right: nil, Data: empty}
 		nodes = append(nodes, node)
+		offset += NodeDataSize
 	}
 
 	for len(nodes) > 1 {
@@ -90,7 +103,7 @@ func CreateMerkleTree(allData []*models.Data, hashFunc *hash.HashWithSeed, compr
 			// add two array together and hash
 			values, err := merkleTree.HashWithSeed.Hash(append(nodes[i].Data, nodes[i+1].Data...))
 			if err != nil {
-				return nil, err
+				return err
 			}
 			valuesBinary := make([]byte, 8)
 			binary.BigEndian.PutUint64(valuesBinary, values)
@@ -107,7 +120,7 @@ func CreateMerkleTree(allData []*models.Data, hashFunc *hash.HashWithSeed, compr
 	}
 
 	merkleTree.Root = nodes[len(nodes)-1]
-	return &merkleTree, nil
+	return nil
 }
 
 // BFS traversal on a binary tree; creates list of nodes
