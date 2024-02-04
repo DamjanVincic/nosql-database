@@ -17,21 +17,8 @@ import (
 )
 
 const (
-	CrcSize       = 4
-	TimestampSize = 8
-	TombstoneSize = 1
-	KeySizeSize   = 8
-	OffsetSize    = 8
-	ValueSizeSize = 8
-
-	//for dataRecord
-	CrcStart           = 0
-	TimestampStart     = CrcStart + CrcSize
-	TombstoneStart     = TimestampStart + TimestampSize
-	DataKeySizeStart   = TombstoneStart + TombstoneSize
-	DataValueSizeStart = DataKeySizeStart + KeySizeSize
-	DataKeyStart       = DataValueSizeStart + ValueSizeSize
-	RecordHeaderSize   = CrcSize + TimestampSize + TombstoneSize + KeySizeSize + ValueSizeSize
+	KeySizeSize = 8
+	OffsetSize  = 8
 
 	//for indexRecord
 	KeySizeStart = 0
@@ -501,17 +488,6 @@ func (sstable *SSTable) CheckCompaction(lsmLevel uint8) error {
 				if err != nil {
 					return err
 				}
-				//if !sstable.leveledCompaction {
-				//	err := sstable.sizeTieredCompact(sstablesOnLvl[i*int(sstable.firstLevelMax):i*int(sstable.firstLevelMax)+int(sstable.firstLevelMax)], lsmLevel)
-				//	if err != nil {
-				//		return err
-				//	}
-				//} else {
-				//	err := sstable.leveledCompact(sstablesOnLvl[:sstable.firstLevelMax], sstablesOnLvl)
-				//	if err != nil {
-				//		return err
-				//	}
-				//}
 			}
 		} else {
 			for i := 0; i <= len(sstablesOnLvl)-int(sstable.firstLevelMax*multiplier); i++ {
