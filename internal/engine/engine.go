@@ -567,6 +567,19 @@ func (engine *Engine) Simhash(key string) error {
 	return nil
 }
 
+func (engine *Engine) CheckMerkle(path string) ([]*models.Data, error) {
+	corrupted, err := engine.sstable.CheckDataValidity(path)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(corrupted) == 0 {
+		return nil, nil
+	}
+
+	return corrupted, nil
+}
+
 func (engine *Engine) hasPrefix(key string) bool {
 	for _, prefix := range Prefixes {
 		if strings.HasPrefix(key, prefix) {
