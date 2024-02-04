@@ -28,10 +28,11 @@ type MemtableConfig struct {
 }
 
 type SSTableConfig struct {
-	IndexThinningDegree   uint16 `yaml:"indexThinningDegree" validate:"gte=1"`
-	SummaryThinningDegree uint16 `yaml:"summaryThinningDegree" validate:"gte=1"`
-	SingleFile            bool   `yaml:"singleFile"`
-	Compression           bool   `yaml:"compression"`
+	IndexThinningDegree          uint16  `yaml:"indexThinningDegree" validate:"gte=1"`
+	SummaryThinningDegree        uint16  `yaml:"summaryThinningDegree" validate:"gte=1"`
+	SingleFile                   bool    `yaml:"singleFile"`
+	Compression                  bool    `yaml:"compression"`
+	BloomFilterFalsePositiveRate float64 `yaml:"bloomFilterFalsePositiveRate" validate:"gt=0,lte=1"`
 
 	CompactionAlgorithm string `yaml:"compactionAlgorithm" validate:"oneof=sizetiered leveled"`
 	MaxLevel            uint8  `yaml:"maxLevel" validate:"gte=4"`
@@ -59,10 +60,11 @@ var config = &Config{
 		NumberOfTables: 1,
 	},
 	SSTable: SSTableConfig{
-		IndexThinningDegree:   5,
-		SummaryThinningDegree: 5,
-		SingleFile:            false,
-		Compression:           false,
+		IndexThinningDegree:          5,
+		SummaryThinningDegree:        5,
+		SingleFile:                   false,
+		Compression:                  false,
+		BloomFilterFalsePositiveRate: 0.0001,
 
 		CompactionAlgorithm: "sizetiered",
 		MaxLevel:            4,
