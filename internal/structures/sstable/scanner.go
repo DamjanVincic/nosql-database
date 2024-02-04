@@ -473,25 +473,41 @@ func (sstable *SSTable) NewRangeIterator(min string, max string, memtable *memta
 	if len(records) > 0 {
 		record = records[0]
 	}
-	return &RangeIterator{memKeys: memKeys, scannerFiles: scannerFiles, filesToBeClosed: filesToBeClosed, sstable: sstable, memtable: memtable, min: min, max: max}, record, err
+	return &RangeIterator{memKeys: memKeys, scannerFiles: scannerFiles, filesToBeClosed: filesToBeClosed, sstable: sstable, memtable: memtable, min: min, max: max, found: found, currentIdx: 0}, record, err
 }
 
 func (iterator *RangeIterator) Next() (*models.Data, error) {
+	var minCandidate *ScanningCandidate
+	var candidates []*ScanningCandidate
+	var filesWithoutMatches []*ScannerFile
+	var err error
 
-	//find min key in given range and all records containing it
-	minCandidate, candidates, filesWithoutMatches, err := iterator.sstable.getCandidates(iterator.memKeys, iterator.scannerFiles, iterator.min, iterator.max, false)
+	alreadyFound := false
 
-	if err != nil {
-		return nil, err
-	}
+	iterator.currentIdx++
 
-	//remove files that have no more records in given range, so they are not considered in the next iteration
-	for _, file := range filesWithoutMatches {
-		iterator.scannerFiles = removeFromSlice(iterator.scannerFiles, file)
-	}
+	//check if the record was already found
+	if iterator.currentIdx < uint64(len(iterator.found)) {
+		alreadyFound = true
+		minCandidate = iterator.found[iterator.currentIdx]
+	} else {
+		//find min key in given range and all records containing it
+		minCandidate, candidates, filesWithoutMatches, err = iterator.sstable.getCandidates(iterator.memKeys, iterator.scannerFiles, iterator.min, iterator.max, false)
 
-	if minCandidate == nil {
-		return nil, errors.New("no records left")
+		if err != nil {
+			return nil, err
+		}
+
+		//remove files that have no more records in given range, so they are not considered in the next iteration
+		for _, file := range filesWithoutMatches {
+			iterator.scannerFiles = removeFromSlice(iterator.scannerFiles, file)
+		}
+
+		if minCandidate == nil {
+			return nil, errors.New("no records left")
+		}
+
+		iterator.found = append(iterator.found, minCandidate)
 	}
 
 	var record *models.Data
@@ -506,8 +522,36 @@ func (iterator *RangeIterator) Next() (*models.Data, error) {
 		}
 	}
 
-	//reposition all files so this key is not considered in next iteration
-	iterator.memKeys, iterator.scannerFiles = iterator.sstable.updateScannerFiles(minCandidate, candidates, iterator.memKeys, iterator.scannerFiles)
+	if !alreadyFound {
+		//reposition all files so this key is not considered in next iteration
+		iterator.memKeys, iterator.scannerFiles = iterator.sstable.updateScannerFiles(minCandidate, candidates, iterator.memKeys, iterator.scannerFiles)
+	}
+
+	return record, nil
+}
+
+// returns previous record with given prefix
+func (iterator *RangeIterator) Previous() (*models.Data, error) {
+	if iterator.currentIdx == 0 {
+		return nil, errors.New("no records left")
+	}
+
+	iterator.currentIdx--
+
+	foundCandidate := iterator.found[iterator.currentIdx]
+
+	var record *models.Data
+	var err error
+
+	//get found record
+	if foundCandidate.file == nil {
+		record = iterator.memtable.Get(foundCandidate.key)
+	} else {
+		record, _, err = models.Deserialize(foundCandidate.file.mmapFile[foundCandidate.offset:], iterator.sstable.compression, iterator.sstable.encoder)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	return record, nil
 }
@@ -523,7 +567,7 @@ func (sstable *SSTable) RangeScan(min string, max string, pageNumber uint64, pag
 		return nil, errors.New("invalid range given")
 	}
 
-	records, err, _, _, _ = sstable.scanWithConditions(min, max, false, pageNumber, pageSize, memtable, false)
+	records, err, _, _, _, _ = sstable.scanWithConditions(min, max, false, pageNumber, pageSize, memtable, false)
 
 	if err != nil {
 		records = nil
