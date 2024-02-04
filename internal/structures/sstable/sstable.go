@@ -541,6 +541,8 @@ func (sstable *SSTable) sizeTieredCompact(sstOnLsmLvl []os.DirEntry, lsmLevel ui
 		if len(sstFiles) == 1 {
 			dataSize := binary.BigEndian.Uint64(mmapFile[DataBlockStart:IndexBlockStart])
 			sstForCompaction = append(sstForCompaction, mmapFile[HeaderSize:HeaderSize+dataSize])
+		} else {
+			sstForCompaction = append(sstForCompaction, mmapFile)
 		}
 		mmapFilesOpened = append(mmapFilesOpened, mmapFile)
 	}
@@ -718,7 +720,11 @@ func (sstable *SSTable) combineSSTables(sstForCompaction []mmap.MMap, nextLsmLev
 		}
 
 		// Use copy to update the memory-mapped slice
-		copy(mmapCurrFile[HeaderSize+dataBlockSize-sizeOfDR:], serializedDataRecord)
+		if sstable.singleFile {
+			copy(mmapCurrFile[HeaderSize+dataBlockSize-sizeOfDR:], serializedDataRecord)
+		} else {
+			copy(mmapCurrFile[dataBlockSize-sizeOfDR:], serializedDataRecord)
+		}
 
 		err = mmapCurrFile.Unmap()
 		if err != nil {
@@ -766,7 +772,7 @@ func (sstable *SSTable) combineSSTables(sstForCompaction []mmap.MMap, nextLsmLev
 	filterBlockSize := uint64(len(filterData))
 
 	//metadata
-	err = merkleTree.CreateMerkleTree(merkleLeaves, sstable.compression, sstable.encoder)
+	//err = merkleTree.CreateMerkleTree(merkleLeaves, sstable.compression, sstable.encoder)
 	if err != nil {
 		return err
 	}
@@ -777,7 +783,8 @@ func (sstable *SSTable) combineSSTables(sstForCompaction []mmap.MMap, nextLsmLev
 	summaryHeader := createSummaryHeader(sstable.summaryConst, summaryMin, summaryMax, sstable.compression, sstable.encoder)
 	//append all summary index records
 	summaryBlockSize += uint64(len(summaryHeader))
-	summaryHeader = append(summaryHeader, summaryData...)
+	summaryData = append(summaryHeader, summaryData...)
+	//groupedData[1] = &summaryHeader
 
 	if sstable.singleFile {
 		fileInfo, err := currentFile.Stat()
@@ -805,7 +812,7 @@ func (sstable *SSTable) combineSSTables(sstForCompaction []mmap.MMap, nextLsmLev
 		binary.BigEndian.PutUint64(mmapCurrFile[FilterBlockStart:MetaBlockStart], filterBlockSize)
 
 		copy(mmapCurrFile[fileSize:], indexData)
-		copy(mmapCurrFile[fileSize+int64(indexBlockSize):], summaryHeader)
+		copy(mmapCurrFile[fileSize+int64(indexBlockSize):], summaryData)
 		copy(mmapCurrFile[fileSize+int64(indexBlockSize+summaryBlockSize):], filterData)
 		copy(mmapCurrFile[fileSize+int64(indexBlockSize+summaryBlockSize+filterBlockSize):], merkleData)
 	} else {
@@ -816,9 +823,9 @@ func (sstable *SSTable) combineSSTables(sstForCompaction []mmap.MMap, nextLsmLev
 		filePaths := makeMultiFilenames(sstDirPath)
 		// skip data
 		for idx, fileName := range filePaths[1:] {
-			if idx == 0 {
-				continue
-			}
+			//if idx == 0 {
+			//	continue
+			//}
 
 			file, err := os.OpenFile(fileName, os.O_CREATE|os.O_RDWR, 0644)
 			if err != nil {
@@ -837,10 +844,10 @@ func (sstable *SSTable) combineSSTables(sstForCompaction []mmap.MMap, nextLsmLev
 		}
 	}
 
-	err = mmapCurrFile.Unmap()
-	if err != nil {
-		return err
-	}
+	//err = mmapCurrFile.Unmap()
+	//if err != nil {
+	//	return err
+	//}
 	err = currentFile.Close()
 	if err != nil {
 		return err
