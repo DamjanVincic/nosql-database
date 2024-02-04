@@ -38,3 +38,6 @@ sstable/
 # keyencoder folder
 keyencoder/
 !internal/structures/keyencoder
+
+# YAML files (config)
+*.yml

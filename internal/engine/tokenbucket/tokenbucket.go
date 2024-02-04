@@ -5,25 +5,27 @@ import (
 	"time"
 )
 
-const (
-	refillPeriod = 10 //number of seconds between each token refill
-	maxTokens    = 3  //max number of tokens in each refillPeriod
-)
-
 type TokenBucket struct {
 	lastRefillTime uint64 //unix time of last token refill
+	maxTokens      uint64 //max number of tokens
 	tokenCount     uint64 //number of remaining tokens
+	refillPeriod   uint64 //number of seconds between each token refill
 }
 
-func NewTokenBucket() *TokenBucket {
-	return &TokenBucket{lastRefillTime: uint64(time.Now().Unix()), tokenCount: maxTokens}
+func NewTokenBucket(maxTokens, refillPeriod uint64) *TokenBucket {
+	return &TokenBucket{
+		lastRefillTime: uint64(time.Now().Unix()),
+		maxTokens:      maxTokens,
+		tokenCount:     maxTokens,
+		refillPeriod:   refillPeriod,
+	}
 }
 
 // refills tokens if needed, tries to remove one token, if possible returns true if not returns false
 func (tokenBucket *TokenBucket) UseToken() bool {
 	timeNow := uint64(time.Now().Unix())
-	if timeNow-tokenBucket.lastRefillTime > refillPeriod {
-		tokenBucket.tokenCount = maxTokens
+	if timeNow-tokenBucket.lastRefillTime > tokenBucket.refillPeriod {
+		tokenBucket.tokenCount = tokenBucket.maxTokens
 		tokenBucket.lastRefillTime = timeNow
 	}
 	if tokenBucket.tokenCount == 0 {

@@ -10,12 +10,6 @@ import (
 	"strings"
 )
 
-const (
-	maxPartitions = 3 //max number of MemtableData instances
-	maxEntries    = 3 //max number of entries in one MemtableData instance
-	dataStructure = 3 //implementation od MemtableData to be used (1 for skipList, 2 for BTree, 3 for hashMap)
-)
-
 type MemtableData interface {
 	Get(key string) *models.Data
 	GetSorted() []*models.Data
@@ -27,10 +21,20 @@ type MemtableData interface {
 type Memtable struct {
 	partitions       []MemtableData //read-only partitions
 	currentPartition MemtableData   //read-write partition
+
+	maxEntries    uint64 // max number of entries in one MemtableData instance
+	dataStructure string // implementation od MemtableData to be used (skipList, BTree, or hashMap)
+	maxPartitions uint64 // max number of MemtableData instances
 }
 
-func NewMemtable() *Memtable {
-	memtable := Memtable{partitions: []MemtableData{}, currentPartition: nil}
+func NewMemtable(maxEntries uint64, dataStructure string, maxPartitions uint64) *Memtable {
+	memtable := Memtable{
+		partitions:       []MemtableData{},
+		currentPartition: nil,
+		maxEntries:       maxEntries,
+		dataStructure:    dataStructure,
+		maxPartitions:    maxPartitions,
+	}
 	memtable.makePartition()
 	return &memtable
 }
@@ -40,23 +44,23 @@ func (memtable *Memtable) makePartition() {
 	var newPartition MemtableData
 
 	//creating newPartition with given structure
-	switch dataStructure {
-	case 1:
+	switch memtable.dataStructure {
+	case "skiplist":
 		newPartition = skiplist.CreateSkipList()
-	case 2:
+	case "btree":
 		newPartition = btree.CreateBTree()
-	case 3:
+	case "hashmap":
 		newPartition = hashmap.CreateHashMap()
 	}
 
 	//if there is no currentPartition (during initialization) only currentPartition is created
-	if memtable.currentPartition == nil {
+	if memtable.currentPartition == nil || memtable.maxPartitions == 1 {
 		memtable.currentPartition = newPartition
 		return
 	}
 
 	//delete oldest partition if needed
-	if len(memtable.partitions)+1 >= maxPartitions {
+	if uint64(len(memtable.partitions)+1) >= memtable.maxPartitions {
 		memtable.partitions = memtable.partitions[1:]
 	}
 
@@ -71,9 +75,13 @@ func (memtable *Memtable) Put(key string, value []byte, timestamp uint64, tombst
 
 	memtable.currentPartition.Put(key, value, tombstone, timestamp)
 
-	if memtable.currentPartition.Size() >= maxEntries {
-		if len(memtable.partitions)+1 >= maxPartitions {
-			toFlush = memtable.partitions[0].GetSorted()
+	if uint64(memtable.currentPartition.Size()) >= memtable.maxEntries {
+		if uint64(len(memtable.partitions)+1) >= memtable.maxPartitions {
+			if len(memtable.partitions) == 0 {
+				toFlush = memtable.currentPartition.GetSorted()
+			} else {
+				toFlush = memtable.partitions[0].GetSorted()
+			}
 		}
 		memtable.makePartition()
 	}
