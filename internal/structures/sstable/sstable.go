@@ -470,39 +470,58 @@ func (sstable *SSTable) CheckCompaction(lsmLevel uint8) error {
 		return nil
 	}
 
-	sstablesOnLvl, err := os.ReadDir(filepath.Join(Path, fmt.Sprintf("%02d", lsmLevel)))
+	levelPath := filepath.Join(Path, fmt.Sprintf("%02d", lsmLevel))
+	sstablesOnLvl, err := os.ReadDir(levelPath)
 	if os.IsNotExist(err) {
 		if err != nil {
 			return err
 		}
 	}
+	var sstablePaths []string
+	for _, sstableDir := range sstablesOnLvl {
+		sstablePaths = append(sstablePaths, filepath.Join(levelPath, sstableDir.Name()))
+	}
+
 	multiplier := uint64(math.Pow(float64(sstable.levelMultiplier), float64(lsmLevel-1)))
 	if !sstable.leveledCompaction {
 		multiplier = 1
 	}
 	if uint64(len(sstablesOnLvl)) >= sstable.firstLevelMax*multiplier {
 		// does compaction of the whole level
-		for i := 0; i < len(sstablesOnLvl)/int(sstable.firstLevelMax); i++ {
-			if !sstable.leveledCompaction {
-				err := sstable.sizeTieredCompact(sstablesOnLvl[i*int(sstable.firstLevelMax):i*int(sstable.firstLevelMax)+int(sstable.firstLevelMax)], lsmLevel)
+		if !sstable.leveledCompaction {
+			for i := 0; i < len(sstablesOnLvl)/int(sstable.firstLevelMax); i++ {
+				err := sstable.sizeTieredCompact(sstablePaths[i*int(sstable.firstLevelMax):i*int(sstable.firstLevelMax)+int(sstable.firstLevelMax)], lsmLevel)
 				if err != nil {
 					return err
 				}
-			} else {
-				err := sstable.leveledCompact(sstablesOnLvl[:sstable.firstLevelMax], sstablesOnLvl)
+				//if !sstable.leveledCompaction {
+				//	err := sstable.sizeTieredCompact(sstablesOnLvl[i*int(sstable.firstLevelMax):i*int(sstable.firstLevelMax)+int(sstable.firstLevelMax)], lsmLevel)
+				//	if err != nil {
+				//		return err
+				//	}
+				//} else {
+				//	err := sstable.leveledCompact(sstablesOnLvl[:sstable.firstLevelMax], sstablesOnLvl)
+				//	if err != nil {
+				//		return err
+				//	}
+				//}
+			}
+		} else {
+			for i := 0; i <= len(sstablesOnLvl)-int(sstable.firstLevelMax); i++ {
+				err := sstable.leveledCompact(sstablePaths[:1], lsmLevel)
 				if err != nil {
 					return err
 				}
 			}
 		}
 
-		ssTableDirs, err := os.ReadDir(filepath.Join(Path, fmt.Sprintf("%02d", lsmLevel)))
+		err = renameSSTables(lsmLevel)
 		if err != nil {
 			return err
 		}
 
-		for idx, sstableDir := range ssTableDirs {
-			err := os.Rename(filepath.Join(Path, fmt.Sprintf("%02d", lsmLevel), sstableDir.Name()), filepath.Join(Path, fmt.Sprintf("%02d", lsmLevel), fmt.Sprintf("sst%010d", idx+1)))
+		if sstable.leveledCompaction {
+			err = renameSSTables(lsmLevel + 1)
 			if err != nil {
 				return err
 			}
@@ -511,12 +530,27 @@ func (sstable *SSTable) CheckCompaction(lsmLevel uint8) error {
 
 	return nil
 }
-func (sstable *SSTable) leveledCompact(sstablesOnLvl, sstablesOnLvlPlus []os.DirEntry) error {
-	//var toBeDeleted []string
+
+func renameSSTables(lsmLevel uint8) error {
+	ssTableDirs, err := os.ReadDir(filepath.Join(Path, fmt.Sprintf("%02d", lsmLevel)))
+	if err != nil {
+		return err
+	}
+
+	for idx, sstableDir := range ssTableDirs {
+		if sstableDir.Name() == fmt.Sprintf("sst%010d", idx+1) {
+			break
+		}
+		err := os.Rename(filepath.Join(Path, fmt.Sprintf("%02d", lsmLevel), sstableDir.Name()), filepath.Join(Path, fmt.Sprintf("%02d", lsmLevel), fmt.Sprintf("sst%010d", idx+1)))
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }
-func (sstable *SSTable) sizeTieredCompact(sstOnLsmLvl []os.DirEntry, lsmLevel uint8) error {
-	lsmLevelPath := filepath.Join(Path, fmt.Sprintf("%02d", lsmLevel))
+
+func (sstable *SSTable) sizeTieredCompact(sstablePaths []string, lsmLevel uint8) error {
+	//lsmLevelPath := filepath.Join(Path, fmt.Sprintf("%02d", lsmLevel))
 	var toBeDeleted []string
 	var sstForCompaction []mmap.MMap
 	var file *os.File
@@ -524,19 +558,19 @@ func (sstable *SSTable) sizeTieredCompact(sstOnLsmLvl []os.DirEntry, lsmLevel ui
 	var dataFilePath string
 	var mmapFilesOpened []mmap.MMap
 	var filesOpened []*os.File
-	for _, sst := range sstOnLsmLvl {
+	for _, sstablePath := range sstablePaths {
 		// sstable/02 + sst000000000054
-		filePath := filepath.Join(lsmLevelPath, sst.Name())
-		toBeDeleted = append(toBeDeleted, filePath)
-		sstFiles, err := os.ReadDir(filePath)
+		//filePath := filepath.Join(lsmLevelPath, sstablePath.Name())
+		toBeDeleted = append(toBeDeleted, sstablePath)
+		sstFiles, err := os.ReadDir(sstablePath)
 		if os.IsNotExist(err) {
 			return err
 		}
 
 		if len(sstFiles) == 1 {
-			dataFilePath = filepath.Join(filePath, SingleFileName)
+			dataFilePath = filepath.Join(sstablePath, SingleFileName)
 		} else {
-			dataFilePath = filepath.Join(filePath, DataFileName)
+			dataFilePath = filepath.Join(sstablePath, DataFileName)
 		}
 		file, err = os.OpenFile(dataFilePath, os.O_RDWR, 0644)
 		if err != nil {
@@ -580,6 +614,246 @@ func (sstable *SSTable) sizeTieredCompact(sstOnLsmLvl []os.DirEntry, lsmLevel ui
 	}
 
 	return sstable.CheckCompaction(lsmLevel + 1)
+}
+
+func (sstable *SSTable) leveledCompact(sstablePaths []string, lsmLevel uint8) error {
+	nextLsmLevelPath := filepath.Join(Path, fmt.Sprintf("%02d", lsmLevel+1))
+	nextSSTables, err := os.ReadDir(nextLsmLevelPath)
+	if os.IsNotExist(err) {
+		err := os.Mkdir(nextLsmLevelPath, os.ModePerm)
+		if err != nil {
+			return err
+		}
+	}
+	var nextSSTablePaths []string
+	for _, sstablePath := range nextSSTables {
+		nextSSTablePaths = append(nextSSTablePaths, filepath.Join(nextLsmLevelPath, sstablePath.Name()))
+	}
+
+	sstablePaths = append(sstablePaths, nextSSTablePaths...)
+
+	var toBeDeleted []string
+	var sstForCompaction []mmap.MMap
+	var file *os.File
+	var mmapFile mmap.MMap
+	var dataFilePath string
+	var summaryFilePath string
+	var mmapFilesOpened []mmap.MMap
+	var filesOpened []*os.File
+
+	//ssTableToCompact, err := os.OpenFile(filepath.Join(Path, fmt.Sprintf("%02d", lsmLevel), sstablePaths.Name()), os.O_RDWR, 0644)
+	//if err != nil {
+	//	return err
+	//}
+	//mmapSSTableToCompact, err := mmap.Map(ssTableToCompact, mmap.RDWR, 0)
+	//if err != nil {
+	//	return err
+	//}
+
+	//_, minKey, maxKey, _, err := readSummaryHeader(mmapSSTableToCompact, sstable.compression, sstable.encoder)
+	//if err != nil {
+	//	return err
+	//}
+
+	var minKey, maxKey string
+
+	for _, sstablePath := range sstablePaths {
+		// sstable/02 + sst000000000054
+		//filePath := filepath.Join(nextLsmLevelPath, sst.Name())
+
+		//toBeDeleted = append(toBeDeleted, sstablePath)
+		sstFiles, err := os.ReadDir(sstablePath)
+		if os.IsNotExist(err) {
+			return err
+		}
+
+		if len(sstFiles) == 1 {
+			dataFilePath = filepath.Join(sstablePath, SingleFileName)
+			summaryFilePath = filepath.Join(sstablePath, SummaryFileName)
+		} else {
+			dataFilePath = filepath.Join(sstablePath, DataFileName)
+			summaryFilePath = filepath.Join(sstablePath, SummaryFileName)
+		}
+
+		//if minKey == "" && maxKey == "" {
+		//	if len(sstFiles) == 1 {
+		//		file, err = os.OpenFile(summaryFilePath, os.O_RDWR, 0644)
+		//		if err != nil {
+		//			return err
+		//		}
+		//		mmapFile, err := mmap.Map(file, mmap.RDWR, 0)
+		//		if err != nil {
+		//			return err
+		//		}
+		//
+		//		_, minK, maxK, _, err := readSummaryHeader(mmapFile[SummaryBlockStart:FilterBlockStart], sstable.compression, sstable.encoder)
+		//		minKey = minK
+		//		maxKey = maxK
+		//
+		//		err = mmapFile.Unmap()
+		//		if err != nil {
+		//			return err
+		//		}
+		//		err = file.Close()
+		//		if err != nil {
+		//			return err
+		//		}
+		//	} else {
+		//		file, err = os.OpenFile(summaryFilePath, os.O_RDWR, 0644)
+		//		if err != nil {
+		//			return err
+		//		}
+		//		mmapFile, err := mmap.Map(file, mmap.RDWR, 0)
+		//		if err != nil {
+		//			return err
+		//		}
+		//
+		//		_, minK, maxK, _, err := readSummaryHeader(mmapFile, sstable.compression, sstable.encoder)
+		//		minKey = minK
+		//		maxKey = maxK
+		//
+		//		err = mmapFile.Unmap()
+		//		if err != nil {
+		//			return err
+		//		}
+		//		err = file.Close()
+		//		if err != nil {
+		//			return err
+		//		}
+		//	}
+		//}
+
+		if len(sstFiles) != 1 {
+			file, err = os.OpenFile(summaryFilePath, os.O_RDWR, 0644)
+			if err != nil {
+				return err
+			}
+			mmapFile, err = mmap.Map(file, mmap.RDWR, 0)
+			if err != nil {
+				return err
+			}
+
+			// The first sstable
+			if minKey == "" && maxKey == "" {
+				_, minK, maxK, _, err := readSummaryHeader(mmapFile, sstable.compression, sstable.encoder)
+				if err != nil {
+					return err
+				}
+
+				minKey = minK
+				maxKey = maxK
+			}
+
+			overlap, err := sstable.overlap(minKey, maxKey, mmapFile)
+			if err != nil {
+				return err
+			}
+
+			err = mmapFile.Unmap()
+			if err != nil {
+				return err
+			}
+
+			err = file.Close()
+			if err != nil {
+				return err
+			}
+
+			if !overlap {
+				continue
+			}
+		}
+
+		file, err = os.OpenFile(dataFilePath, os.O_RDWR, 0644)
+		if err != nil {
+			return err
+		}
+
+		mmapFile, err = mmap.Map(file, mmap.RDWR, 0)
+		if err != nil {
+			return err
+		}
+
+		if len(sstFiles) == 1 {
+			// First SSTable
+			if minKey == "" && maxKey == "" {
+				_, minK, maxK, _, err := readSummaryHeader(mmapFile[SummaryBlockStart:FilterBlockStart], sstable.compression, sstable.encoder)
+				if err != nil {
+					return err
+				}
+
+				minKey = minK
+				maxKey = maxK
+			}
+
+			overlap, err := sstable.overlap(minKey, maxKey, mmapFile)
+			if err != nil {
+				return err
+			}
+
+			if !overlap {
+				err = mmapFile.Unmap()
+				if err != nil {
+					return err
+				}
+
+				err = file.Close()
+				if err != nil {
+					return err
+				}
+
+				continue
+			}
+		}
+
+		//filesOpened = append(filesOpened, file)
+
+		if len(sstFiles) == 1 {
+			dataSize := binary.BigEndian.Uint64(mmapFile[DataBlockStart:IndexBlockStart])
+			sstForCompaction = append(sstForCompaction, mmapFile[HeaderSize:HeaderSize+dataSize])
+		} else {
+			sstForCompaction = append(sstForCompaction, mmapFile)
+		}
+
+		toBeDeleted = append(toBeDeleted, sstablePath)
+		filesOpened = append(filesOpened, file)
+		mmapFilesOpened = append(mmapFilesOpened, mmapFile)
+	}
+
+	err = sstable.combineSSTables(sstForCompaction, lsmLevel+1)
+	if err != nil {
+		return err
+	}
+
+	for index, file := range filesOpened {
+		err = mmapFilesOpened[index].Unmap()
+		if err != nil {
+			return err
+		}
+		err = file.Close()
+		if err != nil {
+			return err
+		}
+	}
+
+	err = RemoveSSTable(toBeDeleted)
+	if err != nil {
+		return err
+	}
+
+	return sstable.CheckCompaction(lsmLevel + 1)
+}
+
+func (sstable *SSTable) overlap(mainSSTableMin, mainSSTableMax string, ssTable2Mmap mmap.MMap) (bool, error) {
+	_, ssTableMin, ssTableMax, _, err := readSummaryHeader(ssTable2Mmap, sstable.compression, sstable.encoder)
+	if err != nil {
+		return false, err
+	}
+
+	if mainSSTableMin <= ssTableMax && mainSSTableMax >= ssTableMin {
+		return true, nil
+	}
+	return false, nil
 }
 
 func (sstable *SSTable) combineSSTables(sstForCompaction []mmap.MMap, nextLsmLevel uint8) error {
