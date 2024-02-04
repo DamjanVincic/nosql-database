@@ -16,7 +16,8 @@ func mainMenu(eng *engine.Engine) {
 		fmt.Println("3. Delete")
 		fmt.Println("4. Scan")
 		fmt.Println("5. Iterate")
-		fmt.Println("6. Exit")
+		fmt.Println("6. Probabilistic Types")
+		fmt.Println("7. Exit")
 		fmt.Print("> ")
 		_, err := fmt.Scan(&expr)
 		if err != nil {
@@ -64,6 +65,8 @@ func mainMenu(eng *engine.Engine) {
 		case 5:
 			iterateMenu(eng)
 		case 6:
+			probabilisticTypes(eng)
+		case 7:
 			return
 		}
 	}
@@ -301,6 +304,73 @@ func iterateMenu(eng *engine.Engine) {
 		}
 	case 3:
 		return
+	}
+}
+
+func probabilisticTypes(eng *engine.Engine) {
+	fmt.Println("1. Bloom Filter")
+	fmt.Println("2. CountMinSketch")
+	fmt.Println("3. HyperLogLog")
+	fmt.Println("4. SimHash")
+	fmt.Println("5. Exit")
+	fmt.Print("> ")
+
+	var expr int
+	_, err := fmt.Scan(&expr)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	switch expr {
+	case 1:
+		fmt.Print("Key: ")
+		var key string
+		_, err := fmt.Scanf("%s", &key)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		err = eng.BloomFilter(key)
+		if err != nil {
+			return
+		}
+	case 2:
+		fmt.Print("Key: ")
+		var key string
+		_, err := fmt.Scanf("%s", &key)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		err = eng.CountMinSketch(key)
+		if err != nil {
+			return
+		}
+	case 3:
+		fmt.Print("Key: ")
+		var key string
+		_, err := fmt.Scanf("%s", &key)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		err = eng.HyperLogLog(key)
+		if err != nil {
+			return
+		}
+	case 4:
+		fmt.Print("Key: ")
+		var key string
+		_, err := fmt.Scanf("%s", &key)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		err = eng.Simhash(key)
+		if err != nil {
+			return
+		}
 	}
 }
 
