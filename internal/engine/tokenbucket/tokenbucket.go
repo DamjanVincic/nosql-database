@@ -52,10 +52,10 @@ func (tokenBucket *TokenBucket) Serialize() []byte {
 	return serializedTokenBucket
 }
 
-func Deserialize(serializedTokenBucket []byte) *TokenBucket {
+func Deserialize(serializedTokenBucket []byte, maxTokens, refillPeriod uint64) *TokenBucket {
 	//get tokenCount from first 8 bytes of serializedTokenBucket
 	tokenCount, bytesRead := binary.Uvarint(serializedTokenBucket)
 	//get lastRefillTime from second 8 bytes of serializedTokenBucket
 	lastRefillTime, _ := binary.Uvarint(serializedTokenBucket[bytesRead:])
-	return &TokenBucket{tokenCount: tokenCount, lastRefillTime: lastRefillTime}
+	return &TokenBucket{tokenCount: tokenCount, lastRefillTime: lastRefillTime, maxTokens: maxTokens, refillPeriod: refillPeriod}
 }
