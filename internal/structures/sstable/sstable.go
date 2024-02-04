@@ -4,12 +4,10 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/DamjanVincic/key-value-engine/internal/structures/keyencoder"
 	"math"
 	"os"
 	"path/filepath"
-	"strconv"
-
-	"github.com/DamjanVincic/key-value-engine/internal/structures/keyencoder"
 
 	"github.com/DamjanVincic/key-value-engine/internal/models"
 	"github.com/DamjanVincic/key-value-engine/internal/structures/bloomfilter"
@@ -168,7 +166,7 @@ func (sstable *SSTable) Write(memEntries []*models.Data) error {
 
 func (sstable *SSTable) createSStableFolder(lsmLevel uint8) ([]string, error) {
 	//index - sequence number of the sstable
-	var index uint16
+	var index uint64
 	// subdirName : 00 (a two-digit num for the lsm index)
 	subdirName := fmt.Sprintf("%02d", lsmLevel)
 	subdirPath := filepath.Join(Path, subdirName)
@@ -178,18 +176,10 @@ func (sstable *SSTable) createSStableFolder(lsmLevel uint8) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		// if there is no sstable on the lsm level, index for the new one is 1
-		index = 1
 	}
+
 	// If there are sstables on the lsm level, take index from last added and increment it
-	if len(sstableFolders) != 0 {
-		lastAddedSstableFolderName := sstableFolders[len(sstableFolders)-1].Name()
-		n, err := strconv.ParseUint(lastAddedSstableFolderName[3:], 10, 16)
-		if err != nil {
-			return nil, err
-		}
-		index = uint16(n + 1)
-	}
+	index = uint64(len(sstableFolders) + 1)
 
 	sstFolderName := fmt.Sprintf("sst%010d", index)
 	sstFolderPath := filepath.Join(subdirPath, sstFolderName)
@@ -490,20 +480,35 @@ func (sstable *SSTable) CheckCompaction(lsmLevel uint8) error {
 	if !sstable.leveledCompaction {
 		multiplier = 1
 	}
-	if uint64(len(sstablesOnLvl)) == sstable.firstLevelMax*multiplier {
+	if uint64(len(sstablesOnLvl)) >= sstable.firstLevelMax*multiplier {
 		// does compaction of the whole level
-		if !sstable.leveledCompaction {
-			err := sstable.sizeTieredCompact(sstablesOnLvl, lsmLevel)
-			if err != nil {
-				return err
+		for i := 0; i < len(sstablesOnLvl)/int(sstable.firstLevelMax); i++ {
+			if !sstable.leveledCompaction {
+				err := sstable.sizeTieredCompact(sstablesOnLvl[i*int(sstable.firstLevelMax):i*int(sstable.firstLevelMax)+int(sstable.firstLevelMax)], lsmLevel)
+				if err != nil {
+					return err
+				}
+			} else {
+				err := sstable.leveledCompact(sstablesOnLvl[:sstable.firstLevelMax], sstablesOnLvl)
+				if err != nil {
+					return err
+				}
 			}
-		} else {
-			err := sstable.leveledCompact(sstablesOnLvl, sstablesOnLvl)
+		}
+
+		ssTableDirs, err := os.ReadDir(filepath.Join(Path, fmt.Sprintf("%02d", lsmLevel)))
+		if err != nil {
+			return err
+		}
+
+		for idx, sstableDir := range ssTableDirs {
+			err := os.Rename(filepath.Join(Path, fmt.Sprintf("%02d", lsmLevel), sstableDir.Name()), filepath.Join(Path, fmt.Sprintf("%02d", lsmLevel), fmt.Sprintf("sst%010d", idx+1)))
 			if err != nil {
 				return err
 			}
 		}
 	}
+
 	return nil
 }
 func (sstable *SSTable) leveledCompact(sstablesOnLvl, sstablesOnLvlPlus []os.DirEntry) error {
@@ -584,20 +589,13 @@ func (sstable *SSTable) combineSSTables(sstForCompaction []mmap.MMap, nextLsmLev
 	folderEntries, err := os.ReadDir(folderPath)
 	if os.IsNotExist(err) {
 		err := os.Mkdir(folderPath, os.ModePerm)
-		index = 1
 		if err != nil {
 			return err
 		}
 	}
 
-	if len(folderEntries) != 0 {
-		//read name from last added sstable in next lsm level and create new name
-		tempIndex, err := strconv.Atoi(folderEntries[len(folderEntries)-1].Name()[3:])
-		if err != nil {
-			return err
-		}
-		index = uint64(tempIndex + 1)
-	}
+	index = uint64(len(folderEntries) + 1)
+
 	sstDirName := fmt.Sprintf("sst%010d", index)
 	sstDirPath := filepath.Join(folderPath, sstDirName)
 	err = os.Mkdir(sstDirPath, os.ModePerm)
