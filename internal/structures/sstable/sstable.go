@@ -92,12 +92,13 @@ type SSTable struct {
 	compression       bool
 	encoder           *keyencoder.KeyEncoder
 	leveledCompaction bool
-	firstLevelMax     uint16
+	maxLevel          uint8
+	firstLevelMax     uint64
 	levelMultiplier   uint64
 	maxNumberOfLevels uint
 }
 
-func NewSSTable(indexSparseConst uint16, summarySparseConst uint16, singleFile bool, compression bool, leveledCompaction bool, firstLevelMax uint16, levelMultiplier uint64) (*SSTable, error) {
+func NewSSTable(indexSparseConst uint16, summarySparseConst uint16, singleFile bool, compression bool, leveledCompaction bool, maxLevel uint8, firstLevelMax uint64, levelMultiplier uint64) (*SSTable, error) {
 	//check if sstable dir exists, if not create it
 	_, err := os.ReadDir(Path)
 	if os.IsNotExist(err) {
@@ -122,6 +123,7 @@ func NewSSTable(indexSparseConst uint16, summarySparseConst uint16, singleFile b
 		compression:       compression,
 		encoder:           encoder,
 		leveledCompaction: leveledCompaction,
+		maxLevel:          maxLevel,
 		firstLevelMax:     firstLevelMax,
 		levelMultiplier:   levelMultiplier,
 	}, nil
@@ -474,17 +476,21 @@ func writeToFile(file *os.File, data []byte) error {
 // folderENtries - paths of sstable files
 // numberOfSSTables - the number of sst on the lsm level
 func (sstable *SSTable) CheckCompaction(lsmLevel uint8) error {
+	if lsmLevel >= sstable.maxLevel {
+		return nil
+	}
+
 	sstablesOnLvl, err := os.ReadDir(filepath.Join(Path, fmt.Sprintf("%02d", lsmLevel)))
 	if os.IsNotExist(err) {
 		if err != nil {
 			return err
 		}
 	}
-	multiplier := math.Pow(float64(sstable.levelMultiplier), float64(lsmLevel-1))
+	multiplier := uint64(math.Pow(float64(sstable.levelMultiplier), float64(lsmLevel-1)))
 	if !sstable.leveledCompaction {
 		multiplier = 1
 	}
-	if uint16(len(sstablesOnLvl)) == sstable.firstLevelMax*uint16(multiplier) {
+	if uint64(len(sstablesOnLvl)) == sstable.firstLevelMax*multiplier {
 		// does compaction of the whole level
 		if !sstable.leveledCompaction {
 			err := sstable.sizeTieredCompact(sstablesOnLvl, lsmLevel)
