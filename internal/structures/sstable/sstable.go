@@ -250,7 +250,6 @@ func (sstable *SSTable) createFiles(memEntries []*models.Data, filePaths []strin
 	// process of adding entries
 	for _, dataRecord := range memEntries {
 		//every entry is saved in data segment
-
 		hashedData, err := merkleTree.CreateNodeData(dataRecord, sstable.compression, sstable.encoder)
 		if err != nil {
 			return err
@@ -633,20 +632,6 @@ func (sstable *SSTable) leveledCompact(sstablePaths []string, lsmLevel uint8) er
 	var mmapFilesOpened []mmap.MMap
 	var filesOpened []*os.File
 
-	//ssTableToCompact, err := os.OpenFile(filepath.Join(Path, fmt.Sprintf("%02d", lsmLevel), sstablePaths.Name()), os.O_RDWR, 0644)
-	//if err != nil {
-	//	return err
-	//}
-	//mmapSSTableToCompact, err := mmap.Map(ssTableToCompact, mmap.RDWR, 0)
-	//if err != nil {
-	//	return err
-	//}
-
-	//_, minKey, maxKey, _, err := readSummaryHeader(mmapSSTableToCompact, sstable.compression, sstable.encoder)
-	//if err != nil {
-	//	return err
-	//}
-
 	var minKey, maxKey string
 
 	for _, sstablePath := range sstablePaths {
@@ -666,54 +651,6 @@ func (sstable *SSTable) leveledCompact(sstablePaths []string, lsmLevel uint8) er
 			dataFilePath = filepath.Join(sstablePath, DataFileName)
 			summaryFilePath = filepath.Join(sstablePath, SummaryFileName)
 		}
-
-		//if minKey == "" && maxKey == "" {
-		//	if len(sstFiles) == 1 {
-		//		file, err = os.OpenFile(summaryFilePath, os.O_RDWR, 0644)
-		//		if err != nil {
-		//			return err
-		//		}
-		//		mmapFile, err := mmap.Map(file, mmap.RDWR, 0)
-		//		if err != nil {
-		//			return err
-		//		}
-		//
-		//		_, minK, maxK, _, err := readSummaryHeader(mmapFile[SummaryBlockStart:FilterBlockStart], sstable.compression, sstable.encoder)
-		//		minKey = minK
-		//		maxKey = maxK
-		//
-		//		err = mmapFile.Unmap()
-		//		if err != nil {
-		//			return err
-		//		}
-		//		err = file.Close()
-		//		if err != nil {
-		//			return err
-		//		}
-		//	} else {
-		//		file, err = os.OpenFile(summaryFilePath, os.O_RDWR, 0644)
-		//		if err != nil {
-		//			return err
-		//		}
-		//		mmapFile, err := mmap.Map(file, mmap.RDWR, 0)
-		//		if err != nil {
-		//			return err
-		//		}
-		//
-		//		_, minK, maxK, _, err := readSummaryHeader(mmapFile, sstable.compression, sstable.encoder)
-		//		minKey = minK
-		//		maxKey = maxK
-		//
-		//		err = mmapFile.Unmap()
-		//		if err != nil {
-		//			return err
-		//		}
-		//		err = file.Close()
-		//		if err != nil {
-		//			return err
-		//		}
-		//	}
-		//}
 
 		if len(sstFiles) != 1 {
 			file, err = os.OpenFile(summaryFilePath, os.O_RDWR, 0644)
@@ -1048,7 +985,7 @@ func (sstable *SSTable) combineSSTables(sstForCompaction []mmap.MMap, nextLsmLev
 	filterBlockSize := uint64(len(filterData))
 
 	//metadata
-	//err = merkleTree.CreateMerkleTree(merkleLeaves, sstable.compression, sstable.encoder)
+	err = merkleTree.CreateMerkleTree(merkleLeaves, sstable.compression, sstable.encoder)
 	if err != nil {
 		return err
 	}
@@ -1099,10 +1036,6 @@ func (sstable *SSTable) combineSSTables(sstForCompaction []mmap.MMap, nextLsmLev
 		filePaths := makeMultiFilenames(sstDirPath)
 		// skip data
 		for idx, fileName := range filePaths[1:] {
-			//if idx == 0 {
-			//	continue
-			//}
-
 			file, err := os.OpenFile(fileName, os.O_CREATE|os.O_RDWR, 0644)
 			if err != nil {
 				return err
@@ -1120,10 +1053,6 @@ func (sstable *SSTable) combineSSTables(sstForCompaction []mmap.MMap, nextLsmLev
 		}
 	}
 
-	//err = mmapCurrFile.Unmap()
-	//if err != nil {
-	//	return err
-	//}
 	err = currentFile.Close()
 	if err != nil {
 		return err
@@ -1735,7 +1664,7 @@ func (sstable *SSTable) CheckDataValidity(subDirName string) ([]*models.Data, er
 		merkleTree2Data := make([]byte, 0)
 		for offset < uint64(len(dataMMap)) {
 			dataRec, dataRecSize, err := readDataFromFile(dataMMap, 1, "", offset, sstable.compression, sstable.encoder)
-			if err != nil {
+			if err != nil && err.Error() != "CRC does not match" {
 				return nil, err
 			}
 			hashedData, err := merkleTree2.CreateNodeData(dataRec, sstable.compression, sstable.encoder)
@@ -1828,10 +1757,10 @@ func (sstable *SSTable) CheckDataValidity(subDirName string) ([]*models.Data, er
 	var dataRecSize uint64
 	for _, index := range corruptedIndexes {
 		for index >= 0 {
-			dataRec, dataRecSize, err = readDataFromFile(dataMMap, 1, "", offset, sstable.compression, sstable.encoder)
-			if err != nil {
-				return nil, err
-			}
+			dataRec, dataRecSize, _ = readDataFromFile(dataMMap, 1, "", offset, sstable.compression, sstable.encoder)
+			//if err != nil {
+			//	return nil, err
+			//}
 			index--
 			offset += dataRecSize
 		}
