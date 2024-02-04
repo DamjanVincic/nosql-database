@@ -5,6 +5,8 @@ import (
 	"github.com/DamjanVincic/key-value-engine/internal/structures/b-tree"
 	"github.com/DamjanVincic/key-value-engine/internal/structures/hashmap"
 	"github.com/DamjanVincic/key-value-engine/internal/structures/skiplist"
+	//"github.com/DamjanVincic/key-value-engine/internal/structures/sstable"
+	//"github.com/DamjanVincic/key-value-engine/internal/structures/wal"
 	"slices"
 	"sort"
 	"strings"
@@ -70,8 +72,8 @@ func (memtable *Memtable) makePartition() {
 }
 
 // puts values in currentPartition, creates new partition if needed, flushes oldest partition if needed
-func (memtable *Memtable) Put(key string, value []byte, timestamp uint64, tombstone bool) (toFlush []*models.Data) {
-	toFlush = nil
+func (memtable *Memtable) Put(key string, value []byte, timestamp uint64, tombstone bool) []*models.Data {
+	var toFlush []*models.Data
 
 	memtable.currentPartition.Put(key, value, tombstone, timestamp)
 
@@ -85,7 +87,7 @@ func (memtable *Memtable) Put(key string, value []byte, timestamp uint64, tombst
 		}
 		memtable.makePartition()
 	}
-	return
+	return toFlush
 }
 
 // returns newest value with given key
@@ -150,4 +152,15 @@ func (memtable *Memtable) GetKeysInRange(min string, max string) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+func (memtable *Memtable) FindNewestTimestamp(toFlush []*models.Data) uint64 {
+	var newest uint64
+	for _, entry := range toFlush {
+		if entry.Timestamp > newest {
+			newest = entry.Timestamp
+		}
+	}
+
+	return newest
 }
