@@ -19,12 +19,12 @@ func (ss *SSTable) leveled(sstOnLsmLvl fs.DirEntry, lsmLvlDirPath string, lsmLev
 	var summaryFilePath string
 	var summary mmap.MMap
 	var toBeDeleted []string
-	if lsmLevel+uint8(1) >= uint8(ss.maxNumberOfLevels) {
+	if lsmLevel >= ss.maxLevel {
 		return errors.New("max number of levels reached")
 	}
 	// get summary min and max for first table on previous level
 	// get its mmap for combineSSTable function
-	previousLevelPath := filepath.Join(Path, fmt.Sprintf("%02", lsmLevel), sstOnLsmLvl.Name())
+	previousLevelPath := filepath.Join(Path, fmt.Sprintf("%02d", lsmLevel), sstOnLsmLvl.Name())
 	// add first sstable from last leveled, it will be combined with others and then deleted
 	toBeDeleted = append(toBeDeleted, previousLevelPath)
 	previousSSTable, err := os.ReadDir(previousLevelPath)
@@ -33,12 +33,21 @@ func (ss *SSTable) leveled(sstOnLsmLvl fs.DirEntry, lsmLvlDirPath string, lsmLev
 	}
 	// if its multi file
 	if len(previousSSTable) != 1 {
-		previousLevelPath = filepath.Join(Path, fmt.Sprintf("%02", lsmLevel), sstOnLsmLvl.Name(), DataFileName)
+		previousLevelPath = filepath.Join(Path, fmt.Sprintf("%02d", lsmLevel), sstOnLsmLvl.Name(), DataFileName)
 		previousLevelFile, err := os.OpenFile(previousLevelPath, os.O_RDWR, 0644)
 		if err != nil {
 			return err
 		}
 		previousMmapFile, err := mmap.Map(previousLevelFile, mmap.RDWR, 0)
+		if err != nil {
+			return err
+		}
+		stat, err := previousLevelFile.Stat()
+		if err != nil {
+			return err
+		}
+		fileSize := stat.Size()
+		dataPrevious, err = mmap.MapRegion(previousLevelFile, int(fileSize), mmap.RDWR, 0, 0)
 		if err != nil {
 			return err
 		}
@@ -51,12 +60,21 @@ func (ss *SSTable) leveled(sstOnLsmLvl fs.DirEntry, lsmLvlDirPath string, lsmLev
 		if err != nil {
 			return err
 		}
-		previousLevelPath = filepath.Join(Path, fmt.Sprintf("%02", lsmLevel), sstOnLsmLvl.Name(), SummaryFileName)
+		previousLevelPath = filepath.Join(Path, fmt.Sprintf("%02d", lsmLevel), sstOnLsmLvl.Name(), SummaryFileName)
 		previousLevelFile, err = os.OpenFile(previousLevelPath, os.O_RDWR, 0644)
 		if err != nil {
 			return err
 		}
 		previousMmapFile, err = mmap.Map(previousLevelFile, mmap.RDWR, 0)
+		if err != nil {
+			return err
+		}
+		stat, err = previousLevelFile.Stat()
+		if err != nil {
+			return err
+		}
+		fileSize = stat.Size()
+		summaryPrevious, err = mmap.MapRegion(previousLevelFile, int(fileSize), mmap.RDWR, 0, 0)
 		if err != nil {
 			return err
 		}
@@ -71,7 +89,7 @@ func (ss *SSTable) leveled(sstOnLsmLvl fs.DirEntry, lsmLvlDirPath string, lsmLev
 		}
 		// if its single file
 	} else {
-		previousLevelPath = filepath.Join(Path, fmt.Sprintf("%02", lsmLevel), sstOnLsmLvl.Name(), DataFileName)
+		previousLevelPath = filepath.Join(Path, fmt.Sprintf("%02d", lsmLevel), sstOnLsmLvl.Name(), DataFileName)
 		previousLevelFile, err := os.OpenFile(previousLevelPath, os.O_RDWR, 0644)
 		if err != nil {
 			return err
@@ -89,6 +107,19 @@ func (ss *SSTable) leveled(sstOnLsmLvl fs.DirEntry, lsmLvlDirPath string, lsmLev
 		indexStart := dataStart + dataSize
 		summaryStart := indexStart + indexSize
 		filterStart := summaryStart + summarySize
+		stat, err := previousLevelFile.Stat()
+		if err != nil {
+			return err
+		}
+		fileSize := stat.Size()
+		dataPrevious, err = mmap.MapRegion(previousLevelFile, int(fileSize), mmap.RDWR, 0, 0)
+		if err != nil {
+			return err
+		}
+		summaryPrevious, err = mmap.MapRegion(previousLevelFile, int(fileSize), mmap.RDWR, 0, 0)
+		if err != nil {
+			return err
+		}
 		copy(summaryPrevious, previousMmapFile[summaryStart:filterStart])
 		copy(dataPrevious, previousMmapFile[dataStart:indexStart])
 		err = previousMmapFile.Unmap()
@@ -104,7 +135,7 @@ func (ss *SSTable) leveled(sstOnLsmLvl fs.DirEntry, lsmLvlDirPath string, lsmLev
 	_, minKey, maxKey, _, err := readSummaryHeader(summaryPrevious, ss.compression, ss.encoder)
 	lsmLevel++
 	lsmLvlDirPathNext := filepath.Join(Path, fmt.Sprintf("%02d", lsmLevel))
-	folderEntries, err := os.ReadDir(lsmLvlDirPath)
+	folderEntries, err := os.ReadDir(lsmLvlDirPathNext)
 	if os.IsNotExist(err) {
 		err := os.Mkdir(lsmLvlDirPathNext, os.ModePerm)
 		if err != nil {
@@ -141,6 +172,19 @@ func (ss *SSTable) leveled(sstOnLsmLvl fs.DirEntry, lsmLvlDirPath string, lsmLev
 			summaryStart := indexStart + indexSize
 			filterStart := summaryStart + summarySize
 			// we need summary
+			stat, err := singleFile.Stat()
+			if err != nil {
+				return err
+			}
+			fileSize := stat.Size()
+			data, err = mmap.MapRegion(singleFile, int(fileSize), mmap.RDWR, 0, 0)
+			if err != nil {
+				return err
+			}
+			summary, err = mmap.MapRegion(singleFile, int(fileSize), mmap.RDWR, 0, 0)
+			if err != nil {
+				return err
+			}
 			copy(summary, mmapFile[summaryStart:filterStart])
 			copy(data, mmapFile[dataStart:indexStart])
 			err = mmapFile.Unmap()
@@ -162,6 +206,15 @@ func (ss *SSTable) leveled(sstOnLsmLvl fs.DirEntry, lsmLvlDirPath string, lsmLev
 			if err != nil {
 				return err
 			}
+			stat, err := summaryFile.Stat()
+			if err != nil {
+				return err
+			}
+			fileSize := stat.Size()
+			summary, err = mmap.MapRegion(summaryFile, int(fileSize), mmap.RDWR, 0, 0)
+			if err != nil {
+				return err
+			}
 			copy(summary, mmapFile)
 			err = mmapFile.Unmap()
 			if err != nil {
@@ -176,6 +229,15 @@ func (ss *SSTable) leveled(sstOnLsmLvl fs.DirEntry, lsmLvlDirPath string, lsmLev
 				return err
 			}
 			mmapFile, err = mmap.Map(dataFile, mmap.RDWR, 0)
+			if err != nil {
+				return err
+			}
+			stat, err = dataFile.Stat()
+			if err != nil {
+				return err
+			}
+			fileSize = stat.Size()
+			data, err = mmap.MapRegion(summaryFile, int(fileSize), mmap.RDWR, 0, 0)
 			if err != nil {
 				return err
 			}
