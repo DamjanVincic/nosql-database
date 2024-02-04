@@ -71,20 +71,20 @@ same struct for SSTable single and multi-file implementation
     if singleFile==true then we create single SSTable file, otherwise multi
 */
 type SSTable struct {
-	indexConst                   uint16
-	summaryConst                 uint16
-	singleFile                   bool
-	compression                  bool
-	encoder                      *keyencoder.KeyEncoder
-	compaction                   string
-	maxLevel                     uint8
+	indexConst   uint16
+	summaryConst uint16
+	singleFile   bool
+	compression  bool
+	encoder      *keyencoder.KeyEncoder
+
+	compactionAlgorithm          string
 	firstLevelMax                uint64
-	levelMultiplier              uint64
-	maxNumberOfLevels            uint
+	levelSizeMultiplier          uint64
+	maxNumberOfLevels            uint8
 	bloomFilterFalsePositiveRate float64
 }
 
-func NewSSTable(indexSparseConst uint16, summarySparseConst uint16, singleFile bool, compression bool, compaction string, maxLevel uint8, firstLevelMax uint64, levelMultiplier uint64, bloomFilterFalsePositiveRate float64) (*SSTable, error) {
+func NewSSTable(indexSparseConst uint16, summarySparseConst uint16, singleFile bool, compression bool, compaction string, maxNumberofLevels uint8, firstLevelMax uint64, levelSizeMultiplier uint64, bloomFilterFalsePositiveRate float64) (*SSTable, error) {
 	//check if sstable dir exists, if not create it
 	_, err := os.ReadDir(Path)
 	if os.IsNotExist(err) {
@@ -108,13 +108,13 @@ func NewSSTable(indexSparseConst uint16, summarySparseConst uint16, singleFile b
 		singleFile:                   singleFile,
 		compression:                  compression,
 		encoder:                      encoder,
-		compaction:                   compaction,
-		maxLevel:                     maxLevel,
+		compactionAlgorithm:          compaction,
+		maxNumberOfLevels:            maxNumberofLevels,
 		firstLevelMax:                firstLevelMax,
-		levelMultiplier:              levelMultiplier,
+		levelSizeMultiplier:          levelSizeMultiplier,
 		bloomFilterFalsePositiveRate: bloomFilterFalsePositiveRate,
 	}
-	if sstable.compaction == "leveled" {
+	if sstable.compactionAlgorithm == "leveled" {
 		sstable.firstLevelMax++
 	}
 
@@ -459,7 +459,7 @@ func writeToFile(file *os.File, data []byte) error {
 // folderENtries - paths of sstable files
 // numberOfSSTables - the number of sst on the lsm level
 func (sstable *SSTable) CheckCompaction(lsmLevel uint8) error {
-	if lsmLevel >= sstable.maxLevel {
+	if lsmLevel >= sstable.maxNumberOfLevels {
 		return nil
 	}
 
@@ -475,13 +475,13 @@ func (sstable *SSTable) CheckCompaction(lsmLevel uint8) error {
 		sstablePaths = append(sstablePaths, filepath.Join(levelPath, sstableDir.Name()))
 	}
 
-	multiplier := uint64(math.Pow(float64(sstable.levelMultiplier), float64(lsmLevel-1)))
-	if sstable.compaction == "sizetiered" {
+	multiplier := uint64(math.Pow(float64(sstable.levelSizeMultiplier), float64(lsmLevel-1)))
+	if sstable.compactionAlgorithm == "sizetiered" {
 		multiplier = 1
 	}
 	if uint64(len(sstablesOnLvl)) >= sstable.firstLevelMax*multiplier {
 		// does compaction of the whole level
-		if sstable.compaction == "sizetiered" {
+		if sstable.compactionAlgorithm == "sizetiered" {
 			for i := 0; i < len(sstablesOnLvl)/int(sstable.firstLevelMax); i++ {
 				err := sstable.sizeTieredCompact(sstablePaths[i*int(sstable.firstLevelMax):i*int(sstable.firstLevelMax)+int(sstable.firstLevelMax)], lsmLevel)
 				if err != nil {
