@@ -18,7 +18,7 @@ type Record struct {
 }
 
 func NewRecord(key string, value []byte, tombstone bool) *Record {
-	timestamp := uint64(time.Now().Unix())
+	timestamp := uint64(time.Now().UnixNano())
 	keySize := uint64(len(key))
 	valueSize := uint64(len(value))
 

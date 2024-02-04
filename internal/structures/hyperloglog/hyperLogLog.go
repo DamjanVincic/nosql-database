@@ -9,7 +9,6 @@ import (
 )
 
 // min and max number of bits that represent index of registry in which result is stored
-// TBD should be read from config file?
 const (
 	HllMinPrecision = 4
 	HllMaxPrecision = 16
