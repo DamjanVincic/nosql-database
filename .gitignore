@@ -20,9 +20,24 @@ go.work
 .idea/
 
 ### VisualStudioCode ###
-.vscode/*
-!.vscode/settings.json
-!.vscode/tasks.json
-!.vscode/launch.json
-!.vscode/extensions.json
-!.vscode/*.code-snippets
+.vscode/
+#!.vscode/settings.json
+#!.vscode/tasks.json
+#!.vscode/launch.json
+#!.vscode/extensions.json
+#!.vscode/*.code-snippets
+
+# WAL folder
+wal/
+!internal/structures/wal/
+
+# SSTABLE folder
+sstable/
+!internal/structures/sstable/
+
+# keyencoder folder
+keyencoder/
+!internal/structures/keyencoder
+
+# YAML files (config)
+*.yml
