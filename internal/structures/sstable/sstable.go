@@ -84,19 +84,20 @@ same struct for SSTable single and multi-file implementation
     if singleFile==true then we create single SSTable file, otherwise multi
 */
 type SSTable struct {
-	indexConst        uint16
-	summaryConst      uint16
-	singleFile        bool
-	compression       bool
-	encoder           *keyencoder.KeyEncoder
-	leveledCompaction bool
-	maxLevel          uint8
-	firstLevelMax     uint64
-	levelMultiplier   uint64
-	maxNumberOfLevels uint
+	indexConst                   uint16
+	summaryConst                 uint16
+	singleFile                   bool
+	compression                  bool
+	encoder                      *keyencoder.KeyEncoder
+	leveledCompaction            bool
+	maxLevel                     uint8
+	firstLevelMax                uint64
+	levelMultiplier              uint64
+	maxNumberOfLevels            uint
+	bloomFilterFalsePositiveRate float64
 }
 
-func NewSSTable(indexSparseConst uint16, summarySparseConst uint16, singleFile bool, compression bool, leveledCompaction bool, maxLevel uint8, firstLevelMax uint64, levelMultiplier uint64) (*SSTable, error) {
+func NewSSTable(indexSparseConst uint16, summarySparseConst uint16, singleFile bool, compression bool, leveledCompaction bool, maxLevel uint8, firstLevelMax uint64, levelMultiplier uint64, bloomFilterFalsePositiveRate float64) (*SSTable, error) {
 	//check if sstable dir exists, if not create it
 	_, err := os.ReadDir(Path)
 	if os.IsNotExist(err) {
@@ -115,15 +116,16 @@ func NewSSTable(indexSparseConst uint16, summarySparseConst uint16, singleFile b
 	}
 
 	return &SSTable{
-		indexConst:        indexSparseConst,
-		summaryConst:      summarySparseConst,
-		singleFile:        singleFile,
-		compression:       compression,
-		encoder:           encoder,
-		leveledCompaction: leveledCompaction,
-		maxLevel:          maxLevel,
-		firstLevelMax:     firstLevelMax,
-		levelMultiplier:   levelMultiplier,
+		indexConst:                   indexSparseConst,
+		summaryConst:                 summarySparseConst,
+		singleFile:                   singleFile,
+		compression:                  compression,
+		encoder:                      encoder,
+		leveledCompaction:            leveledCompaction,
+		maxLevel:                     maxLevel,
+		firstLevelMax:                firstLevelMax,
+		levelMultiplier:              levelMultiplier,
+		bloomFilterFalsePositiveRate: bloomFilterFalsePositiveRate,
 	}, nil
 }
 
@@ -250,7 +252,7 @@ func (sstable *SSTable) createFiles(memEntries []*models.Data, filePaths []strin
 
 	var merkleHashedRecords []byte
 	//create an empty bloom filter
-	filter := bloomfilter.CreateBloomFilter(len(memEntries), 0.00001)
+	filter := bloomfilter.CreateBloomFilter(len(memEntries), sstable.bloomFilterFalsePositiveRate)
 	//create an new merkle tree with new hashfunc and without nodes
 	merkleTree := merkle.NewMerkle(nil)
 	// process of adding entries
@@ -1037,7 +1039,7 @@ func (sstable *SSTable) combineSSTables(sstForCompaction []mmap.MMap, nextLsmLev
 
 	}
 	//create an empty bloom filter
-	filter := bloomfilter.CreateBloomFilter(len(filterKeys), 0.001)
+	filter := bloomfilter.CreateBloomFilter(len(filterKeys), sstable.bloomFilterFalsePositiveRate)
 	//add keys to bf
 	for _, key := range filterKeys {
 		err = filter.AddElement([]byte(key))
