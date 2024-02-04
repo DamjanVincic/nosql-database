@@ -57,3 +57,12 @@ func (cache *Cache) Delete(key string) {
 	delete(cache.cacheMap, elem.Value.(*models.Data).Key)
 	cache.cacheList.Remove(elem)
 }
+
+func (cache *Cache) Update(data []*models.Data) {
+	for _, entry := range data {
+		cacheElem, ok := cache.cacheMap[entry.Key]
+		if ok {
+			cache.cacheMap[entry.Key].Value = cacheElem
+		}
+	}
+}
