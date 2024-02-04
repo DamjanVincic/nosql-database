@@ -177,6 +177,24 @@ func (engine *Engine) RangeScan(minString, maxString string, pageNumber, pageSiz
 	return entries, nil
 }
 
+func (engine *Engine) PrefixIterate(prefix string) (*sstable.PrefixIterator, *models.Data, error) {
+	iter, entry, err := engine.sstable.NewPrefixIterator(prefix, engine.memtable)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return iter, entry, nil
+}
+
+func (engine *Engine) RangeIterate(minKey, maxKey string) (*sstable.RangeIterator, *models.Data, error) {
+	iter, entry, err := engine.sstable.NewRangeIterator(minKey, maxKey, engine.memtable)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return iter, entry, nil
+}
+
 func (engine *Engine) hasPrefix(key string) bool {
 	for _, prefix := range Prefixes {
 		if strings.HasPrefix(key, prefix) {
