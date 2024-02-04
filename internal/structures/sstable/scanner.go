@@ -34,6 +34,8 @@ type PrefixIterator struct {
 	sstable         *SSTable
 	memtable        *memtable.Memtable
 	prefix          string
+	found           []*ScanningCandidate
+	currentIdx      uint64
 }
 
 type RangeIterator struct {
@@ -44,6 +46,8 @@ type RangeIterator struct {
 	memtable        *memtable.Memtable
 	min             string
 	max             string
+	found           []*ScanningCandidate
+	currentIdx      uint64
 }
 
 // returns mmaped data files of all sstables that contain records with given conditions
@@ -348,7 +352,7 @@ func findFirstInRange(min string, max string, mmapFile mmap.MMap, compression bo
 
 // makes instance iterator for iterating trough records with given prefix, returns first record found
 func (sstable *SSTable) NewPrefixIterator(prefix string, memtable *memtable.Memtable) (*PrefixIterator, *models.Data, error) {
-	records, err, memKeys, scannerFiles, filesToBeClosed := sstable.scanWithConditions(prefix, "", true, 1, 1, memtable, true)
+	records, err, memKeys, scannerFiles, filesToBeClosed, found := sstable.scanWithConditions(prefix, "", true, 1, 1, memtable, true)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -356,26 +360,42 @@ func (sstable *SSTable) NewPrefixIterator(prefix string, memtable *memtable.Memt
 	if len(records) > 0 {
 		record = records[0]
 	}
-	return &PrefixIterator{memKeys: memKeys, scannerFiles: scannerFiles, filesToBeClosed: filesToBeClosed, sstable: sstable, memtable: memtable, prefix: prefix}, record, err
+	return &PrefixIterator{memKeys: memKeys, scannerFiles: scannerFiles, filesToBeClosed: filesToBeClosed, sstable: sstable, memtable: memtable, prefix: prefix, found: found, currentIdx: 0}, record, err
 }
 
 // returns next record with given prefix
 func (iterator *PrefixIterator) Next() (*models.Data, error) {
+	var minCandidate *ScanningCandidate
+	var candidates []*ScanningCandidate
+	var filesWithoutPrefix []*ScannerFile
+	var err error
 
-	//find min key with given prefix and all records containing it
-	minCandidate, candidates, filesWithoutPrefix, err := iterator.sstable.getCandidates(iterator.memKeys, iterator.scannerFiles, iterator.prefix, "", true)
+	alreadyFound := false
 
-	if err != nil {
-		return nil, err
-	}
+	iterator.currentIdx++
 
-	//remove files that have no more records with given prefix, so they are not considered in the next iteration
-	for _, file := range filesWithoutPrefix {
-		iterator.scannerFiles = removeFromSlice(iterator.scannerFiles, file)
-	}
+	//check if the record was already found
+	if iterator.currentIdx < uint64(len(iterator.found)) {
+		alreadyFound = true
+		minCandidate = iterator.found[iterator.currentIdx]
+	} else {
+		//find min key with given prefix and all records containing it
+		minCandidate, candidates, filesWithoutPrefix, err = iterator.sstable.getCandidates(iterator.memKeys, iterator.scannerFiles, iterator.prefix, "", true)
 
-	if minCandidate == nil {
-		return nil, errors.New("no records left")
+		if err != nil {
+			return nil, err
+		}
+
+		//remove files that have no more records with given prefix, so they are not considered in the next iteration
+		for _, file := range filesWithoutPrefix {
+			iterator.scannerFiles = removeFromSlice(iterator.scannerFiles, file)
+		}
+
+		if minCandidate == nil {
+			return nil, errors.New("no records left")
+		}
+
+		iterator.found = append(iterator.found, minCandidate)
 	}
 
 	var record *models.Data
@@ -390,8 +410,36 @@ func (iterator *PrefixIterator) Next() (*models.Data, error) {
 		}
 	}
 
-	//reposition all files so this key is not considered in next iteration
-	iterator.memKeys, iterator.scannerFiles = iterator.sstable.updateScannerFiles(minCandidate, candidates, iterator.memKeys, iterator.scannerFiles)
+	if !alreadyFound {
+		//reposition all files so this key is not considered in next iteration
+		iterator.memKeys, iterator.scannerFiles = iterator.sstable.updateScannerFiles(minCandidate, candidates, iterator.memKeys, iterator.scannerFiles)
+	}
+
+	return record, nil
+}
+
+// returns previous record with given prefix
+func (iterator *PrefixIterator) Previous() (*models.Data, error) {
+	if iterator.currentIdx == 0 {
+		return nil, errors.New("no records left")
+	}
+
+	iterator.currentIdx--
+
+	foundCandidate := iterator.found[iterator.currentIdx]
+
+	var record *models.Data
+	var err error
+
+	//get found record
+	if foundCandidate.file == nil {
+		record = iterator.memtable.Get(foundCandidate.key)
+	} else {
+		record, _, err = models.Deserialize(foundCandidate.file.mmapFile[foundCandidate.offset:], iterator.sstable.compression, iterator.sstable.encoder)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	return record, nil
 }
@@ -403,7 +451,7 @@ func (iterator *PrefixIterator) Stop() error {
 
 // finds all keys with given prefix that are on given page
 func (sstable *SSTable) PrefixScan(prefix string, pageNumber uint64, pageSize uint64, memtable *memtable.Memtable) (records []*models.Data, err error) {
-	records, err, _, _, _ = sstable.scanWithConditions(prefix, "", true, pageNumber, pageSize, memtable, false)
+	records, err, _, _, _, _ = sstable.scanWithConditions(prefix, "", true, pageNumber, pageSize, memtable, false)
 
 	if err != nil {
 		records = nil
@@ -417,7 +465,7 @@ func (sstable *SSTable) NewRangeIterator(min string, max string, memtable *memta
 		return nil, nil, errors.New("invalid range given")
 	}
 
-	records, err, memKeys, scannerFiles, filesToBeClosed := sstable.scanWithConditions(min, max, false, 1, 1, memtable, true)
+	records, err, memKeys, scannerFiles, filesToBeClosed, found := sstable.scanWithConditions(min, max, false, 1, 1, memtable, true)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -483,10 +531,10 @@ func (sstable *SSTable) RangeScan(min string, max string, pageNumber uint64, pag
 	return
 }
 
-// returns all records with given conditions on given page and memKeys,scannerFiles,filesToBeClosed (needed for iterators)
+// returns all records with given conditions on given page and memKeys,scannerFiles,filesToBeClosed,found (needed for iterators)
 // conditions can be given in prefix or range
 // if prefix is true, param1 is given prefix if prefix is false, param1 is min and param2 is max of the range
-func (sstable *SSTable) scanWithConditions(param1 string, param2 string, prefix bool, pageNumber uint64, pageSize uint64, memtable *memtable.Memtable, iterator bool) (records []*models.Data, err error, memKeys []string, scannerFiles []*ScannerFile, filesToBeClosed []*ScannerFile) {
+func (sstable *SSTable) scanWithConditions(param1 string, param2 string, prefix bool, pageNumber uint64, pageSize uint64, memtable *memtable.Memtable, iterator bool) (records []*models.Data, err error, memKeys []string, scannerFiles []*ScannerFile, filesToBeClosed []*ScannerFile, found []*ScanningCandidate) {
 	//get keys from memtable
 	if prefix {
 		memKeys = memtable.GetKeysWithPrefix(param1)
@@ -494,7 +542,7 @@ func (sstable *SSTable) scanWithConditions(param1 string, param2 string, prefix 
 		memKeys = memtable.GetKeysInRange(param1, param2)
 	}
 
-	found := make([]*ScanningCandidate, 0)
+	found = make([]*ScanningCandidate, 0)
 	records = make([]*models.Data, 0)
 	err = nil
 
