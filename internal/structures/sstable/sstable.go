@@ -659,7 +659,7 @@ func (sstable *SSTable) combineSSTables(sstForCompaction []mmap.MMap, nextLsmLev
 	var sizeOfDR int64
 	var sizeOfIR uint64
 	var sizeOfSR uint64
-	var indexOffset uint64 = IndexConstSize
+	var indexOffset = uint64(len(indexData))
 	// counter for index and index summary, for every n index records add one to summary
 	countRecords := uint16(0)
 	countIndexRecords := uint16(0)
