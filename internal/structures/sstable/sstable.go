@@ -514,8 +514,24 @@ func (sstable *SSTable) CheckCompaction(lsmLevel uint8) error {
 				//}
 			}
 		} else {
-			for i := 0; i <= len(sstablesOnLvl)-int(sstable.firstLevelMax); i++ {
+			for i := 0; i <= len(sstablesOnLvl)-int(sstable.firstLevelMax*multiplier); i++ {
+				sstablesOnLvl, err = os.ReadDir(levelPath)
+				if os.IsNotExist(err) {
+					if err != nil {
+						return err
+					}
+				}
 				err := sstable.leveledCompact(sstablePaths[:1], lsmLevel)
+				if err != nil {
+					return err
+				}
+
+				err = renameSSTables(lsmLevel)
+				if err != nil {
+					return err
+				}
+
+				err = renameSSTables(lsmLevel + 1)
 				if err != nil {
 					return err
 				}
@@ -525,13 +541,6 @@ func (sstable *SSTable) CheckCompaction(lsmLevel uint8) error {
 		err = renameSSTables(lsmLevel)
 		if err != nil {
 			return err
-		}
-
-		if sstable.compaction == "leveled" {
-			err = renameSSTables(lsmLevel + 1)
-			if err != nil {
-				return err
-			}
 		}
 	}
 
