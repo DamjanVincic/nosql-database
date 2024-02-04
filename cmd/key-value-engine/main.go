@@ -17,7 +17,8 @@ func mainMenu(eng *engine.Engine) {
 		fmt.Println("4. Scan")
 		fmt.Println("5. Iterate")
 		fmt.Println("6. Probabilistic Types")
-		fmt.Println("7. Exit")
+		fmt.Println("7. Check Merkle")
+		fmt.Println("8. Exit")
 		fmt.Print("> ")
 		_, err := fmt.Scan(&expr)
 		if err != nil {
@@ -69,6 +70,26 @@ func mainMenu(eng *engine.Engine) {
 		case 6:
 			probabilisticTypes(eng)
 		case 7:
+			fmt.Print("Path: ")
+			var path string
+			_, err := fmt.Scanf("%s", &path)
+			if err != nil {
+				fmt.Println(err)
+				return
+			}
+
+			corrupted, err := eng.CheckMerkle(path)
+			if err != nil {
+				fmt.Println(err)
+				return
+			}
+
+			if corrupted != nil {
+				fmt.Println(fmt.Sprintf("%d corrupted nodes found", corrupted))
+			} else {
+				fmt.Println("Merkle is not corrupted")
+			}
+		case 8:
 			return
 		}
 	}
