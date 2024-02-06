@@ -404,7 +404,7 @@ func probabilisticTypes(eng *engine.Engine) {
 func main() {
 	eng, err := engine.NewEngine()
 	if err != nil {
-		panic(err)
+		fmt.Println(err)
 		return
 	}
 

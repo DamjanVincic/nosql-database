@@ -143,10 +143,10 @@ Get the remaining bytes in the file and the file size,
 if there's not enough space due to changing segment size,
 create a new segment and open it in the forwarded file pointer.
 */
-func (wal *WAL) getRemainingBytesAndFileSize(file *os.File) (uint64, uint64, error) {
+func (wal *WAL) getRemainingBytesAndFileSize(file *os.File) (uint64, uint64, *os.File, error) {
 	fileInfo, err := file.Stat()
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, nil, err
 	}
 
 	fileSize := uint64(fileInfo.Size())
@@ -159,22 +159,22 @@ func (wal *WAL) getRemainingBytesAndFileSize(file *os.File) (uint64, uint64, err
 		// Close the current file
 		err = file.Close()
 		if err != nil {
-			return 0, 0, err
+			return 0, 0, nil, err
 		}
 
 		err = wal.createNewSegment()
 		if err != nil {
-			return 0, 0, err
+			return 0, 0, nil, err
 		}
 
 		file, err = os.OpenFile(filepath.Join(Path, wal.currentFilename), os.O_RDWR, 0644)
 		if err != nil {
-			return 0, 0, err
+			return 0, 0, nil, err
 		}
 
 		fileInfo, err = file.Stat()
 		if err != nil {
-			return 0, 0, err
+			return 0, 0, nil, err
 		}
 
 		fileSize = uint64(fileInfo.Size())
@@ -182,7 +182,7 @@ func (wal *WAL) getRemainingBytesAndFileSize(file *os.File) (uint64, uint64, err
 	remainingBytes = wal.segmentSize - (fileSize - HeaderSize)
 
 	// We return the file size to avoid getting it in multiple other functions
-	return remainingBytes, fileSize, nil
+	return remainingBytes, fileSize, file, nil
 }
 
 // Write the forwarded bytes to the file.
@@ -213,46 +213,46 @@ Write the record bytes to the file, starting from the given index.
 If the record bytes overflow the current file, create a new segment and write the remaining bytes to it.
 Return the number of bytes that can fit in the file (the amount of bytes written).
 */
-func (wal *WAL) writeRecordBytes(file *os.File, recordBytes []byte, idx uint64) (uint64, error) {
+func (wal *WAL) writeRecordBytes(file *os.File, recordBytes []byte, idx uint64) (uint64, *os.File, error) {
 	recordSize := uint64(len(recordBytes))
 
-	remainingBytes, fileSize, err := wal.getRemainingBytesAndFileSize(file)
+	remainingBytes, fileSize, file, err := wal.getRemainingBytesAndFileSize(file)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 
 	// If the record can't fit in the current file
 	if idx+remainingBytes < recordSize {
 		err := wal.writeBytes(file, recordBytes[idx:idx+remainingBytes], fileSize)
 		if err != nil {
-			return 0, err
+			return 0, nil, err
 		}
 
 		err = wal.createNewSegment()
 		if err != nil {
-			return 0, err
+			return 0, nil, err
 		}
 
 		newSegment, err := os.OpenFile(filepath.Join(Path, wal.currentFilename), os.O_RDWR, 0644)
 		if err != nil {
-			return 0, err
+			return 0, nil, err
 		}
 
 		newSegmentMmap, err := mmap.Map(newSegment, mmap.RDWR, 0)
 		if err != nil {
-			return 0, err
+			return 0, nil, err
 		}
 
 		// If the record bytes are bigger than the segment size, they will take up the entire new segment
 		binary.BigEndian.PutUint64(newSegmentMmap[BytesOverflowOffsetStart:HeaderSize], min(recordSize-(idx+remainingBytes), wal.segmentSize))
 		err = newSegmentMmap.Unmap()
 		if err != nil {
-			return 0, err
+			return 0, nil, err
 		}
 
 		err = newSegment.Close()
 		if err != nil {
-			return 0, err
+			return 0, nil, err
 		}
 	} else {
 		// If the record can fit in the current file
@@ -260,11 +260,11 @@ func (wal *WAL) writeRecordBytes(file *os.File, recordBytes []byte, idx uint64) 
 
 		err := wal.writeBytes(file, recordBytes[idx:], fileSize)
 		if err != nil {
-			return 0, err
+			return 0, nil, err
 		}
 	}
 
-	return remainingBytes, nil
+	return remainingBytes, file, nil
 }
 
 // AddRecord Add a new record to the Write Ahead Log
@@ -281,7 +281,7 @@ func (wal *WAL) AddRecord(key string, value []byte, tombstone bool) (*models.Dat
 			return nil, err
 		}
 
-		bytesWritten, err := wal.writeRecordBytes(file, recordBytes, idx)
+		bytesWritten, file, err := wal.writeRecordBytes(file, recordBytes, idx)
 		if err != nil {
 			return nil, err
 		}
@@ -359,7 +359,7 @@ func (wal *WAL) readRecordsFromFile(fileName string, buffer []byte, memtable *me
 					wal.cache.Update(toFlush)
 				}
 			} else {
-				if record.Timestamp > timestamp {
+				if record.Timestamp >= timestamp {
 					return previousOffset, nil, true, nil
 				}
 			}
@@ -389,9 +389,27 @@ func (wal *WAL) readRecordsFromFile(fileName string, buffer []byte, memtable *me
 		}
 
 		if memtable != nil {
-			memtable.Put(record.Key, record.Value, record.Timestamp, record.Tombstone)
+			toFlush := memtable.Put(record.Key, record.Value, record.Timestamp, record.Tombstone)
+			if toFlush != nil {
+				err := wal.sst.Write(toFlush)
+				if err != nil {
+					return 0, nil, false, err
+				}
+
+				err = wal.MoveLowWatermark(memtable.FindNewestTimestamp(toFlush))
+				if err != nil {
+					return 0, nil, false, err
+				}
+
+				err = wal.DeleteSegments()
+				if err != nil {
+					return 0, nil, false, err
+				}
+
+				wal.cache.Update(toFlush)
+			}
 		} else {
-			if record.Timestamp > timestamp {
+			if record.Timestamp >= timestamp {
 				return i, nil, false, nil
 			}
 		}
@@ -495,7 +513,7 @@ func (wal *WAL) findTimestampSegment(timestamp uint64) (int, int, error) {
 				return 0, 0, err
 			}
 
-			if record.Timestamp > timestamp {
+			if record.Timestamp >= timestamp {
 				return idx, offset, nil
 			}
 		}
@@ -624,6 +642,13 @@ func (wal *WAL) DeleteSegments() error {
 			}
 		}
 	}
+
+	files, err = os.ReadDir(Path)
+	if err != nil {
+		return err
+	}
+
+	wal.currentFilename = files[len(files)-1].Name()
 
 	return nil
 }

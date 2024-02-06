@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bufio"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"github.com/DamjanVincic/key-value-engine/internal/structures/simhash"
 	"github.com/DamjanVincic/key-value-engine/internal/structures/sstable"
 	"github.com/DamjanVincic/key-value-engine/internal/structures/wal"
+	"os"
 	"strings"
 )
 
@@ -90,7 +92,7 @@ func (engine *Engine) Put(key string, value []byte) error {
 	}
 
 	if engine.hasPrefix(key) {
-		return errors.New("key not found")
+		return errors.New("invalid key prefix")
 	}
 
 	entry, err := engine.wal.AddRecord(key, value, false)
@@ -446,6 +448,10 @@ func (engine *Engine) HyperLogLog(key string) error {
 		key = HLLPrefix + key
 
 		hll, err := hyperLogLog.NewHyperLogLog(uint8(bucketBits))
+		if err != nil {
+			return err
+		}
+
 		err = engine.put(key, hll.Serialize())
 		if err != nil {
 			return err
@@ -494,7 +500,7 @@ func (engine *Engine) HyperLogLog(key string) error {
 		deserializedHLL := hyperLogLog.Deserialize(hll)
 		cardinality := deserializedHLL.Estimate()
 
-		fmt.Println(fmt.Sprintf("Cardinality: %d", cardinality))
+		fmt.Println(fmt.Sprintf("Cardinality: %f", cardinality))
 	case 5:
 		return nil
 	}
@@ -517,8 +523,13 @@ func (engine *Engine) Simhash(key string) error {
 	switch expr {
 	case 1:
 		fmt.Print("Text: ")
-		var text string
-		_, err := fmt.Scanln(&text)
+
+		reader := bufio.NewReader(os.Stdin)
+		text, err := reader.ReadString('\n')
+		if err != nil {
+			return err
+		}
+
 		if err != nil {
 			return err
 		}
@@ -540,8 +551,9 @@ func (engine *Engine) Simhash(key string) error {
 		fmt.Println("Fingerprint stored")
 	case 2:
 		fmt.Print("Text: ")
-		var text string
-		_, err := fmt.Scanln(&text)
+
+		reader := bufio.NewReader(os.Stdin)
+		text, err := reader.ReadString('\n')
 		if err != nil {
 			return err
 		}
